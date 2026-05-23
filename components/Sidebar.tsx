@@ -8,15 +8,12 @@ import {
   AlertCircle,
   FolderTree,
   Mail,
-  HardDrive,
   FileSpreadsheet,
-  Activity,
   Banknote,
-  Database,
-  RotateCcw,
+  LogOut,
+  User,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
-import type { DbInfo } from "@/lib/store";
 import { SidebarMonthSelector } from "./SidebarMonthSelector";
 
 type NavItem = {
@@ -37,22 +34,12 @@ const items: NavItem[] = [
   { href: "/connectors", label: "Connexions", icon: Mail },
 ];
 
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} o`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} ko`;
-  return `${(n / (1024 * 1024)).toFixed(1)} Mo`;
-}
-
 export function Sidebar({
   manualCount = 0,
-  dbInfo = null,
-  ready = false,
-  onReset,
+  userEmail = null,
 }: {
   manualCount?: number;
-  dbInfo?: DbInfo | null;
-  ready?: boolean;
-  onReset?: () => void;
+  userEmail?: string | null;
 }) {
   const pathname = usePathname();
 
@@ -96,48 +83,32 @@ export function Sidebar({
         })}
       </nav>
 
-      <div className="p-4 border-t border-border space-y-2">
-        <div className="card p-3">
-          <div className="flex items-center gap-2 mb-1.5">
-            <Database size={13} className="text-accent" />
-            <div className="text-[12px] font-medium">Postgres</div>
-            <span
-              className={`w-1.5 h-1.5 rounded-full ml-auto ${ready ? "bg-ok" : "bg-warn"}`}
-              title={ready ? "Connectée" : "En attente…"}
-            />
+      {userEmail && (
+        <div className="p-3 border-t border-border">
+          <div className="card p-2.5">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-7 h-7 rounded-full bg-panel2 border border-border flex items-center justify-center shrink-0">
+                <User size={13} className="text-muted" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-[11px] text-muted">Connecté</div>
+                <div className="text-[12px] font-medium truncate" title={userEmail}>
+                  {userEmail}
+                </div>
+              </div>
+              <form action="/api/auth/signout" method="post">
+                <button
+                  type="submit"
+                  className="btn !px-2 !py-1.5"
+                  title="Se déconnecter"
+                >
+                  <LogOut size={12} />
+                </button>
+              </form>
+            </div>
           </div>
-          {dbInfo ? (
-            <>
-              <div className="text-[10px] text-muted font-mono truncate" title={dbInfo.file}>
-                {dbInfo.file} {dbInfo.sizeBytes > 0 && `· ${formatBytes(dbInfo.sizeBytes)}`}
-              </div>
-              <div className="text-[10px] text-muted mt-1 tabular-nums">
-                {dbInfo.counts.revenues} rev · {dbInfo.counts.invoices} fact ·{" "}
-                {dbInfo.counts.mappings} cat
-              </div>
-            </>
-          ) : (
-            <div className="text-[10px] text-muted">Connexion à la DB…</div>
-          )}
-          {onReset && (
-            <button
-              onClick={() => {
-                if (
-                  confirm(
-                    "Réinitialiser la base : supprime tout et restaure les données de démo. Continuer ?",
-                  )
-                ) {
-                  onReset();
-                }
-              }}
-              className="btn text-[10px] w-full justify-center mt-2 !px-2 !py-1"
-              title="Vider et re-seeder la base"
-            >
-              <RotateCcw size={10} /> Réinitialiser
-            </button>
-          )}
         </div>
-      </div>
+      )}
     </aside>
   );
 }

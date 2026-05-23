@@ -113,6 +113,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const reloadFromDb = useCallback(async () => {
     try {
       const r = await fetch("/api/state", { cache: "no-store" });
+      if (r.status === 401) {
+        // Session expirée → renvoie au login.
+        if (typeof window !== "undefined") window.location.href = "/login";
+        return;
+      }
       if (!r.ok) {
         const body = (await r.json().catch(() => null)) as
           | { error?: string; message?: string }

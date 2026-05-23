@@ -103,6 +103,34 @@ L'app est en ligne sur `<projet>.vercel.app`. Teste-la.
 
 ---
 
+## Auth — config Supabase
+
+L'app a un login OTP par email, restreint aux comptes `@famelink.ai`.
+Dans le dashboard Supabase du projet hébergé via Vercel (svtssubsdruordsbezge) :
+
+1. **Authentication → Sign In / Up → Email**
+   - "Email confirmations" : peut être désactivé (l'OTP confirme implicitement)
+   - "Magic Link" : reste activé (Supabase envoie un mail avec à la fois un code et un lien)
+
+2. **Authentication → URL Configuration**
+   - **Site URL** : `https://financial.darlink.ai`
+   - **Redirect URLs** :
+     - `https://financial.darlink.ai/**`
+     - `https://*-darlink.vercel.app/**` (pour les preview deployments Vercel)
+     - `http://localhost:3030/**` (pour le dev local)
+
+3. **Authentication → Rate Limits** :
+   - "OTPs per hour" : 30 ou plus pour le dev. Le free tier limite par défaut.
+
+Restriction d'accès `@famelink.ai` : appliquée côté middleware Next.js
+(client-side check + server-side enforcement). Tout email d'un autre domaine
+qui réussit à obtenir un OTP sera immédiatement signed out au premier accès.
+
+Pour étendre les domaines autorisés : éditer `ALLOWED_EMAIL_DOMAINS` dans
+[`lib/supabase/env.ts`](lib/supabase/env.ts).
+
+---
+
 ## Commandes utiles
 
 ```bash
