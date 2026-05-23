@@ -26,10 +26,16 @@ let _seeded = false;
 
 function client() {
   if (!_sql) {
+    // Supabase exige TLS sur le pooler et la connexion directe.
+    // On force ssl: 'require' partout sauf en local (127.0.0.1).
+    const isLocal = /^(postgres(ql)?:\/\/)[^@]*@(127\.0\.0\.1|localhost)/.test(
+      connectionString,
+    );
     _sql = postgres(connectionString, {
       max: 10,
       idle_timeout: 20,
       prepare: false, // safer with Supabase pgbouncer
+      ssl: isLocal ? false : "require",
     });
   }
   return _sql;
