@@ -23,6 +23,12 @@ function isPublic(pathname: string): boolean {
 }
 
 export async function updateSession(request: NextRequest) {
+  // Feature flag : auth désactivée par défaut. Pour la réactiver,
+  // ajouter AUTH_ENABLED=true dans Vercel env vars et redéployer.
+  if (process.env.AUTH_ENABLED !== "true") {
+    return NextResponse.next({ request });
+  }
+
   const env = getSupabaseEnv();
 
   // Sans config Supabase on laisse passer (utile en local sans auth configurée).
