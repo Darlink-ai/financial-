@@ -672,7 +672,7 @@ function NewRevenueForm({
   });
 
   const submit = () => {
-    if (!draft.businessId || draft.capturedAmount <= 0) return;
+    if (!draft.businessId) return;
     onCreate({ id: `rev-${Date.now()}`, ...draft });
   };
 
@@ -683,8 +683,8 @@ function NewRevenueForm({
         <span className="badge info">Un par business × processeur</span>
       </div>
       <div className="text-[11px] text-muted mb-4">
-        Tu peux créer plusieurs entrées pour le même business si tu as plusieurs processeurs (ex :
-        Link · Stripe + Link · PayPal).
+        Capturé, frais et rolling reserve se renseignent après création (après l'upload du fichier
+        pays).
       </div>
       <div className="grid grid-cols-4 gap-3">
         <Field label="Business">
@@ -721,42 +721,6 @@ function NewRevenueForm({
         </Field>
         <Field label="Mois">
           <input className="input" value={draft.month} disabled />
-        </Field>
-
-        <Field label="Capturé">
-          <AmountInput
-            value={draft.capturedAmount}
-            currency={draft.currency}
-            onChange={(v) => setDraft({ ...draft, capturedAmount: v })}
-          />
-        </Field>
-        <Field label="Frais">
-          <AmountInput
-            value={draft.fees}
-            currency={draft.currency}
-            onChange={(v) => setDraft({ ...draft, fees: v })}
-          />
-        </Field>
-        <Field label="Rolling reserve">
-          <AmountInput
-            value={draft.rollingReserveAmount}
-            currency={draft.currency}
-            onChange={(v) => setDraft({ ...draft, rollingReserveAmount: v })}
-          />
-        </Field>
-        <Field label="Durée reserve (mois)">
-          <input
-            type="number"
-            className="input"
-            min={0}
-            value={draft.rollingReserveMonths}
-            onChange={(e) =>
-              setDraft({
-                ...draft,
-                rollingReserveMonths: parseInt(e.target.value, 10) || 0,
-              })
-            }
-          />
         </Field>
       </div>
 
