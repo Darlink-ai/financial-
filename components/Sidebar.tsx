@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { DbInfo } from "@/lib/store";
+import { SidebarMonthSelector } from "./SidebarMonthSelector";
 
 type NavItem = {
   href: string;
@@ -57,6 +58,8 @@ export function Sidebar({
 
   return (
     <aside className="w-64 shrink-0 border-r border-border bg-panel min-h-screen flex flex-col">
+      <SidebarMonthSelector />
+
       <nav className="flex-1 px-3 py-4 space-y-1">
         {items.map((item, idx) => {
           const Icon = item.icon;
