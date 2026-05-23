@@ -349,9 +349,9 @@ function SheetTable({
   );
 }
 
-function formatCell(v: string | number | null): string {
+function formatCell(v: string | number | Date | null): string {
   if (v == null) return "";
-  if (v instanceof Date) return (v as Date).toLocaleDateString("fr-CH");
+  if (v instanceof Date) return v.toLocaleDateString("fr-CH");
   if (typeof v === "number") return new Intl.NumberFormat("fr-CH").format(v);
   return String(v);
 }
