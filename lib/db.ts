@@ -10,10 +10,14 @@ import type {
 } from "./types";
 import { initialData } from "./mock-data";
 
-// Order : intégration Vercel ↔ Supabase (POSTGRES_URL) → DATABASE_URL explicite → local Supabase CLI.
+// Ordre de priorité :
+// 1. DATABASE_URL — override manuel (gagne sur tout, utile si une intégration
+//    pose un POSTGRES_URL qui pointe vers la mauvaise DB).
+// 2. POSTGRES_URL — auto-posé par l'intégration Vercel ↔ Supabase.
+// 3. Fallback local Supabase CLI.
 const connectionString =
-  process.env.POSTGRES_URL ??
   process.env.DATABASE_URL ??
+  process.env.POSTGRES_URL ??
   "postgres://postgres:postgres@127.0.0.1:54322/postgres";
 
 // Module-level singleton client. `postgres` handles a pool internally.
