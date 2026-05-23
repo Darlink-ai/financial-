@@ -343,7 +343,17 @@ function RevenueDetail({
   const onCountryFile = async (f: File) => {
     const { rows, warnings: w } = await parseCountryFile(f);
     setWarnings(w);
-    onUpdate({ countryBreakdown: rows, countryFileName: f.name });
+    const total = rows.reduce((s, r) => s + r.amount, 0);
+    const patch: Partial<Revenue> = {
+      countryBreakdown: rows,
+      countryFileName: f.name,
+    };
+    // Auto-remplit le Capturé avec la somme des montants pays si l'utilisateur
+    // ne l'a pas encore renseigné. Il pourra l'ajuster ensuite.
+    if (revenue.capturedAmount <= 0 && total > 0) {
+      patch.capturedAmount = Math.round(total * 100) / 100;
+    }
+    onUpdate(patch);
   };
 
   const onSave = () => onUpdate({ validatedAt: new Date().toISOString() });
