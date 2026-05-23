@@ -86,11 +86,11 @@ async function ensureSeeded() {
         await tx`
           INSERT INTO revenues (
             id, business_id, month, processor, currency,
-            captured_amount, fees, rolling_reserve_amount, rolling_reserve_months,
+            captured_amount, fees, rolling_reserve_percent, rolling_reserve_months,
             released_at, validated_at, notes, country_breakdown, country_file_name
           ) VALUES (
             ${r.id}, ${r.businessId}, ${r.month}, ${r.processor}, ${r.currency},
-            ${r.capturedAmount}, ${r.fees}, ${r.rollingReserveAmount}, ${r.rollingReserveMonths},
+            ${r.capturedAmount}, ${r.fees}, ${r.rollingReservePercent}, ${r.rollingReserveMonths},
             ${r.releasedAt}, ${r.validatedAt}, ${r.notes ?? null},
             ${sql.json(r.countryBreakdown ?? [])}, ${r.countryFileName}
           )
@@ -191,7 +191,7 @@ type RawRevenue = {
   currency: string;
   captured_amount: string;
   fees: string;
-  rolling_reserve_amount: string;
+  rolling_reserve_percent: string;
   rolling_reserve_months: number;
   released_at: Date | null;
   validated_at: Date | null;
@@ -207,7 +207,7 @@ const mapRevenue = (r: RawRevenue): Revenue => ({
   currency: r.currency,
   capturedAmount: Number(r.captured_amount),
   fees: Number(r.fees),
-  rollingReserveAmount: Number(r.rolling_reserve_amount),
+  rollingReservePercent: Number(r.rolling_reserve_percent),
   rollingReserveMonths: r.rolling_reserve_months,
   releasedAt: r.released_at ? r.released_at.toISOString() : null,
   validatedAt: r.validated_at ? r.validated_at.toISOString() : null,
@@ -256,11 +256,11 @@ export async function createRevenue(r: Revenue): Promise<Revenue> {
   await sql`
     INSERT INTO revenues (
       id, business_id, month, processor, currency,
-      captured_amount, fees, rolling_reserve_amount, rolling_reserve_months,
+      captured_amount, fees, rolling_reserve_percent, rolling_reserve_months,
       released_at, validated_at, notes, country_breakdown, country_file_name
     ) VALUES (
       ${r.id}, ${r.businessId}, ${r.month}, ${r.processor}, ${r.currency},
-      ${r.capturedAmount}, ${r.fees}, ${r.rollingReserveAmount}, ${r.rollingReserveMonths},
+      ${r.capturedAmount}, ${r.fees}, ${r.rollingReservePercent}, ${r.rollingReserveMonths},
       ${r.releasedAt}, ${r.validatedAt}, ${r.notes ?? null},
       ${sql.json(r.countryBreakdown ?? [])}, ${r.countryFileName}
     )
@@ -281,7 +281,7 @@ export async function updateRevenue(id: string, patch: Partial<Revenue>): Promis
       currency = ${merged.currency},
       captured_amount = ${merged.capturedAmount},
       fees = ${merged.fees},
-      rolling_reserve_amount = ${merged.rollingReserveAmount},
+      rolling_reserve_percent = ${merged.rollingReservePercent},
       rolling_reserve_months = ${merged.rollingReserveMonths},
       released_at = ${merged.releasedAt},
       validated_at = ${merged.validatedAt},

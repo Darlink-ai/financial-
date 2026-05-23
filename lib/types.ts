@@ -76,7 +76,7 @@ export type Revenue = {
   currency: string;
   capturedAmount: number; // total captured by processor
   fees: number; // processor fees
-  rollingReserveAmount: number; // amount held in reserve
+  rollingReservePercent: number; // % du capturé retenu en réserve
   rollingReserveMonths: number; // duration of the reserve in months
   releasedAt: string | null; // ISO date when reserve will be released (optional, computed)
   notes?: string;

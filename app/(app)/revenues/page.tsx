@@ -48,7 +48,7 @@ export default function RevenuesPage() {
       (acc, r) => {
         acc.captured += r.capturedAmount;
         acc.fees += r.fees;
-        acc.reserve += r.rollingReserveAmount;
+        acc.reserve += (r.capturedAmount * r.rollingReservePercent) / 100;
         return acc;
       },
       { captured: 0, fees: 0, reserve: 0 },
@@ -211,7 +211,11 @@ function GroupedRevenueList({
       {groups.map(({ business, items }) => {
         const totalCaptured = items.reduce((s, r) => s + r.capturedAmount, 0);
         const totalNet = items.reduce(
-          (s, r) => s + (r.capturedAmount - r.fees - r.rollingReserveAmount),
+          (s, r) =>
+            s +
+            (r.capturedAmount -
+              r.fees -
+              (r.capturedAmount * r.rollingReservePercent) / 100),
           0,
         );
         return (
@@ -272,7 +276,8 @@ function RevenueListItem({
   active: boolean;
   onClick: () => void;
 }) {
-  const net = revenue.capturedAmount - revenue.fees - revenue.rollingReserveAmount;
+  const reserveAmount = (revenue.capturedAmount * revenue.rollingReservePercent) / 100;
+  const net = revenue.capturedAmount - revenue.fees - reserveAmount;
   const validated = !!revenue.validatedAt;
   return (
     <button
@@ -321,22 +326,20 @@ function RevenueDetail({
   const [warnings, setWarnings] = useState<string[]>([]);
 
   const locked = !!revenue.validatedAt;
-  const net = revenue.capturedAmount - revenue.fees - revenue.rollingReserveAmount;
+  const reserveAmount =
+    (revenue.capturedAmount * revenue.rollingReservePercent) / 100;
+  const net = revenue.capturedAmount - revenue.fees - reserveAmount;
   const feesPct =
     revenue.capturedAmount > 0
       ? (revenue.fees / revenue.capturedAmount) * 100
-      : 0;
-  const reservePct =
-    revenue.capturedAmount > 0
-      ? (revenue.rollingReserveAmount / revenue.capturedAmount) * 100
       : 0;
 
   // Validation checklist — gives feedback to the user before they save.
   const missing: string[] = [];
   if (revenue.capturedAmount <= 0) missing.push("Montant capturé");
   if (revenue.fees <= 0) missing.push("Frais processeur");
-  if (revenue.rollingReserveAmount <= 0 && revenue.rollingReserveMonths <= 0)
-    missing.push("Rolling reserve (ou durée 0 explicite)");
+  if (revenue.rollingReservePercent <= 0 && revenue.rollingReserveMonths <= 0)
+    missing.push("Rolling reserve (ou 0 % explicite)");
   if (revenue.countryBreakdown.length === 0) missing.push("Fichier pays / revenus");
   const ready = missing.length === 0;
 
@@ -427,13 +430,16 @@ function RevenueDetail({
         </Field>
 
         <Field
-          label="Rolling reserve"
-          hint={revenue.capturedAmount > 0 ? `${reservePct.toFixed(2)} % retenu` : undefined}
+          label="Rolling reserve (%)"
+          hint={
+            revenue.capturedAmount > 0
+              ? `≈ ${formatAmount(reserveAmount, revenue.currency)} retenu`
+              : undefined
+          }
         >
-          <AmountInput
-            value={revenue.rollingReserveAmount}
-            currency={revenue.currency}
-            onChange={(v) => onUpdate({ rollingReserveAmount: v })}
+          <PercentInput
+            value={revenue.rollingReservePercent}
+            onChange={(v) => onUpdate({ rollingReservePercent: v })}
             disabled={locked}
           />
         </Field>
@@ -470,8 +476,9 @@ function RevenueDetail({
             − frais{" "}
             <span className="font-mono">{formatAmount(revenue.fees, revenue.currency)}</span> − reserve{" "}
             <span className="font-mono">
-              {formatAmount(revenue.rollingReserveAmount, revenue.currency)}
-            </span>
+              {formatAmount(reserveAmount, revenue.currency)}
+            </span>{" "}
+            <span className="text-muted">({revenue.rollingReservePercent}%)</span>
           </div>
         </div>
       </div>
@@ -673,7 +680,7 @@ function NewRevenueForm({
     currency: "CHF",
     capturedAmount: 0,
     fees: 0,
-    rollingReserveAmount: 0,
+    rollingReservePercent: 0,
     rollingReserveMonths: 0,
     releasedAt: null,
     validatedAt: null,
@@ -788,6 +795,34 @@ function AmountInput({
       />
       <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-muted pointer-events-none">
         {currency}
+      </span>
+    </div>
+  );
+}
+
+function PercentInput({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="relative">
+      <input
+        type="number"
+        step="0.01"
+        min={0}
+        max={100}
+        className="input pr-8 tabular-nums"
+        value={value}
+        onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+        disabled={disabled}
+      />
+      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-muted pointer-events-none">
+        %
       </span>
     </div>
   );
