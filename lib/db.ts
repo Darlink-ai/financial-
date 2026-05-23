@@ -3,11 +3,14 @@ import type {
   Business,
   CountryRevenue,
   DriveConfig,
+  FeeBreakdown,
   FolderMapping,
   Invoice,
   Mailbox,
   Revenue,
+  TxCounts,
 } from "./types";
+import { EMPTY_FEE_BREAKDOWN, EMPTY_TX_COUNTS } from "./types";
 import { initialData } from "./mock-data";
 
 // Ordre de priorité :
@@ -87,12 +90,15 @@ async function ensureSeeded() {
           INSERT INTO revenues (
             id, business_id, month, processor, currency,
             captured_amount, fees, rolling_reserve_percent, rolling_reserve_months,
-            released_at, validated_at, notes, country_breakdown, country_file_name
+            released_at, validated_at, notes, country_breakdown, country_file_name,
+            tx_counts, fee_breakdown
           ) VALUES (
             ${r.id}, ${r.businessId}, ${r.month}, ${r.processor}, ${r.currency},
             ${r.capturedAmount}, ${r.fees}, ${r.rollingReservePercent}, ${r.rollingReserveMonths},
             ${r.releasedAt}, ${r.validatedAt}, ${r.notes ?? null},
-            ${sql.json(r.countryBreakdown ?? [])}, ${r.countryFileName}
+            ${sql.json(r.countryBreakdown ?? [])}, ${r.countryFileName},
+            ${sql.json(r.txCounts ?? EMPTY_TX_COUNTS)},
+            ${sql.json(r.feeBreakdown ?? EMPTY_FEE_BREAKDOWN)}
           )
         `;
       }
@@ -198,6 +204,8 @@ type RawRevenue = {
   notes: string | null;
   country_breakdown: CountryRevenue[];
   country_file_name: string | null;
+  tx_counts: Partial<TxCounts> | null;
+  fee_breakdown: Partial<FeeBreakdown> | null;
 };
 const mapRevenue = (r: RawRevenue): Revenue => ({
   id: r.id,
@@ -214,6 +222,8 @@ const mapRevenue = (r: RawRevenue): Revenue => ({
   notes: r.notes ?? undefined,
   countryBreakdown: r.country_breakdown ?? [],
   countryFileName: r.country_file_name,
+  txCounts: { ...EMPTY_TX_COUNTS, ...(r.tx_counts ?? {}) },
+  feeBreakdown: { ...EMPTY_FEE_BREAKDOWN, ...(r.fee_breakdown ?? {}) },
 });
 
 // ---------- public API ----------
@@ -257,12 +267,15 @@ export async function createRevenue(r: Revenue): Promise<Revenue> {
     INSERT INTO revenues (
       id, business_id, month, processor, currency,
       captured_amount, fees, rolling_reserve_percent, rolling_reserve_months,
-      released_at, validated_at, notes, country_breakdown, country_file_name
+      released_at, validated_at, notes, country_breakdown, country_file_name,
+      tx_counts, fee_breakdown
     ) VALUES (
       ${r.id}, ${r.businessId}, ${r.month}, ${r.processor}, ${r.currency},
       ${r.capturedAmount}, ${r.fees}, ${r.rollingReservePercent}, ${r.rollingReserveMonths},
       ${r.releasedAt}, ${r.validatedAt}, ${r.notes ?? null},
-      ${sql.json(r.countryBreakdown ?? [])}, ${r.countryFileName}
+      ${sql.json(r.countryBreakdown ?? [])}, ${r.countryFileName},
+      ${sql.json(r.txCounts ?? EMPTY_TX_COUNTS)},
+      ${sql.json(r.feeBreakdown ?? EMPTY_FEE_BREAKDOWN)}
     )
   `;
   return r;
@@ -287,7 +300,9 @@ export async function updateRevenue(id: string, patch: Partial<Revenue>): Promis
       validated_at = ${merged.validatedAt},
       notes = ${merged.notes ?? null},
       country_breakdown = ${sql.json(merged.countryBreakdown ?? [])},
-      country_file_name = ${merged.countryFileName}
+      country_file_name = ${merged.countryFileName},
+      tx_counts = ${sql.json(merged.txCounts ?? EMPTY_TX_COUNTS)},
+      fee_breakdown = ${sql.json(merged.feeBreakdown ?? EMPTY_FEE_BREAKDOWN)}
     WHERE id = ${id}
   `;
   return merged;

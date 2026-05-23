@@ -6,6 +6,7 @@ import type {
   Business,
   Revenue,
 } from "./types";
+import { EMPTY_FEE_BREAKDOWN, EMPTY_TX_COUNTS } from "./types";
 
 export const mockBusinesses: Business[] = [
   { id: "biz-link", name: "Link", color: "#7c9cff", processor: "Stripe" },
@@ -34,6 +35,8 @@ export const mockRevenues: Revenue[] = [
       { country: "US", amount: 4_200.0 },
     ],
     countryFileName: "link-mai-2026-pays.xlsx",
+    txCounts: EMPTY_TX_COUNTS,
+    feeBreakdown: EMPTY_FEE_BREAKDOWN,
   },
   {
     id: "rev-link-202605-paypal",
@@ -55,6 +58,8 @@ export const mockRevenues: Revenue[] = [
       { country: "US", amount: 1_800.0 },
     ],
     countryFileName: "link-mai-2026-paypal-pays.xlsx",
+    txCounts: EMPTY_TX_COUNTS,
+    feeBreakdown: EMPTY_FEE_BREAKDOWN,
   },
   {
     id: "rev-ify-202605",
@@ -76,6 +81,8 @@ export const mockRevenues: Revenue[] = [
       { country: "US", amount: 3_900.0 },
     ],
     countryFileName: "ify-mai-2026-pays.xlsx",
+    txCounts: EMPTY_TX_COUNTS,
+    feeBreakdown: EMPTY_FEE_BREAKDOWN,
   },
   {
     id: "rev-link-202604",
@@ -96,6 +103,8 @@ export const mockRevenues: Revenue[] = [
       { country: "US", amount: 5_900.0 },
     ],
     countryFileName: "link-avril-2026-pays.xlsx",
+    txCounts: EMPTY_TX_COUNTS,
+    feeBreakdown: EMPTY_FEE_BREAKDOWN,
   },
 ];
 
