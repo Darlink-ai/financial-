@@ -430,6 +430,58 @@ export async function updateDrive(patch: Partial<DriveConfig>): Promise<DriveCon
   return merged;
 }
 
+// ---- Excel sheets (1 par mois) ----
+export type StoredExcelSheet = {
+  month: string;
+  fileName: string;
+  headers: string[];
+  rows: (string | number | null)[][];
+  uploadedAt: string;
+};
+
+type RawExcelSheet = {
+  month: string;
+  file_name: string;
+  headers: string[];
+  rows: (string | number | null)[][];
+  uploaded_at: Date;
+};
+const mapExcelSheet = (r: RawExcelSheet): StoredExcelSheet => ({
+  month: r.month,
+  fileName: r.file_name,
+  headers: r.headers,
+  rows: r.rows,
+  uploadedAt: r.uploaded_at.toISOString(),
+});
+
+export async function getExcelSheet(month: string): Promise<StoredExcelSheet | null> {
+  const sql = client();
+  const rows = await sql<RawExcelSheet[]>`
+    SELECT month, file_name, headers, rows, uploaded_at
+    FROM excel_sheets
+    WHERE month = ${month}
+  `;
+  return rows[0] ? mapExcelSheet(rows[0]) : null;
+}
+
+export async function saveExcelSheet(s: Omit<StoredExcelSheet, "uploadedAt">): Promise<StoredExcelSheet> {
+  const sql = client();
+  await sql`
+    INSERT INTO excel_sheets (month, file_name, headers, rows, uploaded_at)
+    VALUES (${s.month}, ${s.fileName}, ${sql.json(s.headers)}, ${sql.json(s.rows)}, now())
+    ON CONFLICT (month) DO UPDATE SET
+      file_name = EXCLUDED.file_name,
+      headers = EXCLUDED.headers,
+      rows = EXCLUDED.rows,
+      uploaded_at = now()
+  `;
+  return { ...s, uploadedAt: new Date().toISOString() };
+}
+
+export async function deleteExcelSheet(month: string) {
+  await client()`DELETE FROM excel_sheets WHERE month = ${month}`;
+}
+
 // ---- Reset (dev) ----
 export async function resetDatabase() {
   const sql = client();

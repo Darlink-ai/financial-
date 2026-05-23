@@ -1,13 +1,13 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { PageHeader } from "@/components/PageHeader";
 import {
   useStore,
   useInvoicesForCurrentMonth,
   formatMonthLabel,
 } from "@/lib/store";
-import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, Download } from "lucide-react";
+import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, Download, Trash2 } from "lucide-react";
 import * as XLSX from "xlsx";
 import {
   matchInvoicesAgainstSheet,
@@ -25,6 +25,47 @@ export default function ExcelPage() {
   const [sheetNames, setSheetNames] = useState<string[]>([]);
   const [workbook, setWorkbook] = useState<XLSX.WorkBook | null>(null);
   const [activeSheet, setActiveSheet] = useState<string>("");
+  const [loadingPersisted, setLoadingPersisted] = useState(false);
+  const [persistedAt, setPersistedAt] = useState<string | null>(null);
+
+  // Recharge depuis la DB quand le mois sélectionné change.
+  useEffect(() => {
+    let cancelled = false;
+    setSheet(null);
+    setFileName(null);
+    setWorkbook(null);
+    setSheetNames([]);
+    setActiveSheet("");
+    setPersistedAt(null);
+    setLoadingPersisted(true);
+    (async () => {
+      try {
+        const r = await fetch(`/api/excel-sheets/${selectedMonth}`, {
+          cache: "no-store",
+        });
+        if (cancelled) return;
+        if (!r.ok) return;
+        const data = (await r.json()) as {
+          sheet: {
+            month: string;
+            fileName: string;
+            headers: string[];
+            rows: (string | number | null)[][];
+            uploadedAt: string;
+          } | null;
+        };
+        if (cancelled || !data.sheet) return;
+        setFileName(data.sheet.fileName);
+        setSheet({ headers: data.sheet.headers, rows: data.sheet.rows });
+        setPersistedAt(data.sheet.uploadedAt);
+      } finally {
+        if (!cancelled) setLoadingPersisted(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedMonth]);
 
   const matches = useMemo<MatchResult[]>(() => {
     if (!sheet) return [];
@@ -59,6 +100,39 @@ export default function ExcelPage() {
     setSheet({ headers, rows: rows.slice(1) });
   };
 
+  const persistSheet = async (
+    parsed: ParsedSheet,
+    name: string,
+  ): Promise<void> => {
+    // Convertit les Date du parsing xlsx en chaîne ISO pour pouvoir
+    // sérialiser en JSONB et les ré-afficher au prochain chargement.
+    const safeRows: (string | number | null)[][] = parsed.rows.map((row) =>
+      row.map((c) => {
+        if (c == null) return null;
+        const anyC = c as unknown;
+        if (anyC instanceof Date) return (anyC as Date).toISOString();
+        if (typeof c === "number") return c;
+        return String(c);
+      }),
+    );
+    try {
+      const r = await fetch(`/api/excel-sheets/${selectedMonth}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fileName: name,
+          headers: parsed.headers,
+          rows: safeRows,
+        }),
+      });
+      if (r.ok) {
+        setPersistedAt(new Date().toISOString());
+      }
+    } catch {
+      // Erreur silencieuse : la sheet reste en mémoire, juste pas persistée.
+    }
+  };
+
   const onFile = async (f: File) => {
     setFileName(f.name);
     const buf = await f.arrayBuffer();
@@ -67,7 +141,30 @@ export default function ExcelPage() {
     setSheetNames(wb.SheetNames);
     const first = wb.SheetNames[0];
     setActiveSheet(first);
-    loadSheet(wb, first);
+    // loadSheet met `sheet` à jour ET on persiste en parallèle.
+    const ws = wb.Sheets[first];
+    const rows: (string | number | null)[][] = XLSX.utils.sheet_to_json(ws, {
+      header: 1,
+      defval: null,
+      raw: true,
+    }) as (string | number | null)[][];
+    const headers =
+      rows.length === 0 ? [] : rows[0].map((v) => String(v ?? ""));
+    const parsed: ParsedSheet = {
+      headers,
+      rows: rows.length === 0 ? [] : rows.slice(1),
+    };
+    setSheet(parsed);
+    void persistSheet(parsed, f.name);
+  };
+
+  const removePersisted = async () => {
+    if (!confirm(`Supprimer le fichier Excel pour ${formatMonthLabel(selectedMonth)} ?`)) return;
+    await fetch(`/api/excel-sheets/${selectedMonth}`, { method: "DELETE" });
+    setSheet(null);
+    setFileName(null);
+    setWorkbook(null);
+    setPersistedAt(null);
   };
 
   const applyMatchesToInvoices = () => {
@@ -119,7 +216,11 @@ export default function ExcelPage() {
       />
 
       <div className="p-8 space-y-6">
-        {!sheet ? (
+        {loadingPersisted ? (
+          <div className="card p-12 text-center text-muted text-[13px]">
+            Chargement du fichier sauvegardé pour {formatMonthLabel(selectedMonth)}…
+          </div>
+        ) : !sheet ? (
           <Dropzone onFile={onFile} onPick={() => fileRef.current?.click()} />
         ) : (
           <>
@@ -128,7 +229,14 @@ export default function ExcelPage() {
                 <FileSpreadsheet size={18} className="text-accent" />
               </div>
               <div className="flex-1 min-w-0">
-                <div className="text-[13px] font-medium truncate">{fileName}</div>
+                <div className="text-[13px] font-medium truncate flex items-center gap-2">
+                  {fileName}
+                  {persistedAt && (
+                    <span className="badge ok text-[10px]" title={`Sauvé le ${new Date(persistedAt).toLocaleString("fr-CH")}`}>
+                      Sauvé en DB
+                    </span>
+                  )}
+                </div>
                 <div className="text-[11px] text-muted">
                   {sheet.rows.length} lignes · {sheet.headers.length} colonnes · {matches.length} rapprochée(s)
                 </div>
@@ -152,14 +260,20 @@ export default function ExcelPage() {
               )}
               <button
                 className="btn"
-                onClick={() => {
-                  setSheet(null);
-                  setFileName(null);
-                  setWorkbook(null);
-                }}
+                onClick={() => fileRef.current?.click()}
+                title="Remplacer par un nouveau fichier"
               >
-                Changer
+                <Upload size={12} /> Remplacer
               </button>
+              {persistedAt && (
+                <button
+                  className="btn !px-2"
+                  onClick={removePersisted}
+                  title="Supprimer le fichier sauvegardé"
+                >
+                  <Trash2 size={12} />
+                </button>
+              )}
             </div>
 
             <div className="grid grid-cols-3 gap-3">
