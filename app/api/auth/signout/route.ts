@@ -1,13 +1,12 @@
 import { NextResponse } from "next/server";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
+const COOKIE_NAME = "factura_user";
+
 export async function POST(request: Request) {
-  const supabase = await createSupabaseServerClient();
-  if (supabase) {
-    await supabase.auth.signOut();
-  }
   const url = new URL("/login", request.url);
-  return NextResponse.redirect(url, { status: 303 });
+  const res = NextResponse.redirect(url, { status: 303 });
+  res.cookies.set(COOKIE_NAME, "", { maxAge: 0, path: "/" });
+  return res;
 }

@@ -1,14 +1,14 @@
 import type { ReactNode } from "react";
+import { cookies } from "next/headers";
 import { StoreProvider } from "@/lib/store";
 import { SidebarWithCount } from "@/components/SidebarWithCount";
 import { DbErrorBanner } from "@/components/DbErrorBanner";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { isAllowedEmail } from "@/lib/supabase/env";
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
-  const supabase = await createSupabaseServerClient();
-  const userEmail = supabase
-    ? (await supabase.auth.getUser()).data.user?.email ?? null
-    : null;
+  const cookieStore = await cookies();
+  const rawEmail = cookieStore.get("factura_user")?.value;
+  const userEmail = rawEmail && isAllowedEmail(rawEmail) ? rawEmail : null;
 
   return (
     <StoreProvider>
