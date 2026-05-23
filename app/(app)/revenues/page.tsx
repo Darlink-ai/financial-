@@ -430,11 +430,11 @@ function RevenueDetail({
         </Field>
 
         <Field
-          label="Rolling reserve (%)"
+          label="Rolling reserve (% du CA)"
           hint={
             revenue.capturedAmount > 0
-              ? `≈ ${formatAmount(reserveAmount, revenue.currency)} retenu`
-              : undefined
+              ? `≈ ${formatAmount(reserveAmount, revenue.currency)} retenu sur ${formatAmount(revenue.capturedAmount, revenue.currency)}`
+              : "Sera calculé une fois le capturé renseigné"
           }
         >
           <PercentInput
