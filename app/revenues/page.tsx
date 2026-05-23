@@ -1,0 +1,820 @@
+"use client";
+
+import { useMemo, useRef, useState } from "react";
+import { PageHeader } from "@/components/PageHeader";
+import { BusinessSelector, BusinessDot } from "@/components/BusinessSelector";
+import {
+  useStore,
+  useRevenuesForCurrentMonth,
+  formatMonthLabel,
+} from "@/lib/store";
+import { parseCountryFile } from "@/lib/parse-country-file";
+import {
+  Plus,
+  Trash2,
+  Upload,
+  Globe,
+  Banknote,
+  Percent,
+  Clock,
+  ChevronRight,
+  TrendingUp,
+  CheckCircle2,
+  Lock,
+  Pencil,
+  Save,
+} from "lucide-react";
+import type { Revenue, Business } from "@/lib/types";
+import { formatAmount } from "@/lib/format";
+
+export default function RevenuesPage() {
+  const {
+    businesses,
+    selectedMonth,
+    selectedBusinessId,
+    addRevenue,
+    updateRevenue,
+    removeRevenue,
+  } = useStore();
+  const revenues = useRevenuesForCurrentMonth();
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+
+  const active = revenues.find((r) => r.id === activeId) ?? revenues[0] ?? null;
+
+  // Totals (across visible revenues)
+  const totals = useMemo(() => {
+    return revenues.reduce(
+      (acc, r) => {
+        acc.captured += r.capturedAmount;
+        acc.fees += r.fees;
+        acc.reserve += r.rollingReserveAmount;
+        return acc;
+      },
+      { captured: 0, fees: 0, reserve: 0 },
+    );
+  }, [revenues]);
+
+  const net = totals.captured - totals.fees - totals.reserve;
+
+  return (
+    <>
+      <PageHeader
+        title="Revenus"
+        subtitle={`Revenus par business pour ${formatMonthLabel(selectedMonth)} — montants capturés, frais du processeur, rolling reserve.`}
+        actions={
+          <>
+            <BusinessSelector />
+            <button onClick={() => setCreating(true)} className="btn btn-primary">
+              <Plus size={14} /> Nouveau revenu
+            </button>
+          </>
+        }
+      />
+
+      <div className="p-8 space-y-6">
+        {/* Totals */}
+        <section className="grid grid-cols-4 gap-4">
+          <TotalTile
+            label={selectedBusinessId === "all" ? "Capturé (total)" : `Capturé`}
+            value={totals.captured}
+            icon={Banknote}
+          />
+          <TotalTile label="Frais processeur" value={totals.fees} icon={Percent} tone="warn" />
+          <TotalTile label="Rolling reserve" value={totals.reserve} icon={Clock} tone="info" />
+          <TotalTile label="Net encaissé" value={net} icon={TrendingUp} tone="ok" />
+        </section>
+
+        {creating && (
+          <NewRevenueForm
+            businesses={businesses}
+            defaultBusinessId={
+              selectedBusinessId === "all" ? businesses[0]?.id : selectedBusinessId
+            }
+            month={selectedMonth}
+            onCancel={() => setCreating(false)}
+            onCreate={(r) => {
+              addRevenue(r);
+              setActiveId(r.id);
+              setCreating(false);
+            }}
+          />
+        )}
+
+        {revenues.length === 0 && !creating ? (
+          <div className="card p-12 text-center">
+            <Banknote size={28} className="text-muted mx-auto mb-3" />
+            <div className="text-[15px] font-medium">
+              Aucun revenu pour {formatMonthLabel(selectedMonth)}
+            </div>
+            <div className="text-[12px] text-muted mt-1">
+              Crée une entrée pour Link ou Ify.
+            </div>
+            <button onClick={() => setCreating(true)} className="btn btn-primary mt-4">
+              <Plus size={14} /> Nouveau revenu
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-[340px_1fr] gap-4">
+            {/* List grouped by business */}
+            <div className="space-y-5">
+              <GroupedRevenueList
+                revenues={revenues}
+                businesses={businesses}
+                activeId={active?.id ?? null}
+                onSelect={setActiveId}
+                onAddForBusiness={(businessId) => {
+                  setCreating(true);
+                  // Pre-fill the business in the form via a state hint — handled by selectedBusinessId
+                  // (the form already uses selectedBusinessId as default)
+                  // For multi-business "Tout" mode we just open the form.
+                  // The user can still pick the right business in the form.
+                  void businessId;
+                }}
+                showAddPerBusiness={selectedBusinessId === "all"}
+              />
+            </div>
+
+            {/* Detail */}
+            {active && (
+              <RevenueDetail
+                key={active.id}
+                revenue={active}
+                onUpdate={(patch) => updateRevenue(active.id, patch)}
+                onDelete={() => {
+                  removeRevenue(active.id);
+                  setActiveId(null);
+                }}
+              />
+            )}
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+function TotalTile({
+  label,
+  value,
+  icon: Icon,
+  tone = "neutral",
+}: {
+  label: string;
+  value: number;
+  icon: React.ComponentType<{ size?: number; className?: string }>;
+  tone?: "neutral" | "ok" | "warn" | "info";
+}) {
+  const toneClass =
+    tone === "ok"
+      ? "text-ok"
+      : tone === "warn"
+        ? "text-warn"
+        : tone === "info"
+          ? "text-accent"
+          : "text-text";
+  return (
+    <div className="card p-5">
+      <div className="flex items-center justify-between mb-3">
+        <div className="text-[12px] text-muted">{label}</div>
+        <Icon size={16} className="text-muted" />
+      </div>
+      <div className={`text-[22px] font-semibold leading-none ${toneClass} tabular-nums`}>
+        {formatAmount(value, "CHF")}
+      </div>
+    </div>
+  );
+}
+
+function GroupedRevenueList({
+  revenues,
+  businesses,
+  activeId,
+  onSelect,
+  showAddPerBusiness,
+}: {
+  revenues: Revenue[];
+  businesses: Business[];
+  activeId: string | null;
+  onSelect: (id: string) => void;
+  onAddForBusiness: (businessId: string) => void;
+  showAddPerBusiness: boolean;
+}) {
+  const { setSelectedBusinessId } = useStore();
+  // Group by businessId, only show businesses that have at least one revenue.
+  const groups = businesses
+    .map((b) => ({ business: b, items: revenues.filter((r) => r.businessId === b.id) }))
+    .filter((g) => g.items.length > 0);
+
+  return (
+    <>
+      {groups.map(({ business, items }) => {
+        const totalCaptured = items.reduce((s, r) => s + r.capturedAmount, 0);
+        const totalNet = items.reduce(
+          (s, r) => s + (r.capturedAmount - r.fees - r.rollingReserveAmount),
+          0,
+        );
+        return (
+          <div key={business.id}>
+            <div className="flex items-center gap-2 px-1 mb-2">
+              <span
+                className="w-2.5 h-2.5 rounded-full"
+                style={{ background: business.color }}
+              />
+              <div className="text-[13px] font-semibold">{business.name}</div>
+              <span className="badge">{items.length} proc.</span>
+              <div className="ml-auto text-right">
+                <div className="text-[11px] text-muted">Sous-total net</div>
+                <div className="text-[13px] font-medium tabular-nums">
+                  {formatAmount(totalNet, items[0]?.currency ?? "CHF")}
+                </div>
+              </div>
+            </div>
+            <div className="space-y-2">
+              {items.map((r) => (
+                <RevenueListItem
+                  key={r.id}
+                  revenue={r}
+                  active={activeId === r.id}
+                  onClick={() => onSelect(r.id)}
+                />
+              ))}
+            </div>
+            {showAddPerBusiness && (
+              <button
+                onClick={() => {
+                  setSelectedBusinessId(business.id);
+                  // The "Nouveau revenu" button at top-right is the canonical way; here we just
+                  // pre-select the business in the global filter so the form defaults correctly.
+                }}
+                className="mt-2 w-full text-[11px] text-muted hover:text-text border border-dashed border-border rounded-lg py-1.5 transition-colors flex items-center justify-center gap-1.5"
+                title={`Filtrer sur ${business.name} pour ajouter un autre processeur`}
+              >
+                <Plus size={11} /> Ajouter un processeur pour {business.name}
+              </button>
+            )}
+            <div className="text-[10px] text-muted mt-1 px-1 tabular-nums">
+              Capturé {formatAmount(totalCaptured, items[0]?.currency ?? "CHF")}
+            </div>
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+function RevenueListItem({
+  revenue,
+  active,
+  onClick,
+}: {
+  revenue: Revenue;
+  active: boolean;
+  onClick: () => void;
+}) {
+  const net = revenue.capturedAmount - revenue.fees - revenue.rollingReserveAmount;
+  const validated = !!revenue.validatedAt;
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full text-left card p-3 transition-colors relative ${
+        active ? "!border-accent2 bg-panel2" : "hover:bg-panel2"
+      } ${validated ? "!border-l-2 !border-l-ok" : ""}`}
+    >
+      <div className="flex items-center gap-2 mb-1.5">
+        <div className="text-[13px] font-medium">{revenue.processor}</div>
+        {validated ? (
+          <span
+            className="badge ok ml-auto"
+            title={`Enregistré le ${new Date(revenue.validatedAt!).toLocaleDateString("fr-CH")}`}
+          >
+            <CheckCircle2 size={10} /> Enregistré
+          </span>
+        ) : (
+          <span className="badge warn ml-auto">Brouillon</span>
+        )}
+      </div>
+      <div className="text-[16px] font-semibold leading-none tabular-nums">
+        {formatAmount(net, revenue.currency)}
+      </div>
+      <div className="text-[11px] text-muted mt-1.5 flex items-center gap-2">
+        <span>{formatAmount(revenue.capturedAmount, revenue.currency)} capturé</span>
+        <ChevronRight size={10} />
+        <span>{formatAmount(net, revenue.currency)} net</span>
+      </div>
+    </button>
+  );
+}
+
+function RevenueDetail({
+  revenue,
+  onUpdate,
+  onDelete,
+}: {
+  revenue: Revenue;
+  onUpdate: (patch: Partial<Revenue>) => void;
+  onDelete: () => void;
+}) {
+  const { businesses } = useStore();
+  const biz = businesses.find((b) => b.id === revenue.businessId);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [warnings, setWarnings] = useState<string[]>([]);
+
+  const locked = !!revenue.validatedAt;
+  const net = revenue.capturedAmount - revenue.fees - revenue.rollingReserveAmount;
+  const feesPct =
+    revenue.capturedAmount > 0
+      ? (revenue.fees / revenue.capturedAmount) * 100
+      : 0;
+  const reservePct =
+    revenue.capturedAmount > 0
+      ? (revenue.rollingReserveAmount / revenue.capturedAmount) * 100
+      : 0;
+
+  // Validation checklist — gives feedback to the user before they save.
+  const missing: string[] = [];
+  if (revenue.capturedAmount <= 0) missing.push("Montant capturé");
+  if (revenue.fees <= 0) missing.push("Frais processeur");
+  if (revenue.rollingReserveAmount <= 0 && revenue.rollingReserveMonths <= 0)
+    missing.push("Rolling reserve (ou durée 0 explicite)");
+  if (revenue.countryBreakdown.length === 0) missing.push("Fichier pays / revenus");
+  const ready = missing.length === 0;
+
+  const onCountryFile = async (f: File) => {
+    const { rows, warnings: w } = await parseCountryFile(f);
+    setWarnings(w);
+    onUpdate({ countryBreakdown: rows, countryFileName: f.name });
+  };
+
+  const onSave = () => onUpdate({ validatedAt: new Date().toISOString() });
+  const onUnlock = () => onUpdate({ validatedAt: null });
+
+  return (
+    <div className={`card overflow-hidden ${locked ? "!border-ok/30" : ""}`}>
+      <div className="px-5 py-4 border-b border-border flex items-center gap-3">
+        <BusinessDot businessId={revenue.businessId} />
+        <div className="text-[15px] font-semibold">{biz?.name}</div>
+        <span className="text-[12px] text-muted">· {revenue.processor}</span>
+        {locked && (
+          <span className="badge ok flex items-center gap-1">
+            <Lock size={10} />
+            Enregistré le {new Date(revenue.validatedAt!).toLocaleDateString("fr-CH")}
+          </span>
+        )}
+        <button
+          onClick={onDelete}
+          className="btn !px-2 text-[11px] ml-auto"
+          title="Supprimer"
+          disabled={locked}
+        >
+          <Trash2 size={12} />
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-6 p-5">
+        <Field label="Business">
+          <select
+            className="input"
+            value={revenue.businessId}
+            onChange={(e) => onUpdate({ businessId: e.target.value })}
+            disabled={locked}
+          >
+            {businesses.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Processeur de paiement">
+          <input
+            className="input"
+            value={revenue.processor}
+            onChange={(e) => onUpdate({ processor: e.target.value })}
+            disabled={locked}
+          />
+        </Field>
+
+        <Field label="Montant capturé" hint="Total brut traité par le processeur">
+          <AmountInput
+            value={revenue.capturedAmount}
+            currency={revenue.currency}
+            onChange={(v) => onUpdate({ capturedAmount: v })}
+            disabled={locked}
+          />
+        </Field>
+
+        <Field
+          label="Frais processeur"
+          hint={revenue.capturedAmount > 0 ? `${feesPct.toFixed(2)} % du capturé` : undefined}
+        >
+          <AmountInput
+            value={revenue.fees}
+            currency={revenue.currency}
+            onChange={(v) => onUpdate({ fees: v })}
+            disabled={locked}
+          />
+        </Field>
+
+        <Field
+          label="Rolling reserve"
+          hint={revenue.capturedAmount > 0 ? `${reservePct.toFixed(2)} % retenu` : undefined}
+        >
+          <AmountInput
+            value={revenue.rollingReserveAmount}
+            currency={revenue.currency}
+            onChange={(v) => onUpdate({ rollingReserveAmount: v })}
+            disabled={locked}
+          />
+        </Field>
+
+        <Field label="Durée de la rolling reserve">
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min={0}
+              max={36}
+              className="input !w-24"
+              value={revenue.rollingReserveMonths}
+              onChange={(e) =>
+                onUpdate({ rollingReserveMonths: parseInt(e.target.value, 10) || 0 })
+              }
+              disabled={locked}
+            />
+            <span className="text-[12px] text-muted">mois</span>
+          </div>
+        </Field>
+      </div>
+
+      <div className="px-5 pb-5">
+        <div className="card bg-panel2/50 p-4 flex items-center gap-6">
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-muted">Net encaissé</div>
+            <div className="text-[20px] font-semibold tabular-nums text-ok">
+              {formatAmount(net, revenue.currency)}
+            </div>
+          </div>
+          <div className="text-[11px] text-muted flex-1">
+            = capturé{" "}
+            <span className="font-mono">{formatAmount(revenue.capturedAmount, revenue.currency)}</span>{" "}
+            − frais{" "}
+            <span className="font-mono">{formatAmount(revenue.fees, revenue.currency)}</span> − reserve{" "}
+            <span className="font-mono">
+              {formatAmount(revenue.rollingReserveAmount, revenue.currency)}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Country breakdown */}
+      <div className="border-t border-border">
+        <div className="px-5 py-4 flex items-center gap-3">
+          <Globe size={14} className="text-muted" />
+          <div className="text-[13px] font-medium">Répartition par pays</div>
+          <span className="text-[11px] text-muted">
+            {revenue.countryBreakdown.length} pays
+            {revenue.countryFileName && ` · ${revenue.countryFileName}`}
+          </span>
+          <button
+            onClick={() => fileRef.current?.click()}
+            className="btn text-[11px] ml-auto"
+            disabled={locked}
+          >
+            <Upload size={11} /> {revenue.countryBreakdown.length === 0 ? "Charger" : "Remplacer"}
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) onCountryFile(f);
+            }}
+          />
+        </div>
+
+        {warnings.length > 0 && (
+          <div className="px-5 pb-3">
+            <div className="card bg-warn/5 border-warn/30 p-3 text-[11px] text-warn">
+              {warnings.map((w, i) => (
+                <div key={i}>{w}</div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {revenue.countryBreakdown.length === 0 ? (
+          <div className="px-5 pb-5">
+            <div
+              className={`card border-dashed p-8 text-center transition-colors ${
+                locked ? "opacity-50" : "cursor-pointer hover:bg-panel2"
+              }`}
+              onClick={() => !locked && fileRef.current?.click()}
+            >
+              <Upload size={20} className="text-accent mx-auto mb-2" />
+              <div className="text-[13px] font-medium">
+                Charge le fichier des revenus par pays
+              </div>
+              <div className="text-[11px] text-muted mt-1">
+                .xlsx / .xls / .csv — colonne 1 : pays, colonne 2 : revenu
+              </div>
+            </div>
+          </div>
+        ) : (
+          <CountryTable revenue={revenue} />
+        )}
+      </div>
+
+      {/* Save bar */}
+      <div className="border-t border-border px-5 py-4 bg-panel2/30 flex items-center gap-4">
+        {locked ? (
+          <>
+            <CheckCircle2 size={16} className="text-ok shrink-0" />
+            <div className="text-[12px] flex-1">
+              <div className="font-medium text-ok">Revenu enregistré</div>
+              <div className="text-muted text-[11px]">
+                {new Date(revenue.validatedAt!).toLocaleString("fr-CH", {
+                  dateStyle: "long",
+                  timeStyle: "short",
+                })}
+                . Les champs sont verrouillés. Clique sur « Modifier » pour rouvrir.
+              </div>
+            </div>
+            <button onClick={onUnlock} className="btn">
+              <Pencil size={12} /> Modifier
+            </button>
+          </>
+        ) : (
+          <>
+            {ready ? (
+              <CheckCircle2 size={16} className="text-ok shrink-0" />
+            ) : (
+              <span className="w-4 h-4 rounded-full border-2 border-warn shrink-0" />
+            )}
+            <div className="text-[12px] flex-1 min-w-0">
+              <div className="font-medium">
+                {ready ? "Prêt à enregistrer" : "Complète les champs avant d'enregistrer"}
+              </div>
+              {!ready && (
+                <div className="text-muted text-[11px] truncate">
+                  Manquant : {missing.join(", ")}
+                </div>
+              )}
+              {ready && (
+                <div className="text-muted text-[11px]">
+                  Net du mois : {formatAmount(net, revenue.currency)} ·{" "}
+                  {revenue.countryBreakdown.length} pays
+                </div>
+              )}
+            </div>
+            <button
+              onClick={onSave}
+              disabled={!ready}
+              className="btn btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Save size={12} /> Enregistrer l'entrée
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CountryTable({ revenue }: { revenue: Revenue }) {
+  const total = revenue.countryBreakdown.reduce((s, c) => s + c.amount, 0);
+  const sorted = [...revenue.countryBreakdown].sort((a, b) => b.amount - a.amount);
+  const max = sorted[0]?.amount ?? 1;
+
+  return (
+    <div className="px-5 pb-5">
+      <table className="w-full text-[12px]">
+        <thead>
+          <tr className="text-[10px] uppercase tracking-wider text-muted">
+            <th className="text-left py-2 w-16">Pays</th>
+            <th className="text-left py-2">Part</th>
+            <th className="text-right py-2 w-28">Montant</th>
+            <th className="text-right py-2 w-16">%</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((c) => {
+            const pct = total > 0 ? (c.amount / total) * 100 : 0;
+            const w = total > 0 ? (c.amount / max) * 100 : 0;
+            return (
+              <tr key={c.country} className="border-t border-border">
+                <td className="py-2 font-mono">{c.country}</td>
+                <td className="py-2 pr-4">
+                  <div className="h-1.5 bg-panel2 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-accent rounded-full"
+                      style={{ width: `${w}%` }}
+                    />
+                  </div>
+                </td>
+                <td className="py-2 text-right tabular-nums">
+                  {formatAmount(c.amount, revenue.currency)}
+                </td>
+                <td className="py-2 text-right text-muted tabular-nums">{pct.toFixed(1)}%</td>
+              </tr>
+            );
+          })}
+          <tr className="border-t border-border font-medium">
+            <td className="py-2">Total</td>
+            <td></td>
+            <td className="py-2 text-right tabular-nums">
+              {formatAmount(total, revenue.currency)}
+            </td>
+            <td className="py-2 text-right text-muted">100%</td>
+          </tr>
+        </tbody>
+      </table>
+      <div className="text-[11px] text-muted mt-3">
+        Total pays : {formatAmount(total, revenue.currency)} · Capturé processeur :{" "}
+        {formatAmount(revenue.capturedAmount, revenue.currency)}
+        {Math.abs(total - revenue.capturedAmount) > 0.01 && (
+          <span className="badge warn ml-2">
+            écart : {formatAmount(total - revenue.capturedAmount, revenue.currency)}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function NewRevenueForm({
+  businesses,
+  defaultBusinessId,
+  month,
+  onCancel,
+  onCreate,
+}: {
+  businesses: Business[];
+  defaultBusinessId?: string;
+  month: string;
+  onCancel: () => void;
+  onCreate: (r: Revenue) => void;
+}) {
+  const [draft, setDraft] = useState<Omit<Revenue, "id">>({
+    businessId: defaultBusinessId ?? businesses[0]?.id ?? "",
+    month,
+    processor: "Stripe",
+    currency: "CHF",
+    capturedAmount: 0,
+    fees: 0,
+    rollingReserveAmount: 0,
+    rollingReserveMonths: 0,
+    releasedAt: null,
+    validatedAt: null,
+    countryBreakdown: [],
+    countryFileName: null,
+  });
+
+  const submit = () => {
+    if (!draft.businessId || draft.capturedAmount <= 0) return;
+    onCreate({ id: `rev-${Date.now()}`, ...draft });
+  };
+
+  return (
+    <div className="card p-5 border-accent2/40 bg-accent/5">
+      <div className="flex items-center gap-2 mb-1">
+        <div className="text-[13px] font-medium">Nouveau revenu</div>
+        <span className="badge info">Un par business × processeur</span>
+      </div>
+      <div className="text-[11px] text-muted mb-4">
+        Tu peux créer plusieurs entrées pour le même business si tu as plusieurs processeurs (ex :
+        Link · Stripe + Link · PayPal).
+      </div>
+      <div className="grid grid-cols-4 gap-3">
+        <Field label="Business">
+          <select
+            className="input"
+            value={draft.businessId}
+            onChange={(e) => setDraft({ ...draft, businessId: e.target.value })}
+          >
+            {businesses.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Processeur">
+          <input
+            className="input"
+            value={draft.processor}
+            onChange={(e) => setDraft({ ...draft, processor: e.target.value })}
+          />
+        </Field>
+        <Field label="Devise">
+          <select
+            className="input"
+            value={draft.currency}
+            onChange={(e) => setDraft({ ...draft, currency: e.target.value })}
+          >
+            <option>CHF</option>
+            <option>EUR</option>
+            <option>USD</option>
+            <option>GBP</option>
+          </select>
+        </Field>
+        <Field label="Mois">
+          <input className="input" value={draft.month} disabled />
+        </Field>
+
+        <Field label="Capturé">
+          <AmountInput
+            value={draft.capturedAmount}
+            currency={draft.currency}
+            onChange={(v) => setDraft({ ...draft, capturedAmount: v })}
+          />
+        </Field>
+        <Field label="Frais">
+          <AmountInput
+            value={draft.fees}
+            currency={draft.currency}
+            onChange={(v) => setDraft({ ...draft, fees: v })}
+          />
+        </Field>
+        <Field label="Rolling reserve">
+          <AmountInput
+            value={draft.rollingReserveAmount}
+            currency={draft.currency}
+            onChange={(v) => setDraft({ ...draft, rollingReserveAmount: v })}
+          />
+        </Field>
+        <Field label="Durée reserve (mois)">
+          <input
+            type="number"
+            className="input"
+            min={0}
+            value={draft.rollingReserveMonths}
+            onChange={(e) =>
+              setDraft({
+                ...draft,
+                rollingReserveMonths: parseInt(e.target.value, 10) || 0,
+              })
+            }
+          />
+        </Field>
+      </div>
+
+      <div className="flex items-center justify-end gap-2 mt-4">
+        <button onClick={onCancel} className="btn">
+          Annuler
+        </button>
+        <button onClick={submit} className="btn btn-primary">
+          <Plus size={12} /> Créer
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function Field({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <label className="text-[11px] text-muted block mb-1">{label}</label>
+      {children}
+      {hint && <div className="text-[11px] text-muted mt-1">{hint}</div>}
+    </div>
+  );
+}
+
+function AmountInput({
+  value,
+  currency,
+  onChange,
+  disabled,
+}: {
+  value: number;
+  currency: string;
+  onChange: (v: number) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="relative">
+      <input
+        type="number"
+        step="0.01"
+        min={0}
+        className="input pr-12 tabular-nums"
+        value={value}
+        onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+        disabled={disabled}
+      />
+      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-muted pointer-events-none">
+        {currency}
+      </span>
+    </div>
+  );
+}

@@ -1,0 +1,8 @@
+node_modules
+.next
+.env*.local
+*.log
+.DS_Store
+data/factura.db*
+supabase/.temp
+supabase/.branches
