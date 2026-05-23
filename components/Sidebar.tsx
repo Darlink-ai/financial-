@@ -57,18 +57,6 @@ export function Sidebar({
 
   return (
     <aside className="w-64 shrink-0 border-r border-border bg-panel min-h-screen flex flex-col">
-      <div className="px-5 py-5 border-b border-border">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-accent to-accent2 flex items-center justify-center">
-            <Activity size={16} className="text-white" />
-          </div>
-          <div>
-            <div className="text-[15px] font-semibold leading-tight">Factura</div>
-            <div className="text-[11px] text-muted leading-tight">Classement automatique</div>
-          </div>
-        </div>
-      </div>
-
       <nav className="flex-1 px-3 py-4 space-y-1">
         {items.map((item, idx) => {
           const Icon = item.icon;
