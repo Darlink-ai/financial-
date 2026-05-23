@@ -2,7 +2,7 @@
  * Restriction d'accès : seuls les emails dont la partie domaine appartient à
  * cette liste sont autorisés à se connecter.
  */
-export const ALLOWED_EMAIL_DOMAINS = ["famelink.ai"];
+export const ALLOWED_EMAIL_DOMAINS = ["famelink.ai", "darlink.ai"];
 
 export function isAllowedEmail(email: string | null | undefined): boolean {
   if (!email) return false;
