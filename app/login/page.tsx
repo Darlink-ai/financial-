@@ -104,8 +104,8 @@ function LoginInner() {
     e.preventDefault();
     setError(null);
     const code = otp.replace(/\s/g, "").trim();
-    if (code.length < 6) {
-      setError("Code incomplet.");
+    if (code.length < 6 || code.length > 10) {
+      setError("Code attendu : 6 à 10 chiffres.");
       return;
     }
     setLoading(true);
@@ -156,13 +156,13 @@ function LoginInner() {
             <input
               type="text"
               inputMode="numeric"
-              pattern="[0-9]{6}"
-              maxLength={6}
+              pattern="[0-9]{6,10}"
+              maxLength={10}
               autoFocus
               autoComplete="one-time-code"
               value={otp}
               onChange={(e) => setOtp(e.target.value.replace(/[^\d]/g, ""))}
-              className="input font-mono tracking-[0.4em] text-center text-[16px]"
+              className="input font-mono tracking-[0.3em] text-center text-[16px]"
               required
             />
             <button
