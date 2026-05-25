@@ -19,6 +19,7 @@ function LoginInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const errorParam = searchParams.get("error");
+  const codeParam = searchParams.get("code");
   const nextPath = searchParams.get("next") ?? "/";
 
   const [step, setStep] = useState<Step>("email");
@@ -32,6 +33,44 @@ function LoginInner() {
       setError("Accès refusé.");
     }
   }, [errorParam]);
+
+  // Si on arrive via le lien magique (?code=...), on échange le code
+  // contre une session puis on redirige.
+  useEffect(() => {
+    if (!codeParam) return;
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const supabase = createSupabaseBrowserClient();
+        const { error: sbError } =
+          await supabase.auth.exchangeCodeForSession(codeParam);
+        if (cancelled) return;
+        if (sbError) {
+          setError(
+            "Lien expiré ou invalide. Recommence avec un email et saisis le code à 6 chiffres.",
+          );
+          // Nettoie le ?code pour ne pas re-tenter en boucle.
+          router.replace("/login");
+          return;
+        }
+        router.push(nextPath);
+        router.refresh();
+      } catch {
+        if (!cancelled) {
+          setError(
+            "Lien expiré ou invalide. Recommence avec un email et saisis le code à 6 chiffres.",
+          );
+          router.replace("/login");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [codeParam, router, nextPath]);
 
   const sendOtp = async (e: React.FormEvent) => {
     e.preventDefault();
