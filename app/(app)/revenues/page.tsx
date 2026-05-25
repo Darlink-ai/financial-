@@ -48,12 +48,19 @@ export default function RevenuesPage() {
 
   const active = revenues.find((r) => r.id === activeId) ?? revenues[0] ?? null;
 
-  // Totals (across visible revenues)
+  // Totals (across visible revenues). Les frais sont recalculés en live
+  // à partir des compteurs + rates pour éviter toute désync avec le
+  // détail affiché dans le panneau de droite.
   const totals = useMemo(() => {
     return revenues.reduce(
       (acc, r) => {
+        const liveFees = computeTotalFees(
+          r.txCounts,
+          r.feeRates,
+          r.capturedAmount,
+        );
         acc.captured += r.capturedAmount;
-        acc.fees += r.fees;
+        acc.fees += liveFees;
         acc.reserve += (r.capturedAmount * r.rollingReservePercent) / 100;
         return acc;
       },
@@ -62,6 +69,9 @@ export default function RevenuesPage() {
   }, [revenues]);
 
   const net = totals.captured - totals.fees - totals.reserve;
+  // Devise d'affichage des totaux : on prend celle du 1er revenu visible
+  // (ils ont normalement tous la même par business).
+  const displayCurrency = revenues[0]?.currency ?? "CHF";
 
   return (
     <>
@@ -84,11 +94,30 @@ export default function RevenuesPage() {
           <TotalTile
             label={selectedBusinessId === "all" ? "Capturé (total)" : `Capturé`}
             value={totals.captured}
+            currency={displayCurrency}
             icon={Banknote}
           />
-          <TotalTile label="Frais processeur" value={totals.fees} icon={Percent} tone="warn" />
-          <TotalTile label="Rolling reserve" value={totals.reserve} icon={Clock} tone="info" />
-          <TotalTile label="Net encaissé" value={net} icon={TrendingUp} tone="ok" />
+          <TotalTile
+            label="Frais processeur"
+            value={totals.fees}
+            currency={displayCurrency}
+            icon={Percent}
+            tone="warn"
+          />
+          <TotalTile
+            label="Rolling reserve"
+            value={totals.reserve}
+            currency={displayCurrency}
+            icon={Clock}
+            tone="info"
+          />
+          <TotalTile
+            label="Net encaissé"
+            value={net}
+            currency={displayCurrency}
+            icon={TrendingUp}
+            tone="ok"
+          />
         </section>
 
         {creating && (
@@ -163,11 +192,13 @@ export default function RevenuesPage() {
 function TotalTile({
   label,
   value,
+  currency,
   icon: Icon,
   tone = "neutral",
 }: {
   label: string;
   value: number;
+  currency: string;
   icon: React.ComponentType<{ size?: number; className?: string }>;
   tone?: "neutral" | "ok" | "warn" | "info";
 }) {
@@ -186,7 +217,7 @@ function TotalTile({
         <Icon size={16} className="text-muted" />
       </div>
       <div className={`text-[22px] font-semibold leading-none ${toneClass} tabular-nums`}>
-        {formatAmount(value, "CHF")}
+        {formatAmount(value, currency)}
       </div>
     </div>
   );
@@ -220,7 +251,7 @@ function GroupedRevenueList({
           (s, r) =>
             s +
             (r.capturedAmount -
-              r.fees -
+              computeTotalFees(r.txCounts, r.feeRates, r.capturedAmount) -
               (r.capturedAmount * r.rollingReservePercent) / 100),
           0,
         );
@@ -283,7 +314,12 @@ function RevenueListItem({
   onClick: () => void;
 }) {
   const reserveAmount = (revenue.capturedAmount * revenue.rollingReservePercent) / 100;
-  const net = revenue.capturedAmount - revenue.fees - reserveAmount;
+  const computedFees = computeTotalFees(
+    revenue.txCounts,
+    revenue.feeRates,
+    revenue.capturedAmount,
+  );
+  const net = revenue.capturedAmount - computedFees - reserveAmount;
   const validated = !!revenue.validatedAt;
   return (
     <button
@@ -334,10 +370,18 @@ function RevenueDetail({
   const locked = !!revenue.validatedAt;
   const reserveAmount =
     (revenue.capturedAmount * revenue.rollingReservePercent) / 100;
-  const net = revenue.capturedAmount - revenue.fees - reserveAmount;
+  // Frais calculés en live à partir des compteurs + tarifs + capturé.
+  // Le champ revenue.fees stocké peut être obsolète tant que rien n'a
+  // été ré-édité ; on l'ignore pour l'affichage.
+  const computedFees = computeTotalFees(
+    revenue.txCounts,
+    revenue.feeRates,
+    revenue.capturedAmount,
+  );
+  const net = revenue.capturedAmount - computedFees - reserveAmount;
   const feesPct =
     revenue.capturedAmount > 0
-      ? (revenue.fees / revenue.capturedAmount) * 100
+      ? (computedFees / revenue.capturedAmount) * 100
       : 0;
 
   // Validation checklist — gives feedback to the user before they save.
@@ -425,7 +469,15 @@ function RevenueDetail({
           <AmountInput
             value={revenue.capturedAmount}
             currency={revenue.currency}
-            onChange={(v) => onUpdate({ capturedAmount: v })}
+            onChange={(v) => {
+              // Recalcule les frais (IC++ % et total) en fonction du nouveau capturé.
+              const newFees = computeTotalFees(
+                revenue.txCounts,
+                revenue.feeRates,
+                v,
+              );
+              onUpdate({ capturedAmount: v, fees: newFees });
+            }}
             disabled={locked}
           />
         </Field>
@@ -438,11 +490,16 @@ function RevenueDetail({
               : "Calculé depuis le détail des frais ci-dessous"
           }
         >
+          {/* Read-only : la valeur vient du détail ci-dessous. Pour ajuster, modifier les tarifs. */}
           <AmountInput
-            value={revenue.fees}
+            value={computeTotalFees(
+              revenue.txCounts,
+              revenue.feeRates,
+              revenue.capturedAmount,
+            )}
             currency={revenue.currency}
-            onChange={(v) => onUpdate({ fees: v })}
-            disabled={locked}
+            onChange={() => {}}
+            disabled
           />
         </Field>
 
@@ -491,7 +548,7 @@ function RevenueDetail({
             = capturé{" "}
             <span className="font-mono">{formatAmount(revenue.capturedAmount, revenue.currency)}</span>{" "}
             − frais{" "}
-            <span className="font-mono">{formatAmount(revenue.fees, revenue.currency)}</span> − reserve{" "}
+            <span className="font-mono">{formatAmount(computedFees, revenue.currency)}</span> − reserve{" "}
             <span className="font-mono">
               {formatAmount(reserveAmount, revenue.currency)}
             </span>{" "}
