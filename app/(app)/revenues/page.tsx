@@ -24,13 +24,11 @@ import {
   Pencil,
   Save,
 } from "lucide-react";
-import type { Revenue, Business, FeeBreakdown, TxCounts } from "@/lib/types";
+import type { Revenue, Business, FeeRates, TxCounts } from "@/lib/types";
 import {
   DEFAULT_FEE_RATES,
-  EMPTY_FEE_BREAKDOWN,
   EMPTY_TX_COUNTS,
-  computeFeesFromCounts,
-  sumFees,
+  computeTotalFees,
 } from "@/lib/types";
 import { formatAmount } from "@/lib/format";
 
@@ -358,16 +356,13 @@ function RevenueDetail({
       countryFileName: f.name,
       txCounts,
     };
-    // Auto-remplit le Capturé avec le total des transactions capturées.
     const captured =
       revenue.capturedAmount > 0 ? revenue.capturedAmount : totalCaptured;
     if (revenue.capturedAmount <= 0 && totalCaptured > 0) {
       patch.capturedAmount = totalCaptured;
     }
-    // Recalcule la décomposition des frais en fonction des nouveaux compteurs.
-    const breakdown = computeFeesFromCounts(txCounts, captured);
-    patch.feeBreakdown = breakdown;
-    patch.fees = sumFees(breakdown);
+    // Recalcule le total des frais selon les rates actuels du revenu.
+    patch.fees = computeTotalFees(txCounts, revenue.feeRates, captured);
     onUpdate(patch);
   };
 
@@ -622,24 +617,23 @@ function RevenueDetail({
   );
 }
 
-// --- Détail transactions + frais éditable ---
+// --- Détail transactions + tarifs éditables ---
 
-type TxRowDef = {
-  key: keyof TxCounts;
-  feeKey: keyof FeeBreakdown;
+type PerTxRow = {
+  countKey: keyof TxCounts;
+  rateKey: keyof FeeRates;
   label: string;
-  rate: number; // tarif unitaire €
-  rateLabel: string;
+  unit: string; // "tx", "mois", "wire", "%"
 };
 
-const TX_ROWS: TxRowDef[] = [
-  { key: "authorized", feeKey: "authFee", label: "Auth", rate: DEFAULT_FEE_RATES.authFee, rateLabel: "€0.15 / tx" },
-  { key: "captured", feeKey: "captureFee", label: "Capture", rate: DEFAULT_FEE_RATES.captureFee, rateLabel: "€0.10 / tx" },
-  { key: "declined", feeKey: "declinedFee", label: "Declined", rate: DEFAULT_FEE_RATES.declinedFee, rateLabel: "€0.15 / tx" },
-  { key: "refund", feeKey: "refundFee", label: "Refund", rate: DEFAULT_FEE_RATES.refundFee, rateLabel: "€0.50 / tx" },
-  { key: "chargeback", feeKey: "chargebackFee", label: "Chargeback", rate: DEFAULT_FEE_RATES.chargebackFee, rateLabel: "€35 / tx" },
-  { key: "retrievalRequest", feeKey: "retrievalFee", label: "Retrieval request", rate: DEFAULT_FEE_RATES.retrievalFee, rateLabel: "€9 / tx" },
-  { key: "preArbitration", feeKey: "preArbitrationFee", label: "Pre-arbitration", rate: DEFAULT_FEE_RATES.preArbitrationFee, rateLabel: "€24.95 / tx" },
+const PER_TX_ROWS: PerTxRow[] = [
+  { countKey: "authorized", rateKey: "authFee", label: "Auth", unit: "tx" },
+  { countKey: "captured", rateKey: "captureFee", label: "Capture", unit: "tx" },
+  { countKey: "declined", rateKey: "declinedFee", label: "Declined", unit: "tx" },
+  { countKey: "refund", rateKey: "refundFee", label: "Refund", unit: "tx" },
+  { countKey: "chargeback", rateKey: "chargebackFee", label: "Chargeback", unit: "tx" },
+  { countKey: "retrievalRequest", rateKey: "retrievalFee", label: "Retrieval request", unit: "tx" },
+  { countKey: "preArbitration", rateKey: "preArbitrationFee", label: "Pre-arbitration", unit: "tx" },
 ];
 
 function FeeBreakdownSection({
@@ -652,33 +646,28 @@ function FeeBreakdownSection({
   locked: boolean;
 }) {
   const counts = revenue.txCounts;
-  const breakdown = revenue.feeBreakdown;
-  const total = sumFees(breakdown);
+  const rates = revenue.feeRates;
+  const captured = revenue.capturedAmount;
+  const total = computeTotalFees(counts, rates, captured);
 
-  const setCount = (key: keyof TxCounts, value: number) => {
-    const newCounts: TxCounts = { ...counts, [key]: Math.max(0, value | 0) };
-    const newBreakdown = computeFeesFromCounts(
-      newCounts,
-      revenue.capturedAmount,
-    );
+  const setRate = (key: keyof FeeRates, value: number) => {
+    const newRates: FeeRates = { ...rates, [key]: value };
     onUpdate({
-      txCounts: newCounts,
-      feeBreakdown: newBreakdown,
-      fees: sumFees(newBreakdown),
+      feeRates: newRates,
+      fees: computeTotalFees(counts, newRates, captured),
     });
   };
 
-  const setFee = (key: keyof FeeBreakdown, value: number) => {
-    const newBreakdown: FeeBreakdown = { ...breakdown, [key]: value };
-    onUpdate({ feeBreakdown: newBreakdown, fees: sumFees(newBreakdown) });
-  };
+  const percentFee = (captured * rates.percentRate) / 100;
 
   return (
     <div className="border-t border-border">
       <div className="px-5 py-4 flex items-center gap-3">
         <Percent size={14} className="text-muted" />
         <div className="text-[13px] font-medium">Détail des frais processeur</div>
-        <span className="text-[11px] text-muted">Auto-calculé. Tu peux modifier les compteurs ou les montants.</span>
+        <span className="text-[11px] text-muted">
+          Tu modifies les tarifs ; les compteurs viennent du fichier.
+        </span>
         <span className="ml-auto text-[12px] font-semibold tabular-nums">
           Total : {formatAmount(total, revenue.currency)}
         </span>
@@ -688,95 +677,98 @@ function FeeBreakdownSection({
           <thead>
             <tr className="text-[10px] uppercase tracking-wider text-muted">
               <th className="text-left py-2">Type</th>
-              <th className="text-left py-2 w-32">Tarif</th>
+              <th className="text-right py-2 w-32">Tarif</th>
               <th className="text-right py-2 w-24">Quantité</th>
               <th className="text-right py-2 w-36">Frais</th>
             </tr>
           </thead>
           <tbody>
-            {TX_ROWS.map((row) => (
-              <tr key={row.key} className="border-t border-border">
-                <td className="py-2">{row.label}</td>
-                <td className="py-2 text-muted font-mono">{row.rateLabel}</td>
-                <td className="py-2 text-right">
-                  <input
-                    type="number"
-                    min={0}
-                    step={1}
-                    className="input !py-1 !px-2 text-right tabular-nums w-20"
-                    value={counts[row.key]}
-                    onChange={(e) =>
-                      setCount(row.key, parseInt(e.target.value, 10) || 0)
-                    }
-                    disabled={locked}
-                  />
-                </td>
-                <td className="py-2 text-right">
-                  <FeeInput
-                    value={breakdown[row.feeKey]}
-                    currency={revenue.currency}
-                    onChange={(v) => setFee(row.feeKey, v)}
-                    disabled={locked}
-                  />
-                </td>
-              </tr>
-            ))}
+            {PER_TX_ROWS.map((row) => {
+              const c = counts[row.countKey];
+              const r = rates[row.rateKey];
+              const fee = roundCents(c * r);
+              return (
+                <tr key={row.countKey} className="border-t border-border">
+                  <td className="py-2">{row.label}</td>
+                  <td className="py-2 text-right">
+                    <RateInput
+                      value={r}
+                      unitSuffix={`€/${row.unit}`}
+                      onChange={(v) => setRate(row.rateKey, v)}
+                      disabled={locked}
+                    />
+                  </td>
+                  <td className="py-2 text-right tabular-nums">{c}</td>
+                  <td className="py-2 text-right tabular-nums">
+                    {formatAmount(fee, revenue.currency)}
+                  </td>
+                </tr>
+              );
+            })}
 
-            {/* Pourcentage IC++ */}
+            {/* IC++ % du capturé */}
             <tr className="border-t border-border">
-              <td className="py-2">IC++ ({DEFAULT_FEE_RATES.percentRate}%)</td>
-              <td className="py-2 text-muted font-mono">% du capturé</td>
-              <td className="py-2 text-right text-muted tabular-nums">
-                {formatAmount(revenue.capturedAmount, revenue.currency)}
-              </td>
+              <td className="py-2">IC++ (% du capturé)</td>
               <td className="py-2 text-right">
-                <FeeInput
-                  value={breakdown.percentFee}
-                  currency={revenue.currency}
-                  onChange={(v) => setFee("percentFee", v)}
+                <RateInput
+                  value={rates.percentRate}
+                  unitSuffix="%"
+                  onChange={(v) => setRate("percentRate", v)}
                   disabled={locked}
                 />
+              </td>
+              <td className="py-2 text-right text-muted tabular-nums">
+                {formatAmount(captured, revenue.currency)}
+              </td>
+              <td className="py-2 text-right tabular-nums">
+                {formatAmount(roundCents(percentFee), revenue.currency)}
               </td>
             </tr>
 
-            {/* Frais mensuels */}
+            {/* Frais fixes */}
             <tr className="border-t border-border">
               <td className="py-2">Monthly service fee</td>
-              <td className="py-2 text-muted font-mono">€19.95 / mois</td>
-              <td className="py-2"></td>
               <td className="py-2 text-right">
-                <FeeInput
-                  value={breakdown.monthlyServiceFee}
-                  currency={revenue.currency}
-                  onChange={(v) => setFee("monthlyServiceFee", v)}
+                <RateInput
+                  value={rates.monthlyServiceFee}
+                  unitSuffix="€/mois"
+                  onChange={(v) => setRate("monthlyServiceFee", v)}
                   disabled={locked}
                 />
+              </td>
+              <td className="py-2 text-right text-muted">1</td>
+              <td className="py-2 text-right tabular-nums">
+                {formatAmount(rates.monthlyServiceFee, revenue.currency)}
               </td>
             </tr>
             <tr className="border-t border-border">
               <td className="py-2">VBV/MC Secure Code</td>
-              <td className="py-2 text-muted font-mono">€19.95 / mois</td>
-              <td className="py-2"></td>
               <td className="py-2 text-right">
-                <FeeInput
-                  value={breakdown.monthlySecureCodeFee}
-                  currency={revenue.currency}
-                  onChange={(v) => setFee("monthlySecureCodeFee", v)}
+                <RateInput
+                  value={rates.monthlySecureCodeFee}
+                  unitSuffix="€/mois"
+                  onChange={(v) => setRate("monthlySecureCodeFee", v)}
                   disabled={locked}
                 />
+              </td>
+              <td className="py-2 text-right text-muted">1</td>
+              <td className="py-2 text-right tabular-nums">
+                {formatAmount(rates.monthlySecureCodeFee, revenue.currency)}
               </td>
             </tr>
             <tr className="border-t border-border">
               <td className="py-2">Wire transfer</td>
-              <td className="py-2 text-muted font-mono">€5 / wire</td>
-              <td className="py-2"></td>
               <td className="py-2 text-right">
-                <FeeInput
-                  value={breakdown.wireTransferFee}
-                  currency={revenue.currency}
-                  onChange={(v) => setFee("wireTransferFee", v)}
+                <RateInput
+                  value={rates.wireTransferFee}
+                  unitSuffix="€/wire"
+                  onChange={(v) => setRate("wireTransferFee", v)}
                   disabled={locked}
                 />
+              </td>
+              <td className="py-2 text-right text-muted">1</td>
+              <td className="py-2 text-right tabular-nums">
+                {formatAmount(rates.wireTransferFee, revenue.currency)}
               </td>
             </tr>
 
@@ -795,14 +787,14 @@ function FeeBreakdownSection({
   );
 }
 
-function FeeInput({
+function RateInput({
   value,
-  currency,
+  unitSuffix,
   onChange,
   disabled,
 }: {
   value: number;
-  currency: string;
+  unitSuffix: string;
   onChange: (v: number) => void;
   disabled?: boolean;
 }) {
@@ -812,16 +804,20 @@ function FeeInput({
         type="number"
         step="0.01"
         min={0}
-        className="input !py-1 !px-2 pr-9 tabular-nums text-right"
+        className="input !py-1 !px-2 pr-14 tabular-nums text-right"
         value={value}
         onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
         disabled={disabled}
       />
       <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-muted pointer-events-none">
-        {currency}
+        {unitSuffix}
       </span>
     </div>
   );
+}
+
+function roundCents(n: number) {
+  return Math.round(n * 100) / 100;
 }
 
 function CountryTable({ revenue }: { revenue: Revenue }) {
@@ -912,7 +908,7 @@ function NewRevenueForm({
     countryBreakdown: [],
     countryFileName: null,
     txCounts: { ...EMPTY_TX_COUNTS },
-    feeBreakdown: { ...EMPTY_FEE_BREAKDOWN },
+    feeRates: { ...DEFAULT_FEE_RATES },
   });
 
   const submit = () => {

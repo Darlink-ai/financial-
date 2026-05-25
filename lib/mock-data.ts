@@ -6,7 +6,7 @@ import type {
   Business,
   Revenue,
 } from "./types";
-import { EMPTY_FEE_BREAKDOWN, EMPTY_TX_COUNTS } from "./types";
+import { DEFAULT_FEE_RATES, EMPTY_TX_COUNTS } from "./types";
 
 export const mockBusinesses: Business[] = [
   { id: "biz-link", name: "Link", color: "#7c9cff", processor: "Stripe" },
@@ -36,7 +36,7 @@ export const mockRevenues: Revenue[] = [
     ],
     countryFileName: "link-mai-2026-pays.xlsx",
     txCounts: EMPTY_TX_COUNTS,
-    feeBreakdown: EMPTY_FEE_BREAKDOWN,
+    feeRates: DEFAULT_FEE_RATES,
   },
   {
     id: "rev-link-202605-paypal",
@@ -59,7 +59,7 @@ export const mockRevenues: Revenue[] = [
     ],
     countryFileName: "link-mai-2026-paypal-pays.xlsx",
     txCounts: EMPTY_TX_COUNTS,
-    feeBreakdown: EMPTY_FEE_BREAKDOWN,
+    feeRates: DEFAULT_FEE_RATES,
   },
   {
     id: "rev-ify-202605",
@@ -82,7 +82,7 @@ export const mockRevenues: Revenue[] = [
     ],
     countryFileName: "ify-mai-2026-pays.xlsx",
     txCounts: EMPTY_TX_COUNTS,
-    feeBreakdown: EMPTY_FEE_BREAKDOWN,
+    feeRates: DEFAULT_FEE_RATES,
   },
   {
     id: "rev-link-202604",
@@ -104,7 +104,7 @@ export const mockRevenues: Revenue[] = [
     ],
     countryFileName: "link-avril-2026-pays.xlsx",
     txCounts: EMPTY_TX_COUNTS,
-    feeBreakdown: EMPTY_FEE_BREAKDOWN,
+    feeRates: DEFAULT_FEE_RATES,
   },
 ];
 

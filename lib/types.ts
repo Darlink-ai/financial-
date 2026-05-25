@@ -93,10 +93,14 @@ export const EMPTY_TX_COUNTS: TxCounts = {
 };
 
 /**
- * Décomposition des frais processeur. Chaque ligne est éditable côté UI.
- * Par défaut on précalcule `count × tarif unitaire` à partir des rates.
+ * Tarifs unitaires des frais processeur. Tout est éditable côté UI ;
+ * les "frais" affichés ligne par ligne sont count × rate calculés.
+ *
+ * - per-tx fees : prix par transaction du bucket correspondant
+ * - percentRate : % IC++ appliqué sur le capturé
+ * - monthly* / wireTransfer : frais fixes (pas de count)
  */
-export type FeeBreakdown = {
+export type FeeRates = {
   authFee: number;
   captureFee: number;
   declinedFee: number;
@@ -104,13 +108,13 @@ export type FeeBreakdown = {
   chargebackFee: number;
   retrievalFee: number;
   preArbitrationFee: number;
-  percentFee: number; // IC++ % du capturé
+  percentRate: number;
   monthlyServiceFee: number;
   monthlySecureCodeFee: number;
   wireTransferFee: number;
 };
 
-export const DEFAULT_FEE_RATES = {
+export const DEFAULT_FEE_RATES: FeeRates = {
   authFee: 0.15,
   captureFee: 0.10,
   declinedFee: 0.15,
@@ -118,59 +122,32 @@ export const DEFAULT_FEE_RATES = {
   chargebackFee: 35.0,
   retrievalFee: 9.0,
   preArbitrationFee: 24.95,
-  percentRate: 3.0, // % IC++ Visa/MC
+  percentRate: 3.0,
   monthlyServiceFee: 19.95,
   monthlySecureCodeFee: 19.95,
   wireTransferFee: 5.0,
 };
 
-export const EMPTY_FEE_BREAKDOWN: FeeBreakdown = {
-  authFee: 0,
-  captureFee: 0,
-  declinedFee: 0,
-  refundFee: 0,
-  chargebackFee: 0,
-  retrievalFee: 0,
-  preArbitrationFee: 0,
-  percentFee: 0,
-  monthlyServiceFee: 0,
-  monthlySecureCodeFee: 0,
-  wireTransferFee: 0,
-};
-
-export function computeFeesFromCounts(
+/**
+ * Calcule le total des frais à partir des compteurs + rates + capturé.
+ */
+export function computeTotalFees(
   counts: TxCounts,
+  rates: FeeRates,
   capturedAmount: number,
-  rates = DEFAULT_FEE_RATES,
-): FeeBreakdown {
-  return {
-    authFee: round2(counts.authorized * rates.authFee),
-    captureFee: round2(counts.captured * rates.captureFee),
-    declinedFee: round2(counts.declined * rates.declinedFee),
-    refundFee: round2(counts.refund * rates.refundFee),
-    chargebackFee: round2(counts.chargeback * rates.chargebackFee),
-    retrievalFee: round2(counts.retrievalRequest * rates.retrievalFee),
-    preArbitrationFee: round2(counts.preArbitration * rates.preArbitrationFee),
-    percentFee: round2((capturedAmount * rates.percentRate) / 100),
-    monthlyServiceFee: rates.monthlyServiceFee,
-    monthlySecureCodeFee: rates.monthlySecureCodeFee,
-    wireTransferFee: rates.wireTransferFee,
-  };
-}
-
-export function sumFees(b: FeeBreakdown): number {
+): number {
   return round2(
-    b.authFee +
-      b.captureFee +
-      b.declinedFee +
-      b.refundFee +
-      b.chargebackFee +
-      b.retrievalFee +
-      b.preArbitrationFee +
-      b.percentFee +
-      b.monthlyServiceFee +
-      b.monthlySecureCodeFee +
-      b.wireTransferFee,
+    counts.authorized * rates.authFee +
+      counts.captured * rates.captureFee +
+      counts.declined * rates.declinedFee +
+      counts.refund * rates.refundFee +
+      counts.chargeback * rates.chargebackFee +
+      counts.retrievalRequest * rates.retrievalFee +
+      counts.preArbitration * rates.preArbitrationFee +
+      (capturedAmount * rates.percentRate) / 100 +
+      rates.monthlyServiceFee +
+      rates.monthlySecureCodeFee +
+      rates.wireTransferFee,
   );
 }
 
@@ -193,6 +170,6 @@ export type Revenue = {
   countryBreakdown: CountryRevenue[]; // uploaded country/amount file
   countryFileName: string | null;
   validatedAt: string | null; // ISO timestamp when entry was locked-in (Enregistrer)
-  txCounts: TxCounts; // nombre de transactions par statut (auto depuis le fichier, éditable)
-  feeBreakdown: FeeBreakdown; // décomposition des frais processeur (éditable)
+  txCounts: TxCounts; // compteurs par statut, depuis le fichier (lecture seule)
+  feeRates: FeeRates; // tarifs unitaires éditables par revenu
 };
