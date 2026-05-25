@@ -28,6 +28,7 @@ import type { Revenue, Business, FeeRates, TxCounts } from "@/lib/types";
 import {
   DEFAULT_FEE_RATES,
   EMPTY_TX_COUNTS,
+  authCount,
   computeTotalFees,
 } from "@/lib/types";
 import { formatAmount } from "@/lib/format";
@@ -349,20 +350,25 @@ function RevenueDetail({
   const ready = missing.length === 0;
 
   const onCountryFile = async (f: File) => {
-    const { rows, txCounts, totalCaptured, warnings: w } = await parseCountryFile(f);
+    const { rows, txCounts: parsedCounts, totalCaptured, warnings: w } =
+      await parseCountryFile(f);
     setWarnings(w);
+    // On préserve `wires` (config user, pas dans le fichier).
+    const mergedCounts: TxCounts = {
+      ...parsedCounts,
+      wires: revenue.txCounts.wires || 4,
+    };
     const patch: Partial<Revenue> = {
       countryBreakdown: rows,
       countryFileName: f.name,
-      txCounts,
+      txCounts: mergedCounts,
     };
     const captured =
       revenue.capturedAmount > 0 ? revenue.capturedAmount : totalCaptured;
     if (revenue.capturedAmount <= 0 && totalCaptured > 0) {
       patch.capturedAmount = totalCaptured;
     }
-    // Recalcule le total des frais selon les rates actuels du revenu.
-    patch.fees = computeTotalFees(txCounts, revenue.feeRates, captured);
+    patch.fees = computeTotalFees(mergedCounts, revenue.feeRates, captured);
     onUpdate(patch);
   };
 
@@ -627,7 +633,6 @@ type PerTxRow = {
 };
 
 const PER_TX_ROWS: PerTxRow[] = [
-  { countKey: "authorized", rateKey: "authFee", label: "Auth", unit: "tx" },
   { countKey: "captured", rateKey: "captureFee", label: "Capture", unit: "tx" },
   { countKey: "declined", rateKey: "declinedFee", label: "Declined", unit: "tx" },
   { countKey: "refund", rateKey: "refundFee", label: "Refund", unit: "tx" },
@@ -683,6 +688,45 @@ function FeeBreakdownSection({
             </tr>
           </thead>
           <tbody>
+            {/* Auth : facturé sur CHAQUE soumission au réseau (captured + declined + authorized) */}
+            <tr className="border-t border-border">
+              <td className="py-2">
+                Auth
+                <span className="text-[10px] text-muted ml-2">
+                  (= captured + declined + auth-only)
+                </span>
+              </td>
+              <td className="py-2 text-right">
+                <RateInput
+                  value={rates.authFee}
+                  unitSuffix="€/tx"
+                  onChange={(v) => setRate("authFee", v)}
+                  disabled={locked}
+                />
+              </td>
+              <td className="py-2 text-right tabular-nums">
+                {authCount(counts)}
+              </td>
+              <td className="py-2 text-right tabular-nums">
+                {formatAmount(
+                  roundCents(authCount(counts) * rates.authFee),
+                  revenue.currency,
+                )}
+              </td>
+            </tr>
+
+            {/* Authorized-only : pre-auths qui n'ont jamais été capturées (info, pas de frais distinct) */}
+            <tr className="border-t border-border text-muted">
+              <td className="py-2 pl-4">
+                ↳ dont auth seulement (non capturé)
+              </td>
+              <td></td>
+              <td className="py-2 text-right tabular-nums">
+                {counts.authorized}
+              </td>
+              <td></td>
+            </tr>
+
             {PER_TX_ROWS.map((row) => {
               const c = counts[row.countKey];
               const r = rates[row.rateKey];
@@ -766,9 +810,33 @@ function FeeBreakdownSection({
                   disabled={locked}
                 />
               </td>
-              <td className="py-2 text-right text-muted">1</td>
+              <td className="py-2 text-right">
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  className="input !py-1 !px-2 text-right tabular-nums w-20"
+                  value={counts.wires}
+                  onChange={(e) => {
+                    const v = Math.max(0, parseInt(e.target.value, 10) || 0);
+                    const newCounts = { ...counts, wires: v };
+                    onUpdate({
+                      txCounts: newCounts,
+                      fees: computeTotalFees(
+                        newCounts,
+                        rates,
+                        revenue.capturedAmount,
+                      ),
+                    });
+                  }}
+                  disabled={locked}
+                />
+              </td>
               <td className="py-2 text-right tabular-nums">
-                {formatAmount(rates.wireTransferFee, revenue.currency)}
+                {formatAmount(
+                  roundCents(counts.wires * rates.wireTransferFee),
+                  revenue.currency,
+                )}
               </td>
             </tr>
 

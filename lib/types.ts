@@ -73,13 +73,14 @@ export type CountryRevenue = {
  * Les noms suivent la nomenclature processeur (Adyen / Stripe…).
  */
 export type TxCounts = {
-  authorized: number;
+  authorized: number;       // pre-auths qui n'ont jamais été capturées
   captured: number;
   declined: number;
   refund: number;
   chargeback: number;
   retrievalRequest: number;
   preArbitration: number;
+  wires: number;            // nb de virements bancaires sortants / mois
 };
 
 export const EMPTY_TX_COUNTS: TxCounts = {
@@ -90,7 +91,16 @@ export const EMPTY_TX_COUNTS: TxCounts = {
   chargeback: 0,
   retrievalRequest: 0,
   preArbitration: 0,
+  wires: 4,                 // 4 virements par défaut (modifiable)
 };
+
+/**
+ * Total des transactions soumises au réseau (Visa/MC) — un frais d'auth
+ * est facturé pour chaque soumission, peu importe l'issue.
+ */
+export function authCount(counts: TxCounts): number {
+  return counts.captured + counts.declined + counts.authorized;
+}
 
 /**
  * Tarifs unitaires des frais processeur. Tout est éditable côté UI ;
@@ -137,7 +147,7 @@ export function computeTotalFees(
   capturedAmount: number,
 ): number {
   return round2(
-    counts.authorized * rates.authFee +
+    authCount(counts) * rates.authFee + // toutes les soumissions au réseau
       counts.captured * rates.captureFee +
       counts.declined * rates.declinedFee +
       counts.refund * rates.refundFee +
@@ -147,7 +157,7 @@ export function computeTotalFees(
       (capturedAmount * rates.percentRate) / 100 +
       rates.monthlyServiceFee +
       rates.monthlySecureCodeFee +
-      rates.wireTransferFee,
+      counts.wires * rates.wireTransferFee, // 4 wires × tarif par défaut
   );
 }
 

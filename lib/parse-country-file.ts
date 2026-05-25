@@ -69,7 +69,9 @@ export async function parseCountryFile(file: File): Promise<ParseResult> {
   });
 
   const warnings: string[] = [];
-  const txCounts: TxCounts = { ...EMPTY_TX_COUNTS };
+  // Le parser ne touche pas au champ `wires` (config user) — on le mettra
+  // à 0 ici, l'appelant le merge avec la valeur stockée du revenu.
+  const txCounts: TxCounts = { ...EMPTY_TX_COUNTS, wires: 0 };
 
   if (rows.length === 0) {
     warnings.push("Fichier vide.");
