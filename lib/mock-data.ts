@@ -108,6 +108,13 @@ export const mockRevenues: Revenue[] = [
   },
 ];
 
+const EMPTY_MAILBOX_OAUTH = {
+  oauthUserEmail: null,
+  oauthExpiresAt: null,
+  oauthScope: null,
+  hasRefreshToken: false,
+};
+
 export const mockMailboxes: Mailbox[] = [
   {
     id: "mb-1",
@@ -116,6 +123,7 @@ export const mockMailboxes: Mailbox[] = [
     connected: false,
     invoicesFound: 0,
     lastSync: null,
+    ...EMPTY_MAILBOX_OAUTH,
   },
   {
     id: "mb-2",
@@ -124,6 +132,7 @@ export const mockMailboxes: Mailbox[] = [
     connected: false,
     invoicesFound: 0,
     lastSync: null,
+    ...EMPTY_MAILBOX_OAUTH,
   },
   {
     id: "mb-3",
@@ -132,6 +141,7 @@ export const mockMailboxes: Mailbox[] = [
     connected: false,
     invoicesFound: 0,
     lastSync: null,
+    ...EMPTY_MAILBOX_OAUTH,
   },
 ];
 

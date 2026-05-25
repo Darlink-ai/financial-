@@ -33,6 +33,11 @@ export type Mailbox = {
   connected: boolean;
   invoicesFound: number;
   lastSync: string | null;
+  // OAuth (Google pour l'instant)
+  oauthUserEmail: string | null;     // email tel que renvoyé par Google après consent
+  oauthExpiresAt: string | null;     // ISO de l'expiration du access_token
+  oauthScope: string | null;
+  hasRefreshToken: boolean;          // jamais le token lui-même côté client
 };
 
 export type FolderMapping = {

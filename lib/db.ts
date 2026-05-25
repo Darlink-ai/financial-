@@ -127,6 +127,11 @@ type RawMailbox = {
   connected: boolean;
   invoices_found: number;
   last_sync: Date | null;
+  oauth_refresh_token: string | null;
+  oauth_access_token: string | null;
+  oauth_expires_at: Date | null;
+  oauth_scope: string | null;
+  oauth_user_email: string | null;
 };
 const mapMailbox = (r: RawMailbox): Mailbox => ({
   id: r.id,
@@ -135,6 +140,10 @@ const mapMailbox = (r: RawMailbox): Mailbox => ({
   connected: r.connected,
   invoicesFound: r.invoices_found,
   lastSync: r.last_sync ? r.last_sync.toISOString() : null,
+  oauthUserEmail: r.oauth_user_email,
+  oauthExpiresAt: r.oauth_expires_at ? r.oauth_expires_at.toISOString() : null,
+  oauthScope: r.oauth_scope,
+  hasRefreshToken: !!r.oauth_refresh_token,
 });
 
 type RawMapping = {
@@ -338,6 +347,82 @@ export async function updateMailbox(id: string, patch: Partial<Mailbox>): Promis
 }
 export async function deleteMailbox(id: string) {
   await client()`DELETE FROM mailboxes WHERE id = ${id}`;
+}
+
+// ---- Mailbox OAuth tokens (server-only) ----
+export type MailboxOAuthTokens = {
+  refreshToken: string;
+  accessToken: string;
+  expiresAt: string; // ISO
+  scope: string;
+  userEmail: string;
+};
+export async function saveMailboxOAuth(id: string, t: MailboxOAuthTokens) {
+  const sql = client();
+  await sql`
+    UPDATE mailboxes SET
+      oauth_refresh_token = ${t.refreshToken},
+      oauth_access_token = ${t.accessToken},
+      oauth_expires_at = ${t.expiresAt},
+      oauth_scope = ${t.scope},
+      oauth_user_email = ${t.userEmail},
+      connected = TRUE
+    WHERE id = ${id}
+  `;
+}
+export async function clearMailboxOAuth(id: string) {
+  const sql = client();
+  await sql`
+    UPDATE mailboxes SET
+      oauth_refresh_token = NULL,
+      oauth_access_token = NULL,
+      oauth_expires_at = NULL,
+      oauth_scope = NULL,
+      oauth_user_email = NULL,
+      connected = FALSE
+    WHERE id = ${id}
+  `;
+}
+export async function getMailboxWithTokens(id: string): Promise<{
+  email: string;
+  refreshToken: string | null;
+  accessToken: string | null;
+  expiresAt: Date | null;
+} | null> {
+  const sql = client();
+  const [row] = await sql<{
+    email: string;
+    oauth_refresh_token: string | null;
+    oauth_access_token: string | null;
+    oauth_expires_at: Date | null;
+  }[]>`
+    SELECT email, oauth_refresh_token, oauth_access_token, oauth_expires_at
+    FROM mailboxes WHERE id = ${id}
+  `;
+  if (!row) return null;
+  return {
+    email: row.email,
+    refreshToken: row.oauth_refresh_token,
+    accessToken: row.oauth_access_token,
+    expiresAt: row.oauth_expires_at,
+  };
+}
+
+// ---- App settings (key/value) ----
+export async function getSetting(key: string): Promise<string | null> {
+  const sql = client();
+  const [row] = await sql<{ value: string }[]>`
+    SELECT value FROM app_settings WHERE key = ${key}
+  `;
+  return row?.value ?? null;
+}
+export async function setSetting(key: string, value: string) {
+  const sql = client();
+  await sql`
+    INSERT INTO app_settings (key, value, updated_at)
+    VALUES (${key}, ${value}, now())
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
+  `;
 }
 
 // ---- Mappings ----
