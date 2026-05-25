@@ -1,11 +1,8 @@
+import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import { isAllowedEmail } from "./env";
+import { getSupabaseEnv, isAllowedEmail } from "./env";
 
-const PUBLIC_PATHS = [
-  "/login",
-  "/api/auth/login",
-  "/api/auth/signout",
-];
+const PUBLIC_PATHS = ["/login", "/api/auth/callback", "/api/auth/signout"];
 
 function isPublic(pathname: string): boolean {
   if (PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/")))
@@ -19,36 +16,56 @@ function isPublic(pathname: string): boolean {
   return false;
 }
 
-const COOKIE_NAME = "factura_user";
-
 export async function updateSession(request: NextRequest) {
-  // Feature flag : auth désactivée par défaut. Pour la réactiver,
-  // ajouter AUTH_ENABLED=true dans Vercel env vars.
+  // Feature flag : auth désactivée par défaut.
   if (process.env.AUTH_ENABLED !== "true") {
     return NextResponse.next({ request });
   }
 
+  const env = getSupabaseEnv();
+  // Sans config Supabase on laisse passer (dev local sans env vars).
+  if (!env) return NextResponse.next({ request });
+
+  let supabaseResponse = NextResponse.next({ request });
+
+  const supabase = createServerClient(env.url, env.anonKey, {
+    cookies: {
+      getAll() {
+        return request.cookies.getAll();
+      },
+      setAll(cookiesToSet) {
+        cookiesToSet.forEach(({ name, value }) =>
+          request.cookies.set(name, value),
+        );
+        supabaseResponse = NextResponse.next({ request });
+        cookiesToSet.forEach(({ name, value, options }) =>
+          supabaseResponse.cookies.set(name, value, options),
+        );
+      },
+    },
+  });
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
   const { pathname } = request.nextUrl;
   const isApi = pathname.startsWith("/api/");
-  const cookieEmail = request.cookies.get(COOKIE_NAME)?.value;
-  const isAuthed = !!cookieEmail && isAllowedEmail(cookieEmail);
 
-  // Si on a un cookie avec un email plus autorisé → on le purge
-  if (cookieEmail && !isAllowedEmail(cookieEmail)) {
-    const res = isApi
-      ? NextResponse.json({ error: "domain_not_allowed" }, { status: 401 })
-      : (() => {
-          const url = request.nextUrl.clone();
-          url.pathname = "/login";
-          url.searchParams.set("error", "domain_not_allowed");
-          return NextResponse.redirect(url);
-        })();
-    res.cookies.set(COOKIE_NAME, "", { maxAge: 0, path: "/" });
-    return res;
+  // Email connecté mais hors du domaine autorisé → signout + redirect.
+  if (user && !isAllowedEmail(user.email)) {
+    await supabase.auth.signOut();
+    if (isApi) {
+      return NextResponse.json({ error: "domain_not_allowed" }, { status: 401 });
+    }
+    const url = request.nextUrl.clone();
+    url.pathname = "/login";
+    url.searchParams.set("error", "domain_not_allowed");
+    return NextResponse.redirect(url);
   }
 
-  // Routes protégées : si pas authed → redirect /login (ou 401 pour API)
-  if (!isAuthed && !isPublic(pathname)) {
+  // Pas connecté → redirect /login (ou 401 pour API).
+  if (!user && !isPublic(pathname)) {
     if (isApi) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
@@ -58,12 +75,12 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // Déjà authed et tente d'accéder à /login → renvoie au tableau de bord
-  if (isAuthed && pathname === "/login") {
+  // Déjà connecté et tente d'accéder à /login → renvoie au tableau de bord.
+  if (user && pathname === "/login") {
     const url = request.nextUrl.clone();
     url.pathname = "/";
     return NextResponse.redirect(url);
   }
 
-  return NextResponse.next({ request });
+  return supabaseResponse;
 }
