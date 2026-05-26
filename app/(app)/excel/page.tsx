@@ -27,6 +27,7 @@ export default function ExcelPage() {
   const [activeSheet, setActiveSheet] = useState<string>("");
   const [loadingPersisted, setLoadingPersisted] = useState(false);
   const [persistedAt, setPersistedAt] = useState<string | null>(null);
+  const [persistError, setPersistError] = useState<string | null>(null);
 
   // Recharge depuis la DB quand le mois sélectionné change.
   useEffect(() => {
@@ -115,6 +116,7 @@ export default function ExcelPage() {
         return String(c);
       }),
     );
+    setPersistError(null);
     try {
       const r = await fetch(`/api/excel-sheets/${selectedMonth}`, {
         method: "PUT",
@@ -127,9 +129,14 @@ export default function ExcelPage() {
       });
       if (r.ok) {
         setPersistedAt(new Date().toISOString());
+      } else {
+        const txt = await r.text();
+        setPersistError(
+          `Sauvegarde DB échouée (HTTP ${r.status}). ${txt.slice(0, 200)}`,
+        );
       }
-    } catch {
-      // Erreur silencieuse : la sheet reste en mémoire, juste pas persistée.
+    } catch (e) {
+      setPersistError(`Sauvegarde DB échouée : ${(e as Error).message}`);
     }
   };
 
@@ -231,15 +238,21 @@ export default function ExcelPage() {
               <div className="flex-1 min-w-0">
                 <div className="text-[13px] font-medium truncate flex items-center gap-2">
                   {fileName}
-                  {persistedAt && (
+                  {persistedAt && !persistError && (
                     <span className="badge ok text-[10px]" title={`Sauvé le ${new Date(persistedAt).toLocaleString("fr-CH")}`}>
                       Sauvé en DB
                     </span>
+                  )}
+                  {persistError && (
+                    <span className="badge err text-[10px]">Pas sauvé</span>
                   )}
                 </div>
                 <div className="text-[11px] text-muted">
                   {sheet.rows.length} lignes · {sheet.headers.length} colonnes · {matches.length} rapprochée(s)
                 </div>
+                {persistError && (
+                  <div className="text-[11px] text-err mt-1">{persistError}</div>
+                )}
               </div>
               {sheetNames.length > 1 && (
                 <select
