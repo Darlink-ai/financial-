@@ -190,6 +190,7 @@ function CronSection({
 }) {
   const eligible = mailboxes.filter((m) => m.hasRefreshToken);
   const [running, setRunning] = useState(false);
+  const [elapsedSec, setElapsedSec] = useState(0);
   const [runs, setRuns] = useState<SyncRun[]>([]);
   const [afterDate, setAfterDate] = useState("");
   const [beforeDate, setBeforeDate] = useState("");
@@ -206,6 +207,20 @@ function CronSection({
     lastCronRun: SyncRun | null;
   } | null>(null);
   const [toggling, setToggling] = useState(false);
+
+  // Tic-tac chaque seconde quand le sync est en cours — pour que l'UI
+  // montre clairement que ça tourne et combien ça prend.
+  useEffect(() => {
+    if (!running) {
+      setElapsedSec(0);
+      return;
+    }
+    const t0 = Date.now();
+    const id = setInterval(() => {
+      setElapsedSec(Math.floor((Date.now() - t0) / 1000));
+    }, 1000);
+    return () => clearInterval(id);
+  }, [running]);
 
   const loadRuns = async () => {
     try {
@@ -303,8 +318,36 @@ function CronSection({
 
   const lastRun = runs[0];
 
+  const elapsedLabel =
+    elapsedSec < 60
+      ? `${elapsedSec}s`
+      : `${Math.floor(elapsedSec / 60)} min ${elapsedSec % 60}s`;
+
   return (
     <section>
+      {/* Bandeau "sync en cours" — sticky en haut du viewport, très visible,
+          avec compteur de temps écoulé pour rassurer l'utilisateur. */}
+      {running && (
+        <div className="sticky top-0 z-30 -mx-8 -mt-8 mb-6 px-8 pt-3 pb-3 bg-bg/95 backdrop-blur border-b border-accent2/30">
+          <div className="card-accent p-4 flex items-center gap-4">
+            <div className="w-10 h-10 rounded-full bg-accent2/15 border border-accent2/40 flex items-center justify-center shrink-0">
+              <RefreshCw size={18} className="text-accent animate-spin" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-[14px] font-semibold text-text flex items-center gap-2">
+                Synchronisation en cours…
+                <span className="badge info tabular-nums">{elapsedLabel}</span>
+              </div>
+              <div className="text-[12px] text-muted">
+                Récupération des emails, extraction des PDF, classification et
+                upload Drive. Ça peut prendre quelques minutes selon le nombre
+                de factures — ne ferme pas l'onglet.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between mb-3">
         <div>
           <div className="text-[15px] font-semibold flex items-center gap-2">
@@ -327,7 +370,8 @@ function CronSection({
         >
           {running ? (
             <>
-              <RefreshCw size={12} className="animate-spin" /> Sync en cours…
+              <RefreshCw size={12} className="animate-spin" />
+              <span className="tabular-nums">Sync en cours · {elapsedLabel}</span>
             </>
           ) : (
             <>
