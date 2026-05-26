@@ -406,8 +406,16 @@ function DriveCard({
   drive: DriveConfig;
   setDrive: (d: Partial<DriveConfig>) => void;
 }) {
+  const isConfigured =
+    !!drive.provider && !!drive.rootPath?.trim() && !!drive.connected;
+  const cardBorder = isConfigured ? "!border-ok/60" : "";
   return (
-    <div className="card p-5">
+    <div className={`card p-5 ${cardBorder}`}>
+      {isConfigured && (
+        <div className="text-[11px] text-ok flex items-center gap-1 mb-4">
+          <CheckCircle2 size={12} /> Drive configuré et connecté
+        </div>
+      )}
       <div className="grid grid-cols-3 gap-4">
         {(["google", "dropbox", "onedrive"] as const).map((p) => (
           <button
