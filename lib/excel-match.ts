@@ -79,13 +79,21 @@ export function detectColumns(sheet: ParsedSheet): {
   };
   const KW: Candidates = {
     creditor: [
+      // FR comptable
       "creditor", "fournisseur", "creditrice", "creanc", "vendor", "nom",
-      "libelle", "libellé", "description", "denomination", "transaction",
-      "objet", "buchungstext", "verwendungszweck", "details", "détails",
+      "libelle", "libellé", "description", "denomination", "denominat",
+      "transaction", "objet", "details", "détails",
+      // FR / UBS bancaire
+      "texte", "designation", "désignation", "communication", "memo",
+      "mémo", "raison", "motif", "reference", "référence",
+      // DE / Suisse alémanique
+      "buchungstext", "verwendungszweck", "bezeichnung", "text",
+      // EN
+      "purpose", "remittance",
     ],
     amount: [
       "montant", "amount", "ttc", "total", "debit", "débit", "credit",
-      "crédit", "betrag", "valeur", "somme",
+      "crédit", "betrag", "valeur", "somme", "sortie", "entree", "entrée",
     ],
     date: [
       "date", "facture", "valuta", "comptabilis", "operation", "opération",
