@@ -27,7 +27,7 @@ function dataRowCount(total: number): number {
 }
 
 export default function ExcelPage() {
-  const { updateInvoice, selectedMonth } = useStore();
+  const { updateInvoice, reloadFromDb, selectedMonth } = useStore();
   const allMonthInvoices = useInvoicesForCurrentMonth();
   const fileRef = useRef<HTMLInputElement>(null);
   // Devise locale à la page — pas de sélecteur global. L'utilisateur
@@ -358,18 +358,25 @@ export default function ExcelPage() {
                   <AlertCircle size={14} className="text-warn" />
                   <div className="text-[13px] font-medium">Factures sans ligne correspondante</div>
                   <span className="text-[11px] text-muted ml-auto">
-                    Elles iront dans l'onglet « À traiter manuellement ».
+                    Tape le n° de la ligne Excel à droite pour rapprocher
+                    manuellement, sinon elles iront dans « À traiter
+                    manuellement ».
                   </span>
                 </div>
                 <div className="divide-y divide-border">
                   {unmatchedInvoices.map((i) => (
-                    <div key={i.id} className="px-5 py-2.5 flex items-center gap-3 text-[12px]">
-                      <span className="font-medium">{i.creditor}</span>
-                      <span className="text-muted">— {i.subject}</span>
-                      <span className="ml-auto font-mono text-muted">
-                        {i.amount} {i.currency}
-                      </span>
-                    </div>
+                    <UnmatchedRow
+                      key={i.id}
+                      invoice={i}
+                      onAssign={async (rowNumber) => {
+                        updateInvoice(i.id, {
+                          excelRowMatched: rowNumber,
+                          status: "matched",
+                          accountCurrency: currency,
+                        });
+                        await reloadFromDb();
+                      }}
+                    />
                   ))}
                 </div>
               </section>
@@ -389,6 +396,76 @@ export default function ExcelPage() {
         />
       </div>
     </>
+  );
+}
+
+/**
+ * Une ligne du bandeau "Factures sans ligne correspondante". Chaque facture
+ * a son propre input local pour taper le n° de ligne Excel et un bouton
+ * Valider qui appelle `onAssign(rowNumber)`. Après validation, le parent
+ * recharge depuis la DB et la facture remonte automatiquement dans les
+ * lignes vertes (puisque son status devient "matched").
+ */
+function UnmatchedRow({
+  invoice,
+  onAssign,
+}: {
+  invoice: Invoice;
+  onAssign: (rowNumber: number) => Promise<void>;
+}) {
+  const [row, setRow] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    const n = parseInt(row.trim(), 10);
+    if (!Number.isFinite(n) || n < 2) {
+      alert("Entre un n° de ligne valide (≥ 2 — la ligne 1 étant l'en-tête).");
+      return;
+    }
+    setBusy(true);
+    try {
+      await onAssign(n);
+      setRow("");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="px-5 py-2.5 flex items-center gap-3 text-[12px]">
+      <span className="font-medium truncate max-w-[180px]" title={invoice.creditor ?? undefined}>
+        {invoice.creditor}
+      </span>
+      <span className="text-muted truncate flex-1 min-w-0" title={invoice.subject}>
+        — {invoice.subject}
+      </span>
+      <span className="font-mono text-muted text-right">
+        {invoice.amount} {invoice.currency}
+      </span>
+      <div className="flex items-center gap-1.5 ml-2">
+        <input
+          type="number"
+          min={2}
+          placeholder="N° ligne"
+          value={row}
+          onChange={(e) => setRow(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void submit();
+          }}
+          disabled={busy}
+          className="input !py-1 !px-2 text-[11px] !w-24"
+          title="N° de ligne Excel à rapprocher (colonne « # »)"
+        />
+        <button
+          onClick={submit}
+          disabled={busy || !row.trim()}
+          className="btn !py-1 !px-2.5 text-[11px] disabled:opacity-50"
+          title="Forcer le rapprochement à cette ligne"
+        >
+          {busy ? "…" : "Valider"}
+        </button>
+      </div>
+    </div>
   );
 }
 
