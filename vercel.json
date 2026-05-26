@@ -4,6 +4,10 @@
     {
       "path": "/api/cron/sync-mailboxes",
       "schedule": "0 6 */5 * *"
+    },
+    {
+      "path": "/api/invoices/reprocess-stuck",
+      "schedule": "* * * * *"
     }
   ]
 }

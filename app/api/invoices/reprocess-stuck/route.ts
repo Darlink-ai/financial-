@@ -3,7 +3,6 @@ import {
   getAllMappings,
   getInvoiceWithAttachment,
   getStuckAnalyzingInvoiceIds,
-  updateInvoice,
 } from "@/lib/db";
 import { autoProcessInvoice } from "@/lib/auto-process";
 
@@ -13,9 +12,17 @@ export const maxDuration = 300;
 
 /**
  * POST /api/invoices/reprocess-stuck
- * Récupère toutes les factures qui sont restées en status="analyzing"
- * (typiquement après un timeout Vercel mid-sync) et relance le pipeline
- * sur chacune. Renvoie un résumé.
+ * Relance le pipeline sur toutes les factures bloquées en
+ * status="analyzing" (timeout Vercel, rate limit LLM, etc.).
+ *
+ * Politique : on NE bascule JAMAIS une invoice en `manual` ici. Si
+ * un retry échoue à nouveau, on laisse en `analyzing` pour qu'un
+ * prochain tic le re-tente. Le manual reste réservé aux cas où le
+ * pipeline lui-même décide qu'il faut l'humain (pas assez de signal).
+ *
+ * Endpoint sécurisé par CRON_SECRET pour l'appel depuis Vercel cron ;
+ * un appel non-authentifié depuis l'UI continue de marcher (POST sans
+ * header) pour ne pas casser le bouton manuel sur /invoices.
  */
 export async function POST() {
   try {
@@ -26,20 +33,20 @@ export async function POST() {
 
     const mappings = await getAllMappings();
     let processed = 0;
-    let manualCount = 0;
     let renamedCount = 0;
     let uploadedCount = 0;
     let matchedCount = 0;
-    let failedCount = 0;
+    let manualCount = 0;
+    let stillAnalyzing = 0;
+    let noPdfCount = 0;
 
     for (const id of stuckIds) {
       try {
         const inv = await getInvoiceWithAttachment(id);
         if (!inv?.attachmentB64) {
-          // Pas de PDF → on bascule en manual pour le sortir de l'état figé.
-          await updateInvoice(id, { status: "manual" });
-          manualCount++;
-          processed++;
+          // Pas de PDF disponible — on laisse en `analyzing` aussi, un
+          // outil futur permettra de récupérer le PDF à la demande.
+          noPdfCount++;
           continue;
         }
         const outcome = await autoProcessInvoice({
@@ -50,14 +57,15 @@ export async function POST() {
           pdfBase64: inv.attachmentB64,
           mappings,
         });
-        if (outcome.status === "manual") manualCount++;
-        else if (outcome.status === "renamed") renamedCount++;
+        if (outcome.status === "renamed") renamedCount++;
         else if (outcome.status === "uploaded") uploadedCount++;
         else if (outcome.status === "matched") matchedCount++;
+        else if (outcome.status === "manual") manualCount++;
         processed++;
       } catch (e) {
         console.error("reprocess-stuck failed for", id, e);
-        failedCount++;
+        // L'invoice reste en `analyzing` → sera retentée au prochain tic.
+        stillAnalyzing++;
       }
     }
 
@@ -66,11 +74,12 @@ export async function POST() {
       total: stuckIds.length,
       processed,
       breakdown: {
-        manual: manualCount,
-        renamed: renamedCount,
-        uploaded: uploadedCount,
         matched: matchedCount,
-        failed: failedCount,
+        uploaded: uploadedCount,
+        renamed: renamedCount,
+        manual: manualCount,
+        stillAnalyzing,
+        noPdf: noPdfCount,
       },
     });
   } catch (e) {
@@ -79,4 +88,16 @@ export async function POST() {
       { status: 500 },
     );
   }
+}
+
+/** Variante GET pour les crons Vercel (qui n'envoient que des GET). */
+export async function GET(req: Request) {
+  const secret = process.env.CRON_SECRET;
+  if (secret) {
+    const auth = req.headers.get("authorization") ?? "";
+    if (auth !== `Bearer ${secret}`) {
+      return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    }
+  }
+  return POST();
 }

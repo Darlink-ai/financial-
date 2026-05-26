@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { PageHeader } from "@/components/PageHeader";
 import { InvoiceRow } from "@/components/InvoiceRow";
 import { useInvoicesForCurrentMonth, formatMonthLabel, useStore } from "@/lib/store";
@@ -26,6 +26,17 @@ export default function InvoicesPage() {
   const [reprocessingStuck, setReprocessingStuck] = useState(false);
 
   const stuckCount = allInvoices.filter((i) => i.status === "analyzing").length;
+
+  // Tant qu'il y a des factures bloquées en "analyzing", on rafraîchit
+  // l'état toutes les 30 secondes — le cron Vercel les retraite en
+  // arrière-plan (chaque minute), donc on verra leur status évoluer.
+  useEffect(() => {
+    if (stuckCount === 0) return;
+    const id = setInterval(() => {
+      void reloadFromDb();
+    }, 30_000);
+    return () => clearInterval(id);
+  }, [stuckCount, reloadFromDb]);
 
   const reprocessStuck = async () => {
     if (stuckCount === 0) {
@@ -55,9 +66,18 @@ export default function InvoicesPage() {
         return;
       }
       await reloadFromDb();
-      const b = data?.breakdown;
+      const b = data?.breakdown as
+        | {
+            matched: number;
+            uploaded: number;
+            renamed: number;
+            manual: number;
+            stillAnalyzing: number;
+            noPdf: number;
+          }
+        | undefined;
       const summary = b
-        ? `${data?.processed} traitée(s) sur ${data?.total}\n\nRépartition :\n• matched : ${b.matched}\n• uploaded : ${b.uploaded}\n• renamed : ${b.renamed}\n• manual : ${b.manual}\n• échecs : ${b.failed}`
+        ? `${data?.processed} traitée(s) sur ${data?.total}\n\nRépartition :\n• matched : ${b.matched}\n• uploaded : ${b.uploaded}\n• renamed : ${b.renamed}\n• manual : ${b.manual}\n• à retenter (échec) : ${b.stillAnalyzing}\n• sans PDF : ${b.noPdf}\n\nLes "à retenter" et "sans PDF" seront ré-essayées automatiquement chaque minute.`
         : `${data?.processed ?? 0} traitée(s)`;
       alert(summary);
     } catch (e) {
@@ -118,7 +138,7 @@ export default function InvoicesPage() {
                 onClick={reprocessStuck}
                 disabled={reprocessingStuck}
                 className="btn disabled:opacity-50"
-                title="Relance le pipeline sur les factures bloquées en analyse"
+                title="Le cron retentera automatiquement chaque minute — ce bouton force un retry immédiat."
               >
                 {reprocessingStuck ? (
                   <>
@@ -126,7 +146,7 @@ export default function InvoicesPage() {
                   </>
                 ) : (
                   <>
-                    <Zap size={14} /> Réveiller analyses figées ({stuckCount})
+                    <Zap size={14} /> Retenter maintenant ({stuckCount})
                   </>
                 )}
               </button>

@@ -15,6 +15,9 @@ import {
   User,
   TrendingUp,
   Repeat,
+  Wallet,
+  Receipt,
+  Settings,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -32,6 +35,7 @@ type NavLeaf = {
 type NavGroup = {
   id: string;
   label: string;
+  icon: typeof LayoutDashboard;
   items: NavLeaf[];
 };
 
@@ -39,9 +43,10 @@ type NavEntry =
   | { kind: "leaf"; leaf: NavLeaf }
   | { kind: "group"; group: NavGroup };
 
-// Sidebar structure : mélange de liens "top-level" (leaf) et de
-// groupes repliables. Analyse financière + Factures récurrentes sont
-// des liens directs car chaque destination est une page unique.
+// Sidebar structure : un seul leaf top-level (Tableau de bord), tout
+// le reste est en groupes repliables. Tous les items top-level se
+// rendent visuellement identiquement (même hauteur, même icône, même
+// padding) — seul le chevron à droite distingue un groupe d'une feuille.
 const ENTRIES: NavEntry[] = [
   {
     kind: "leaf",
@@ -52,6 +57,7 @@ const ENTRIES: NavEntry[] = [
     group: {
       id: "encaissements",
       label: "Encaissements",
+      icon: Wallet,
       items: [{ href: "/revenues", label: "Revenus", icon: Banknote }],
     },
   },
@@ -60,6 +66,7 @@ const ENTRIES: NavEntry[] = [
     group: {
       id: "depenses",
       label: "Dépenses",
+      icon: Receipt,
       items: [
         { href: "/invoices", label: "Factures", icon: FileText },
         { href: "/manual", label: "À traiter manuellement", icon: AlertCircle, badge: "manual" },
@@ -68,18 +75,23 @@ const ENTRIES: NavEntry[] = [
     },
   },
   {
-    kind: "leaf",
-    leaf: { href: "/analyse", label: "Analyse financière", icon: TrendingUp },
-  },
-  {
-    kind: "leaf",
-    leaf: { href: "/analyse/recurrents", label: "Factures récurrentes", icon: Repeat },
+    kind: "group",
+    group: {
+      id: "analyse",
+      label: "Analyse financière",
+      icon: TrendingUp,
+      items: [
+        { href: "/analyse", label: "Vue d'ensemble", icon: TrendingUp },
+        { href: "/analyse/recurrents", label: "Factures récurrentes", icon: Repeat },
+      ],
+    },
   },
   {
     kind: "group",
     group: {
       id: "configuration",
       label: "Configuration",
+      icon: Settings,
       items: [
         { href: "/mappings", label: "Classement comptable", icon: FolderTree },
         { href: "/connectors", label: "Connexions", icon: Mail },
@@ -89,9 +101,9 @@ const ENTRIES: NavEntry[] = [
 ];
 
 const LS_COLLAPSED = "sidebar.collapsed";
-// v2 : bump car les noms de groupes ont changé et on veut que tout
-// soit fermé par défaut, même pour les utilisateurs existants.
-const LS_OPEN_GROUPS = "sidebar.openGroups.v2";
+// v3 : refonte structure (Factures récurrentes déplacée sous Analyse,
+// groupes uniformisés). Re-démarrage avec tout fermé.
+const LS_OPEN_GROUPS = "sidebar.openGroups.v3";
 
 function readJSON<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
@@ -177,58 +189,102 @@ export function Sidebar({
           collapsed ? "pt-4" : "pt-3",
         )}
       >
-        {ENTRIES.map((entry, idx) => {
+        {ENTRIES.map((entry) => {
           if (entry.kind === "leaf") {
             return (
-              <div
+              <NavItem
                 key={entry.leaf.href}
-                className={idx > 0 ? "pt-1" : undefined}
-              >
-                <NavItem
-                  leaf={entry.leaf}
-                  active={pathname === entry.leaf.href}
-                  collapsed={collapsed}
-                  manualCount={manualCount}
-                />
-              </div>
+                leaf={entry.leaf}
+                active={pathname === entry.leaf.href}
+                collapsed={collapsed}
+                manualCount={manualCount}
+              />
             );
           }
 
           const g = entry.group;
           const isOpen = openGroups[g.id] ?? false;
           const groupHasActive = g.items.some((it) => pathname === it.href);
+          const GroupIcon = g.icon;
+
+          // Total des badges "manual" sur les enfants — agrégé sur le header.
+          const aggregateManual = g.items.reduce(
+            (n, it) => n + (it.badge === "manual" ? manualCount : 0),
+            0,
+          );
+
           return (
-            <div key={g.id} className="pt-2">
+            <div key={g.id}>
+              {/* En-tête de groupe rendu au MÊME format qu'un leaf
+                  (mêmes padding, icône, taille) — seul le chevron à
+                  droite et la fonction click distinguent. */}
               {!collapsed ? (
                 <button
                   onClick={() => toggleGroup(g.id)}
                   className={cn(
-                    "w-full flex items-center gap-2 px-2 py-1 rounded-md text-[10px] uppercase tracking-wider transition-colors",
-                    groupHasActive ? "text-accent" : "text-muted hover:text-text",
+                    "group w-full flex items-center gap-3 rounded-lg text-[13px] transition-colors px-3 py-2",
+                    groupHasActive
+                      ? "bg-panel2/60 text-text border border-border"
+                      : "text-muted hover:text-text hover:bg-panel2 border border-transparent",
                   )}
                 >
-                  <ChevronDown
-                    size={11}
+                  <GroupIcon
+                    size={16}
                     className={cn(
-                      "transition-transform duration-150",
+                      "shrink-0 transition-colors",
+                      groupHasActive ? "text-accent" : "text-muted group-hover:text-text",
+                    )}
+                  />
+                  <span className="flex-1 text-left truncate">{g.label}</span>
+                  {aggregateManual > 0 && !isOpen && (
+                    <span className="badge warn">{aggregateManual}</span>
+                  )}
+                  <ChevronDown
+                    size={13}
+                    className={cn(
+                      "shrink-0 text-muted transition-transform duration-150",
                       isOpen ? "rotate-0" : "-rotate-90",
                     )}
                   />
-                  <span className="flex-1 text-left">{g.label}</span>
                 </button>
               ) : (
-                <div className="h-px bg-border/60 mx-3 my-2" />
-              )}
-              {(isOpen || collapsed) &&
-                g.items.map((leaf) => (
-                  <NavItem
-                    key={leaf.href}
-                    leaf={leaf}
-                    active={pathname === leaf.href}
-                    collapsed={collapsed}
-                    manualCount={manualCount}
+                // Mode replié : on affiche juste l'icône cliquable du groupe,
+                // qui ouvre le groupe et déplie la sidebar.
+                <button
+                  onClick={() => {
+                    setCollapsed(false);
+                    setOpenGroups((p) => ({ ...p, [g.id]: true }));
+                  }}
+                  title={g.label}
+                  className={cn(
+                    "group w-full flex items-center justify-center rounded-lg px-2 py-2 transition-colors",
+                    groupHasActive
+                      ? "bg-panel2 text-text border border-border"
+                      : "text-muted hover:text-text hover:bg-panel2 border border-transparent",
+                  )}
+                >
+                  <GroupIcon
+                    size={16}
+                    className={groupHasActive ? "text-accent" : "text-muted group-hover:text-text"}
                   />
-                ))}
+                </button>
+              )}
+
+              {/* Sous-items, indentés. Cachés en mode replié. */}
+              {!collapsed && isOpen && (
+                <div className="ml-3 mt-0.5 mb-1 pl-3 border-l border-border/60 space-y-0.5">
+                  {g.items.map((leaf) => (
+                    <NavItem
+                      key={leaf.href}
+                      leaf={leaf}
+                      active={pathname === leaf.href}
+                      collapsed={false}
+                      manualCount={manualCount}
+                      compact
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           );
         })}
@@ -281,19 +337,23 @@ function NavItem({
   active,
   collapsed,
   manualCount,
+  compact = false,
 }: {
   leaf: NavLeaf;
   active: boolean;
   collapsed: boolean;
   manualCount: number;
+  /** Sous-items d'un groupe : padding et texte réduits. */
+  compact?: boolean;
 }) {
   const Icon = leaf.icon;
   return (
     <Link
       href={leaf.href}
       className={cn(
-        "group flex items-center gap-3 rounded-lg text-[13px] transition-colors",
-        collapsed ? "px-2 py-2 justify-center" : "px-3 py-2",
+        "group flex items-center gap-3 rounded-lg transition-colors",
+        compact ? "text-[12px] px-2.5 py-1.5" : "text-[13px] px-3 py-2",
+        collapsed ? "!px-2 !py-2 justify-center" : "",
         active
           ? "bg-panel2 text-text border border-border shadow-[inset_0_0_0_1px_rgba(96,165,250,0.15)]"
           : "text-muted hover:text-text hover:bg-panel2 border border-transparent",
@@ -301,7 +361,7 @@ function NavItem({
       title={collapsed ? leaf.label : undefined}
     >
       <Icon
-        size={16}
+        size={compact ? 14 : 16}
         className={cn(
           "shrink-0 transition-colors",
           active ? "text-accent" : "text-muted group-hover:text-text",

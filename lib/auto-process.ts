@@ -119,19 +119,12 @@ export type AutoProcessOutcome = {
 export async function autoProcessInvoice(
   input: AutoProcessInput,
 ): Promise<AutoProcessOutcome> {
-  // Garde-fou : si une exception non-attrapée remonte mi-pipeline, on
-  // évite que la facture reste figée en `analyzing` pour l'éternité.
-  // On la bascule au moins en `manual` pour que l'utilisateur la voie.
-  try {
-    return await autoProcessInvoiceInner(input);
-  } catch (e) {
-    try {
-      await updateInvoice(input.invoiceId, { status: "manual" });
-    } catch {
-      /* ignore : on a fait de notre mieux */
-    }
-    throw e;
-  }
+  // Si une exception remonte (timeout, rate limit LLM, hiccup Drive…),
+  // on LAISSE l'invoice en `analyzing` pour qu'un retry asynchrone
+  // (cron Vercel + polling client) reprenne la main plus tard. Mieux
+  // vaut un état "à retraiter" qu'un état "manuel" qui suggère qu'il
+  // faut l'action de l'utilisateur.
+  return await autoProcessInvoiceInner(input);
 }
 
 async function autoProcessInvoiceInner(
