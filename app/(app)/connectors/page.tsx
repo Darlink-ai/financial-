@@ -173,6 +173,7 @@ type SyncRun = {
     mailboxEmail: string;
     added: number;
     skipped: number;
+    deduped?: number;
     totalMessages: number;
     error?: string;
   }[];
@@ -197,6 +198,7 @@ function CronSection({
   const [runResult, setRunResult] = useState<{
     totalAdded: number;
     totalSkipped: number;
+    totalDeduped?: number;
     results: SyncRun["results"];
     query?: string;
   } | null>(null);
@@ -301,11 +303,13 @@ function CronSection({
         results: SyncRun["results"];
         totalAdded: number;
         totalSkipped: number;
+        totalDeduped?: number;
         query?: string;
       };
       setRunResult({
         totalAdded: d.totalAdded,
         totalSkipped: d.totalSkipped,
+        totalDeduped: d.totalDeduped,
         results: d.results,
         query: d.query,
       });
@@ -553,10 +557,23 @@ function CronSection({
       {/* Résultat du dernier run manuel */}
       {runResult && (
         <div className="card mt-3 border-ok/30 bg-ok/5 p-3">
-          <div className="text-[13px] font-medium text-ok flex items-center gap-2">
-            <CheckCircle2 size={14} /> Sync terminé : {runResult.totalAdded} ajoutée
-            {runResult.totalAdded > 1 ? "s" : ""}, {runResult.totalSkipped} déjà connue
-            {runResult.totalSkipped > 1 ? "s" : ""} (dédup)
+          <div className="text-[13px] font-medium text-ok flex items-center gap-2 flex-wrap">
+            <CheckCircle2 size={14} />
+            <span>
+              Sync terminé : {runResult.totalAdded} ajoutée
+              {runResult.totalAdded > 1 ? "s" : ""}
+              {runResult.totalDeduped && runResult.totalDeduped > 0 ? (
+                <>
+                  , dont <span className="text-warn">{runResult.totalDeduped}</span>{" "}
+                  dédoublonnée{runResult.totalDeduped > 1 ? "s" : ""} (facture+reçu) →{" "}
+                  <span className="text-text">
+                    {runResult.totalAdded - runResult.totalDeduped} restantes en DB
+                  </span>
+                </>
+              ) : null}
+              , {runResult.totalSkipped} déjà connue
+              {runResult.totalSkipped > 1 ? "s" : ""} (dédup Gmail)
+            </span>
           </div>
           {runResult.query && (
             <div className="text-[10px] font-mono text-muted mt-1">
@@ -567,7 +584,10 @@ function CronSection({
             {runResult.results.map((r) => (
               <div key={r.mailboxId}>
                 <strong className="text-text">{r.mailboxEmail}</strong> · {r.added} ajoutées
-                · {r.skipped} skippées · {r.totalMessages} mails trouvés
+                {r.deduped && r.deduped > 0 ? (
+                  <span className="text-warn"> · {r.deduped} dédoublonnée{r.deduped > 1 ? "s" : ""}</span>
+                ) : null}
+                {" "}· {r.skipped} skippées · {r.totalMessages} mails trouvés
                 {r.error && <span className="text-err"> · ❌ {r.error}</span>}
               </div>
             ))}

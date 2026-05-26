@@ -91,6 +91,7 @@ export async function runSync(
   results: SyncRunResult[];
   totalAdded: number;
   totalSkipped: number;
+  totalDeduped: number;
   query: string;
 }> {
   const query = buildGmailQuery(opts);
@@ -118,6 +119,7 @@ export async function runSync(
         mailboxEmail: mb.email,
         added: 0,
         skipped: 0,
+        deduped: 0,
         totalMessages: 0,
       };
       try {
@@ -166,6 +168,9 @@ export async function runSync(
               attachmentB64: b64,
             });
 
+            r.added++;
+            totalAdded++;
+
             // ---- Pipeline complet : extract → classify → Drive → Excel match ----
             try {
               const outcome = await autoProcessInvoice({
@@ -184,12 +189,18 @@ export async function runSync(
                   outcome.errors.join(" | "),
                 );
               }
+              // Track les dédoublonnages : la facture courante a été
+              // supprimée comme doublon d'une autre OU elle a fait
+              // supprimer d'autres.
+              if (outcome.deletedAsDuplicateOf) {
+                r.deduped = (r.deduped ?? 0) + 1;
+              }
+              if (outcome.deletedOtherIds && outcome.deletedOtherIds.length > 0) {
+                r.deduped = (r.deduped ?? 0) + outcome.deletedOtherIds.length;
+              }
             } catch (e) {
               console.error("autoProcess crashed", invoiceId, e);
             }
-
-            r.added++;
-            totalAdded++;
           }
         }
 
@@ -206,7 +217,8 @@ export async function runSync(
     runError = (e as Error).message;
   }
 
+  const totalDeduped = results.reduce((s, r) => s + (r.deduped ?? 0), 0);
   await finishSyncRun(runId, results, totalAdded, totalSkipped, runError);
 
-  return { runId, results, totalAdded, totalSkipped, query };
+  return { runId, results, totalAdded, totalSkipped, totalDeduped, query };
 }

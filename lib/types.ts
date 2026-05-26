@@ -69,8 +69,9 @@ export type SyncRun = {
 export type SyncRunResult = {
   mailboxId: string;
   mailboxEmail: string;
-  added: number;
-  skipped: number;
+  added: number;        // factures insérées initialement
+  skipped: number;      // mails déjà vus (dedup Gmail)
+  deduped?: number;     // factures supprimées par le dedup auto (facture+reçu)
   totalMessages: number;
   error?: string;
 };
