@@ -1,10 +1,15 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { AnalyseHeader } from "@/components/analyse/AnalyseHeader";
+import { PageHeader } from "@/components/PageHeader";
 import { KpiCard } from "@/components/analyse/KpiCard";
 import { BreakdownList } from "@/components/analyse/BreakdownList";
-import { defaultPeriod, type Period } from "@/components/AnalysePeriodPicker";
+import {
+  AnalysePeriodPicker,
+  defaultPeriod,
+  formatPeriodLabel,
+  type Period,
+} from "@/components/AnalysePeriodPicker";
 import { mockRecurringInvoices, type RecurringInvoice } from "@/lib/analyse-mock";
 import { formatAmount, formatSwissDate } from "@/lib/format";
 import { Repeat, CheckCircle2, PauseCircle, Search } from "lucide-react";
@@ -78,11 +83,10 @@ export default function RecurrentsPage() {
 
   return (
     <>
-      <AnalyseHeader
+      <PageHeader
         title="Factures récurrentes"
-        subtitle="Abonnements, loyers, assurances — toutes les charges qui reviennent automatiquement"
-        period={period}
-        onChangePeriod={setPeriod}
+        subtitle={`Abonnements, loyers, assurances — ${formatPeriodLabel(period)}`}
+        actions={<AnalysePeriodPicker value={period} onChange={setPeriod} />}
       />
 
       <div className="p-8 space-y-6">

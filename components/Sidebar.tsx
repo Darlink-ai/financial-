@@ -14,11 +14,7 @@ import {
   LogOut,
   User,
   TrendingUp,
-  BarChart3,
-  Coins,
-  Activity,
   Repeat,
-  LineChart,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -39,52 +35,56 @@ type NavGroup = {
   items: NavLeaf[];
 };
 
-const TOP_LEAF: NavLeaf = {
-  href: "/",
-  label: "Tableau de bord",
-  icon: LayoutDashboard,
-};
+type NavEntry =
+  | { kind: "leaf"; leaf: NavLeaf }
+  | { kind: "group"; group: NavGroup };
 
-const GROUPS: NavGroup[] = [
+// Sidebar structure : mélange de liens "top-level" (leaf) et de
+// groupes repliables. Analyse financière + Factures récurrentes sont
+// des liens directs car chaque destination est une page unique.
+const ENTRIES: NavEntry[] = [
   {
-    id: "encaissements",
-    label: "Encaissements",
-    items: [{ href: "/revenues", label: "Revenus", icon: Banknote }],
+    kind: "leaf",
+    leaf: { href: "/", label: "Tableau de bord", icon: LayoutDashboard },
   },
   {
-    id: "depenses",
-    label: "Dépenses",
-    items: [
-      { href: "/invoices", label: "Factures", icon: FileText },
-      { href: "/manual", label: "À traiter manuellement", icon: AlertCircle, badge: "manual" },
-      { href: "/excel", label: "Rapprochement Excel", icon: FileSpreadsheet },
-    ],
+    kind: "group",
+    group: {
+      id: "encaissements",
+      label: "Encaissements",
+      items: [{ href: "/revenues", label: "Revenus", icon: Banknote }],
+    },
   },
   {
-    id: "analyse",
-    label: "Analyse financière",
-    items: [
-      { href: "/analyse/ca", label: "Chiffre d'affaires", icon: TrendingUp },
-      { href: "/analyse/benefice-brut", label: "Bénéfice brut", icon: BarChart3 },
-      { href: "/analyse/benefice-net", label: "Bénéfice net", icon: Coins },
-      { href: "/analyse/ebitda", label: "EBITDA", icon: Activity },
-      { href: "/analyse/ebit", label: "EBIT", icon: LineChart },
-    ],
+    kind: "group",
+    group: {
+      id: "depenses",
+      label: "Dépenses",
+      items: [
+        { href: "/invoices", label: "Factures", icon: FileText },
+        { href: "/manual", label: "À traiter manuellement", icon: AlertCircle, badge: "manual" },
+        { href: "/excel", label: "Rapprochement Excel", icon: FileSpreadsheet },
+      ],
+    },
   },
   {
-    id: "recurrents",
-    label: "Factures récurrentes",
-    items: [
-      { href: "/analyse/recurrents", label: "Abonnements & loyers", icon: Repeat },
-    ],
+    kind: "leaf",
+    leaf: { href: "/analyse", label: "Analyse financière", icon: TrendingUp },
   },
   {
-    id: "configuration",
-    label: "Configuration",
-    items: [
-      { href: "/mappings", label: "Classement comptable", icon: FolderTree },
-      { href: "/connectors", label: "Connexions", icon: Mail },
-    ],
+    kind: "leaf",
+    leaf: { href: "/analyse/recurrents", label: "Factures récurrentes", icon: Repeat },
+  },
+  {
+    kind: "group",
+    group: {
+      id: "configuration",
+      label: "Configuration",
+      items: [
+        { href: "/mappings", label: "Classement comptable", icon: FolderTree },
+        { href: "/connectors", label: "Connexions", icon: Mail },
+      ],
+    },
   },
 ];
 
@@ -128,8 +128,10 @@ export function Sidebar({
     // On part de "tout fermé", puis on applique l'état sauvegardé,
     // puis on force l'ouverture du groupe contenant la page courante.
     const next: Record<string, boolean> = { ...stored };
-    for (const g of GROUPS) {
-      if (g.items.some((it) => pathname === it.href)) next[g.id] = true;
+    for (const e of ENTRIES) {
+      if (e.kind === "group" && e.group.items.some((it) => pathname === it.href)) {
+        next[e.group.id] = true;
+      }
     }
     setOpenGroups(next);
     setHydrated(true);
@@ -175,15 +177,24 @@ export function Sidebar({
           collapsed ? "pt-4" : "pt-3",
         )}
       >
-        {/* Tableau de bord — top-level */}
-        <NavItem
-          leaf={TOP_LEAF}
-          active={pathname === TOP_LEAF.href}
-          collapsed={collapsed}
-          manualCount={manualCount}
-        />
+        {ENTRIES.map((entry, idx) => {
+          if (entry.kind === "leaf") {
+            return (
+              <div
+                key={entry.leaf.href}
+                className={idx > 0 ? "pt-1" : undefined}
+              >
+                <NavItem
+                  leaf={entry.leaf}
+                  active={pathname === entry.leaf.href}
+                  collapsed={collapsed}
+                  manualCount={manualCount}
+                />
+              </div>
+            );
+          }
 
-        {GROUPS.map((g) => {
+          const g = entry.group;
           const isOpen = openGroups[g.id] ?? false;
           const groupHasActive = g.items.some((it) => pathname === it.href);
           return (
