@@ -119,21 +119,26 @@ export function matchInvoicesAgainstSheet(
 
       // ---- Montant ----
       if (inv.amount != null && rowAmount != null) {
-        const diff = Math.abs(inv.amount - Math.abs(rowAmount));
-        const rel = diff / Math.max(inv.amount, Math.abs(rowAmount));
+        const absRow = Math.abs(rowAmount);
+        const diff = Math.abs(inv.amount - absRow);
+        const rel = diff / Math.max(inv.amount, absRow);
         if (diff < 0.01) {
           score += 3;
           reasons.push("montant exact");
         } else if (rel < 0.05) {
           score += 2;
-          reasons.push("montant proche (±5%)");
+          reasons.push("montant ±5%");
         } else if (rel < 0.15) {
-          score += 1;
-          reasons.push("montant proche (±15%, FX possible)");
+          score += 1.3;
+          reasons.push("montant ±15% (FX)");
+        } else if (rel < 0.25) {
+          score += 0.8;
+          reasons.push("montant ±25% (FX+frais)");
         }
       }
 
-      // ---- Date (tolérance ±7 jours, classique pour booking bancaire) ----
+      // ---- Date (tolérance large pour booking bancaire — peut être
+      //         décalé jusqu'à 2 semaines après la date facture) ----
       if (inv.invoiceDate && rowDate) {
         const diffDays = Math.abs(
           (new Date(inv.invoiceDate).getTime() - new Date(rowDate).getTime()) /
@@ -146,8 +151,11 @@ export function matchInvoicesAgainstSheet(
           score += 1.5;
           reasons.push("date à ±3j");
         } else if (diffDays <= 7) {
-          score += 1;
+          score += 1.2;
           reasons.push("date à ±7j");
+        } else if (diffDays <= 14) {
+          score += 1;
+          reasons.push("date à ±14j");
         }
       }
 
@@ -180,6 +188,115 @@ export function matchInvoicesAgainstSheet(
   }
 
   return results;
+}
+
+/**
+ * Variante de matchInvoicesAgainstSheet qui retourne la MEILLEURE
+ * candidate même si en dessous du seuil. Utilisé pour expliquer à
+ * l'utilisateur pourquoi son match a échoué.
+ */
+export function findBestCandidate(
+  sheet: ParsedSheet,
+  inv: Invoice,
+): { result: MatchResult; score: number } | null {
+  const headerNorm = sheet.headers.map(norm);
+  const colIdx = (...candidates: string[]) =>
+    headerNorm.findIndex((h) => candidates.some((c) => h.includes(c)));
+
+  const idxCreditor = colIdx(
+    "creditor", "fournisseur", "creditrice", "creanc", "vendor", "nom",
+    "libelle", "libellé", "description", "denomination", "transaction",
+    "objet", "buchungstext", "verwendungszweck",
+  );
+  const idxAmount = colIdx(
+    "montant", "amount", "ttc", "total",
+    "debit", "débit", "credit", "crédit", "betrag", "valeur",
+  );
+  const idxDate = colIdx(
+    "date", "facture",
+    "valuta", "valeur", "comptabilis", "operation", "buchung",
+  );
+  const idxCode = colIdx("code", "compte", "categorie");
+
+  const invCreditorTokens = creditorTokens(inv.creditor);
+  let best: { result: MatchResult; score: number } | null = null;
+
+  sheet.rows.forEach((row, rowIndex) => {
+    const reasons: string[] = [];
+    let score = 0;
+
+    const rowCreditor = idxCreditor >= 0 ? norm(row[idxCreditor]) : "";
+    const rowAmount = idxAmount >= 0 ? parseAmount(row[idxAmount]) : null;
+    const rowDate = idxDate >= 0 ? parseDate(row[idxDate]) : null;
+    const rowCode = idxCode >= 0 ? String(row[idxCode] ?? "").trim() : "";
+
+    if (invCreditorTokens.length > 0) {
+      const haystack = rowCreditor + " " +
+        norm(row.map((c) => (typeof c === "string" ? c : "")).join(" "));
+      const hitTokens = invCreditorTokens.filter((t) => haystack.includes(t));
+      if (hitTokens.length > 0) {
+        score += 3;
+        reasons.push(`créditeur "${hitTokens.join(", ")}"`);
+      }
+    }
+    if (inv.amount != null && rowAmount != null) {
+      const absRow = Math.abs(rowAmount);
+      const diff = Math.abs(inv.amount - absRow);
+      const rel = diff / Math.max(inv.amount, absRow);
+      if (diff < 0.01) {
+        score += 3;
+        reasons.push("montant exact");
+      } else if (rel < 0.05) {
+        score += 2;
+        reasons.push("montant ±5%");
+      } else if (rel < 0.15) {
+        score += 1.3;
+        reasons.push("montant ±15%");
+      } else if (rel < 0.25) {
+        score += 0.8;
+        reasons.push("montant ±25%");
+      }
+    }
+    if (inv.invoiceDate && rowDate) {
+      const diffDays = Math.abs(
+        (new Date(inv.invoiceDate).getTime() - new Date(rowDate).getTime()) /
+          86_400_000,
+      );
+      if (diffDays === 0) {
+        score += 2;
+        reasons.push("date exacte");
+      } else if (diffDays <= 3) {
+        score += 1.5;
+        reasons.push("date ±3j");
+      } else if (diffDays <= 7) {
+        score += 1.2;
+        reasons.push("date ±7j");
+      } else if (diffDays <= 14) {
+        score += 1;
+        reasons.push("date ±14j");
+      }
+    }
+    if (inv.folderCode && rowCode && rowCode === inv.folderCode) {
+      score += 1;
+      reasons.push(`code ${inv.folderCode}`);
+    }
+
+    if (score > 0 && (!best || score > best.score)) {
+      best = {
+        score,
+        result: {
+          rowIndex,
+          invoice: inv,
+          confidence: score >= 6 ? "high" : score >= 5 ? "medium" : "low",
+          reasons,
+          excelAmount: rowAmount,
+          excelDate: rowDate,
+        },
+      };
+    }
+  });
+
+  return best;
 }
 
 /**

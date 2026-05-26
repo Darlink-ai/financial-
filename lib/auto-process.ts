@@ -33,7 +33,7 @@ import {
 
 /** Au-delà de ce nombre d'échecs, on abandonne et l'invoice passe en `manual`. */
 const MAX_AUTO_RETRIES = 3;
-import { matchInvoicesAgainstSheet } from "./excel-match";
+import { findBestCandidate, matchInvoicesAgainstSheet } from "./excel-match";
 import type {
   AccountCurrency,
   FolderMapping,
@@ -405,6 +405,14 @@ async function autoProcessInvoiceInner(
     accountCurrency,
   };
 
+  type NearMiss = {
+    currency: AccountCurrency;
+    rowIndex: number;
+    score: number;
+    reasons: string[];
+  };
+  let bestNearMiss: NearMiss | null = null;
+
   for (const currency of EXCEL_SEARCH_ORDER) {
     try {
       const sheet = await getExcelSheet(month, currency);
@@ -416,12 +424,29 @@ async function autoProcessInvoiceInner(
       if (matches.length > 0) {
         matchedRow = matches[0].rowIndex + 2;
         matchedCurrency = currency;
-        // Excel = source de vérité pour le montant.
         const excelAmount = matches[0].excelAmount;
         if (excelAmount != null && Number.isFinite(excelAmount)) {
           patch.amount = Math.abs(excelAmount);
         }
         break;
+      } else {
+        // Pas de match au seuil 4 → on calcule la meilleure ligne
+        // approchante pour la remonter au user en cas d'échec.
+        const candidate = findBestCandidate(
+          { headers: sheet.headers, rows: sheet.rows },
+          dummy,
+        );
+        if (
+          candidate &&
+          (!bestNearMiss || candidate.score > bestNearMiss.score)
+        ) {
+          bestNearMiss = {
+            currency,
+            rowIndex: candidate.result.rowIndex + 2,
+            score: candidate.score,
+            reasons: candidate.result.reasons,
+          };
+        }
       }
     } catch (e) {
       errors.push(`excel(${currency}): ${(e as Error).message}`);
@@ -431,6 +456,17 @@ async function autoProcessInvoiceInner(
   // Si match trouvé : l'accountCurrency vient du sheet, pas du PDF.
   if (matchedCurrency) {
     patch.accountCurrency = matchedCurrency;
+  } else if (bestNearMiss) {
+    // Pas de match mais on a une ligne "presque". On enregistre dans
+    // errors → finit dans last_error → diagnostic visible dans l'UI.
+    errors.push(
+      `match: meilleure ligne approchante = ${bestNearMiss.currency} #${bestNearMiss.rowIndex} ` +
+        `(score ${bestNearMiss.score.toFixed(1)}/4) — manque : ${
+          bestNearMiss.reasons.length > 0
+            ? bestNearMiss.reasons.join(", ")
+            : "aucun signal fort"
+        }`,
+    );
   }
 
   // ---- 4b. Dédoublonnage facture / reçu ----
