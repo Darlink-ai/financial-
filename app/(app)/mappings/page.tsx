@@ -16,7 +16,7 @@ export default function MappingsPage() {
   });
 
   const handleAdd = () => {
-    if (!draft.creditorPattern || !draft.folderCode || !draft.folderLabel) return;
+    if (!draft.folderCode || !draft.folderLabel) return;
     addMapping({ id: `fm-${Date.now()}`, ...draft });
     setDraft({ creditorPattern: "", folderCode: "", folderLabel: "" });
   };
@@ -28,7 +28,7 @@ export default function MappingsPage() {
     <>
       <PageHeader
         title="Classement comptable"
-        subtitle="Catégories de charges et règles d'auto-classement. Pour chaque créditeur, on devine la catégorie grâce au motif (séparé par |). Le nom final suit le format JJ.MM.AA - Créditeur - Code."
+        subtitle="Catégories de charges utilisées pour ranger les factures. Le nom final suit le format JJ.MM.AA - Créditeur - Code."
         showMonthSelector={false}
       />
 
@@ -38,8 +38,7 @@ export default function MappingsPage() {
             Catégories actives
           </div>
           <div className="card overflow-hidden">
-            <div className="grid grid-cols-[1.4fr_100px_1.6fr_1fr_60px] px-5 py-3 border-b border-border text-[10px] uppercase tracking-wider text-muted">
-              <div>Créditeur (motif)</div>
+            <div className="grid grid-cols-[100px_1.6fr_1fr_60px] px-5 py-3 border-b border-border text-[10px] uppercase tracking-wider text-muted">
               <div>Code</div>
               <div>Libellé dossier</div>
               <div>Notes</div>
@@ -48,14 +47,8 @@ export default function MappingsPage() {
             {normalCategories.map((m) => (
               <div
                 key={m.id}
-                className="grid grid-cols-[1.4fr_100px_1.6fr_1fr_60px] px-5 py-2.5 items-center border-b border-border last:border-b-0 gap-3"
+                className="grid grid-cols-[100px_1.6fr_1fr_60px] px-5 py-2.5 items-center border-b border-border last:border-b-0 gap-3"
               >
-                <input
-                  value={m.creditorPattern}
-                  onChange={(e) => updateMapping(m.id, { creditorPattern: e.target.value })}
-                  className="input"
-                  placeholder="ex: Stripe|PayPal"
-                />
                 <input
                   value={m.folderCode}
                   onChange={(e) => updateMapping(m.id, { folderCode: e.target.value })}
@@ -136,16 +129,7 @@ export default function MappingsPage() {
           <div className="text-[12px] font-medium mb-3 flex items-center gap-2">
             <FolderTree size={14} /> Nouvelle catégorie
           </div>
-          <div className="grid grid-cols-[1.4fr_100px_1.6fr_1fr_auto] gap-3 items-end">
-            <div>
-              <label className="text-[11px] text-muted block mb-1">Créditeur (motif)</label>
-              <input
-                value={draft.creditorPattern}
-                onChange={(e) => setDraft({ ...draft, creditorPattern: e.target.value })}
-                placeholder="Stripe|PayPal|Adyen"
-                className="input"
-              />
-            </div>
+          <div className="grid grid-cols-[100px_1.6fr_1fr_auto] gap-3 items-end">
             <div>
               <label className="text-[11px] text-muted block mb-1">Code</label>
               <input
@@ -182,11 +166,8 @@ export default function MappingsPage() {
         <div className="card p-4 bg-panel2/30 flex gap-3">
           <Info size={14} className="text-muted shrink-0 mt-0.5" />
           <div className="text-[11px] text-muted leading-relaxed">
-            <strong className="text-text">Astuces de motif :</strong> sépare plusieurs créditeurs
-            avec <code className="font-mono">|</code> (ex: <code className="font-mono">Migros|Coop</code>
-            ). Recherche insensible à la casse, sous-chaîne ou regex.{" "}
-            <strong className="text-text">Code :</strong> abréviation courte qui finira dans le nom de
-            fichier (ex: <code className="font-mono">22.05.26 - Runpod - TECH</code>).
+            <strong className="text-text">Code :</strong> abréviation courte qui finira dans le
+            nom de fichier (ex: <code className="font-mono">22.05.26 - Runpod - TECH</code>).
           </div>
         </div>
       </div>
