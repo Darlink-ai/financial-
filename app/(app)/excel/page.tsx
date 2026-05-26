@@ -117,41 +117,6 @@ export default function ExcelPage() {
     [sheet],
   );
 
-  // Ventilation des débits par code comptable, via les factures rapprochées :
-  // on n'a pas le code directement dans le fichier banque (sauf colonne dédiée
-  // rare), donc on prend chaque ligne matchée → on trouve la facture → on
-  // ajoute la valeur du débit (lue dans Excel, source de vérité) au seau de
-  // son folderCode. Le reste va dans "Non rapproché".
-  const expenseByCode = useMemo(() => {
-    if (!sheet)
-      return [] as { code: string; label: string; amount: number }[];
-    const byKey = new Map<string, { code: string; label: string; amount: number }>();
-    let unmatchedAmount = 0;
-    for (let i = 0; i < expenseTotals.rowDebits.length; i++) {
-      const debit = expenseTotals.rowDebits[i];
-      if (!debit) continue;
-      const m = matchedRows.get(i);
-      if (m && m.invoice.folderCode) {
-        const code = m.invoice.folderCode;
-        const label = m.invoice.folderLabel ?? code;
-        const bucket = byKey.get(code) ?? { code, label, amount: 0 };
-        bucket.amount += debit;
-        byKey.set(code, bucket);
-      } else {
-        unmatchedAmount += debit;
-      }
-    }
-    const arr = Array.from(byKey.values()).sort((a, b) => b.amount - a.amount);
-    if (unmatchedAmount > 0) {
-      arr.push({
-        code: "—",
-        label: "Lignes non rapprochées",
-        amount: unmatchedAmount,
-      });
-    }
-    return arr;
-  }, [sheet, matchedRows, expenseTotals]);
-
   const unmatchedInvoices = useMemo<Invoice[]>(() => {
     const matchedIds = new Set(matches.map((m) => m.invoice.id));
     return invoices
@@ -406,15 +371,7 @@ export default function ExcelPage() {
               />
             </div>
 
-            <DetectedColumns sheet={sheet} />
-
-            {expenseByCode.length > 0 && (
-              <ExpenseBreakdown
-                items={expenseByCode}
-                total={expenseTotals.totalDebit}
-                currency={currency}
-              />
-            )}
+            <ColumnsMini sheet={sheet} />
 
             <SheetTable sheet={sheet} matchedRows={matchedRows} />
 
@@ -619,84 +576,6 @@ function StatTile({
   );
 }
 
-/**
- * Affiche la ventilation des dépenses du fichier par code comptable
- * (via les factures rapprochées). Les lignes non rapprochées sont
- * regroupées dans une catégorie "—" pour donner un aperçu du restant.
- */
-function ExpenseBreakdown({
-  items,
-  total,
-  currency,
-}: {
-  items: { code: string; label: string; amount: number }[];
-  total: number;
-  currency: AccountCurrency;
-}) {
-  if (total <= 0) return null;
-  return (
-    <section className="card overflow-hidden">
-      <div className="px-5 py-3 border-b border-border flex items-center justify-between">
-        <div>
-          <div className="text-[13px] font-medium">
-            Dépenses par code comptable
-          </div>
-          <div className="text-[11px] text-muted">
-            Ventilation des débits du fichier via les factures rapprochées.
-            Les lignes non rapprochées sont en bas.
-          </div>
-        </div>
-        <div className="text-right">
-          <div className="text-[11px] text-muted">Total débits</div>
-          <div className="text-[15px] font-semibold tabular-nums text-warn">
-            {formatAmount(total, currency)}
-          </div>
-        </div>
-      </div>
-      <div className="divide-y divide-border">
-        {items.map((it) => {
-          const pct = total > 0 ? (it.amount / total) * 100 : 0;
-          const isUnmatched = it.code === "—";
-          return (
-            <div
-              key={`${it.code}-${it.label}`}
-              className="px-5 py-2.5 flex items-center gap-3 text-[12px]"
-            >
-              <span
-                className={`font-mono text-[11px] w-14 shrink-0 ${
-                  isUnmatched ? "text-muted" : "text-accent"
-                }`}
-              >
-                {it.code}
-              </span>
-              <span
-                className={`truncate flex-1 min-w-0 ${
-                  isUnmatched ? "text-muted italic" : ""
-                }`}
-                title={it.label}
-              >
-                {it.label}
-              </span>
-              <div className="w-32 h-1.5 rounded-full bg-panel2 overflow-hidden">
-                <div
-                  className={isUnmatched ? "h-full bg-muted/40" : "h-full bg-accent/70"}
-                  style={{ width: `${Math.min(100, pct)}%` }}
-                />
-              </div>
-              <span className="text-[11px] text-muted w-12 text-right tabular-nums">
-                {pct.toFixed(1)}%
-              </span>
-              <span className="font-mono w-28 text-right tabular-nums">
-                {formatAmount(it.amount, currency)}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-
 function SheetTable({
   sheet,
   matchedRows,
@@ -773,87 +652,42 @@ function formatCell(v: string | number | Date | null): string {
 }
 
 /**
- * Affiche les colonnes que le matcher a détectées dans le fichier
- * (Date, Description/créditeur, Montant, Code) + à partir de quelle
- * ligne il commence vraiment les transactions.
+ * Récap minimaliste : une ligne avec les colonnes que l'algo a identifiées
+ * (numéro + nom lu dans le fichier). Sert à vérifier d'un coup d'œil que
+ * mon parsing est correct quand on upload un nouveau fichier.
  */
-function DetectedColumns({ sheet }: { sheet: ParsedSheet }) {
+function ColumnsMini({ sheet }: { sheet: ParsedSheet }) {
   const cols = detectColumns(sheet);
-  // Lit la VRAIE ligne d'en-tête utilisée par le matcher (après skip du
-  // préambule), pour qu'on voie textuellement les en-têtes que l'algo lit.
   const headerRow =
     cols.dataStartRow > 0
       ? sheet.rows[cols.dataStartRow - 1] ?? sheet.headers
       : (sheet.headers as unknown as (string | number | null)[]);
-  // Échantillon : 1ère ligne de data après le header.
-  const sampleRow = sheet.rows[cols.dataStartRow] ?? [];
 
-  const cellText = (idx: number, row: (string | number | null)[]) => {
+  const label = (idx: number) => {
     if (idx < 0) return null;
-    const v = row[idx];
-    if (v == null || v === "") return null;
-    return String(v);
+    const v = headerRow[idx];
+    return v == null || v === "" ? `col ${idx + 1}` : String(v);
   };
 
-  const fmt = (
-    label: string,
-    i: number,
-    options?: { critical?: boolean },
-  ) => {
-    const headerText = cellText(i, headerRow);
-    const sampleText = cellText(i, sampleRow);
-    return (
-      <div className="space-y-0.5">
-        <div>
-          <span className="text-muted">{label} : </span>
-          {i < 0 ? (
-            <span
-              className={options?.critical ? "text-err font-medium" : "text-err"}
-            >
-              non trouvée
-            </span>
-          ) : (
-            <>
-              <span className="text-text font-mono">col {i + 1}</span>
-              {headerText && (
-                <span className="text-accent font-mono ml-1.5">
-                  « {headerText} »
-                </span>
-              )}
-            </>
-          )}
-        </div>
-        {sampleText && i >= 0 && (
-          <div className="text-[10px] text-muted pl-2">
-            ex. ligne {cols.dataStartRow + 2} : <span className="font-mono">{sampleText}</span>
-          </div>
-        )}
-      </div>
-    );
-  };
+  const items: { key: string; value: string | null }[] = [
+    { key: "Date", value: label(cols.idxDate) },
+    { key: "Description", value: label(cols.idxCreditor) },
+    { key: "Débit", value: label(cols.idxDebit) },
+    { key: "Crédit", value: label(cols.idxCredit) },
+  ];
 
   return (
-    <div className="card p-3 text-[11px] space-y-2">
-      <div className="text-[10px] uppercase tracking-wider text-muted">
-        Colonnes détectées par le matcher
-      </div>
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-2">
-        {fmt("Date", cols.idxDate)}
-        {fmt("Description / créditeur", cols.idxCreditor)}
-        {fmt("Montant", cols.idxAmount)}
-        {fmt("Code", cols.idxCode)}
-        {fmt("Débit (dédié)", cols.idxDebit, { critical: true })}
-        {fmt("Crédit (dédié)", cols.idxCredit)}
-      </div>
-      <div className="text-[10px] text-muted pt-1 border-t border-border">
-        Données réelles à partir de la ligne {cols.dataStartRow + 2} (les{" "}
-        {cols.dataStartRow} ligne(s) avant = préambule ignoré).
-        {cols.idxDebit >= 0 ? (
-          <> Total dépenses = somme de la colonne <strong className="text-ok">{cellText(cols.idxDebit, headerRow) ?? `col ${cols.idxDebit + 1}`}</strong>.</>
-        ) : (
-          <> Aucune colonne Débit dédiée détectée — fallback sur la colonne Montant signée (négatifs = débit).</>
-        )}
-      </div>
+    <div className="text-[11px] text-muted flex flex-wrap items-center gap-x-4 gap-y-1 px-1">
+      {items.map((it) => (
+        <span key={it.key}>
+          <span className="text-muted">{it.key} : </span>
+          {it.value ? (
+            <span className="text-text font-mono">{it.value}</span>
+          ) : (
+            <span className="text-err">—</span>
+          )}
+        </span>
+      ))}
     </div>
   );
 }

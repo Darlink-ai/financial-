@@ -7,9 +7,9 @@
  *  - Dépenses : somme des débits des 3 fichiers de rapprochement Excel
  *    (CHF / EUR / USD) du mois — chargés depuis `/api/excel-sheets/:month`.
  *
- * Tout est converti en USD pour les KPIs et graphiques globaux, via des
- * taux FX fixes simples (à raffiner plus tard via une vraie source FX).
- * Le détail par devise reste accessible pour transparence côté UI.
+ * Devise d'affichage : CHF (utilisateur en Suisse). Les montants USD/EUR
+ * sont convertis vers CHF via les taux moyens mensuels listés dans
+ * MONTHLY_FX_TO_CHF / DEFAULT_FX_TO_CHF (à remplacer par un feed FX réel).
  *
  * Ce qui nécessite un calcul plus poussé (EBITDA, impôts, marge brute…)
  * reste géré côté mock pour l'instant — sera branché ensuite.
@@ -26,44 +26,85 @@ import type { Period } from "@/components/AnalysePeriodPicker";
 import { useStore } from "@/lib/store";
 import type { AccountCurrency, Business, Revenue } from "@/lib/types";
 
-/** Taux FX fixes pour convertir en USD. Plus tard : table FX par mois. */
-const FX_TO_USD: Record<AccountCurrency, number> = {
-  USD: 1,
-  EUR: 1.07,
-  CHF: 1.13,
+/**
+ * Taux de change par défaut (1 unité de la devise = X CHF).
+ * Moyennes approximatives 2024-2026. À surcharger par mois via
+ * MONTHLY_FX_TO_CHF pour plus de précision.
+ *
+ * TODO : intégrer un vrai feed FX (exchangerate.host, ECB, BNS…) pour
+ * obtenir les taux moyens du mois en réel et virer ces constantes.
+ */
+const DEFAULT_FX_TO_CHF: Record<AccountCurrency, number> = {
+  CHF: 1,
+  USD: 0.88,
+  EUR: 0.94,
 };
+
+/**
+ * Overrides par mois — quand on connaît le taux moyen exact pour un
+ * mois donné. Format : "YYYY-MM" → { USD?, EUR? } (CHF est toujours 1).
+ */
+const MONTHLY_FX_TO_CHF: Record<
+  string,
+  Partial<Record<AccountCurrency, number>>
+> = {
+  // Exemples (à remplir avec des valeurs BNS quand on les intègre) :
+  // "2026-01": { USD: 0.87, EUR: 0.93 },
+};
+
+/** Récupère le taux de change pour 1 unité de `currency` → CHF, pour le
+ *  mois donné. Tombe sur DEFAULT_FX_TO_CHF si pas d'override. */
+function getRateToChf(month: string, currency: AccountCurrency): number {
+  if (currency === "CHF") return 1;
+  const override = MONTHLY_FX_TO_CHF[month]?.[currency];
+  return override ?? DEFAULT_FX_TO_CHF[currency];
+}
+
+export const DISPLAY_CURRENCY: AccountCurrency = "CHF";
 
 export type MonthlyAgg = {
   month: string; // YYYY-MM
-  revenue: number; // USD
-  expenses: number; // USD (somme convertie des 3 buckets)
+  revenue: number; // CHF
+  expenses: number; // CHF (somme convertie des 3 buckets)
   net: number; // revenue - expenses
 };
 
 export type ExpenseByCurrency = {
   currency: AccountCurrency;
   amount: number; // dans la devise locale
-  amountUsd: number; // converti
+  amountChf: number; // converti
   fileName: string | null;
+};
+
+export type FxRatesSummary = {
+  /** Taux moyen utilisé sur la période, par devise. 1 unité = X CHF. */
+  averages: Record<Exclude<AccountCurrency, "CHF">, number>;
+  /** Détail mois par mois pour info / debug. */
+  perMonth: { month: string; USD: number; EUR: number }[];
+  /** True si au moins 1 mois utilise un override (taux exact), sinon on
+   *  affiche les valeurs par défaut. */
+  hasOverrides: boolean;
 };
 
 export type AnalyseAggregates = {
   loading: boolean;
   /** Mois inclus dans la période (du plus ancien au plus récent). */
   months: string[];
-  /** Série complète revenu / dépenses / net en USD, par mois. */
+  /** Série complète revenu / dépenses / net en CHF, par mois. */
   series: MonthlyAgg[];
   /** Totaux sur la période complète. */
   totals: {
-    revenue: number;
-    expenses: number; // USD total
-    net: number;
-    expensesByCurrency: ExpenseByCurrency[]; // pour le dernier mois de la période
+    revenue: number; // CHF
+    expenses: number; // CHF total
+    net: number; // CHF
+    expensesByCurrency: ExpenseByCurrency[];
   };
-  /** Ventilation CA par business sur la période. */
+  /** Ventilation CA par business sur la période (en CHF). */
   byBusiness: { id: string; name: string; color: string; amount: number; share: number }[];
-  /** Ventilation CA par processeur de paiement (EMP, Centrobill, …) en USD. */
+  /** Ventilation CA par processeur de paiement (EMP, Centrobill, …) en CHF. */
   byProcessor: Record<string, number>;
+  /** Taux de change utilisés sur la période. */
+  fx: FxRatesSummary;
 };
 
 /** Construit la liste des mois "YYYY-MM" couverts par la période. */
@@ -121,7 +162,8 @@ async function fetchSheet(
 const CURRENCIES: AccountCurrency[] = ["USD", "EUR", "CHF"];
 
 /**
- * Hook principal. Agrège revenus + dépenses sur la période.
+ * Hook principal. Agrège revenus + dépenses sur la période, tout converti
+ * en CHF via les taux moyens mensuels.
  */
 export function useAnalyseAggregates(period: Period): AnalyseAggregates {
   const { revenues, businesses } = useStore();
@@ -171,23 +213,22 @@ export function useAnalyseAggregates(period: Period): AnalyseAggregates {
 
   const series = useMemo<MonthlyAgg[]>(() => {
     return months.map((month) => {
-      // Revenus du mois (somme capturedAmount, toutes devises confondues — la
-      // plupart des processeurs sont déjà en USD mais on convertit au cas où).
-      const revenueUsd = revenues
+      // Revenus du mois → conversion CHF avec taux du mois en question.
+      const revenueChf = revenues
         .filter((r) => r.month === month)
-        .reduce((sum, r) => sum + toUsd(r.capturedAmount, r.currency), 0);
+        .reduce((sum, r) => sum + toChf(r.capturedAmount, r.currency, month), 0);
 
       const bucket = monthlySheets[month] ?? {};
-      const expensesUsd = CURRENCIES.reduce((sum, c) => {
+      const expensesChf = CURRENCIES.reduce((sum, c) => {
         const localAmount = bucket[c]?.amount ?? 0;
-        return sum + localAmount * FX_TO_USD[c];
+        return sum + localAmount * getRateToChf(month, c);
       }, 0);
 
       return {
         month,
-        revenue: revenueUsd,
-        expenses: expensesUsd,
-        net: revenueUsd - expensesUsd,
+        revenue: revenueChf,
+        expenses: expensesChf,
+        net: revenueChf - expensesChf,
       };
     });
   }, [months, revenues, monthlySheets]);
@@ -195,25 +236,21 @@ export function useAnalyseAggregates(period: Period): AnalyseAggregates {
   const totals = useMemo(() => {
     const totalRevenue = series.reduce((s, m) => s + m.revenue, 0);
     const totalExpenses = series.reduce((s, m) => s + m.expenses, 0);
-    // Pour le détail "par devise", on prend le dernier mois de la période
-    // (le plus représentatif pour un mois unique ; sur une année on somme).
+    // Détail "par devise" : somme native par devise + équivalent CHF
+    // (moyenne pondérée sur la période).
     const expensesByCurrency: ExpenseByCurrency[] = CURRENCIES.map((c) => {
       let amount = 0;
+      let amountChf = 0;
       let fileName: string | null = null;
       for (const m of months) {
         const b = monthlySheets[m]?.[c];
         if (b) {
           amount += b.amount;
-          // Garde le 1er fileName non-null trouvé comme représentatif.
+          amountChf += b.amount * getRateToChf(m, c);
           if (!fileName && b.fileName) fileName = b.fileName;
         }
       }
-      return {
-        currency: c,
-        amount,
-        amountUsd: amount * FX_TO_USD[c],
-        fileName,
-      };
+      return { currency: c, amount, amountChf, fileName };
     });
     return {
       revenue: totalRevenue,
@@ -226,14 +263,17 @@ export function useAnalyseAggregates(period: Period): AnalyseAggregates {
   const byBusiness = useMemo(() => {
     const filteredRevenues = revenues.filter((r) => months.includes(r.month));
     const totalCa = filteredRevenues.reduce(
-      (s, r) => s + toUsd(r.capturedAmount, r.currency),
+      (s, r) => s + toChf(r.capturedAmount, r.currency, r.month),
       0,
     );
     return businesses
       .map((b: Business) => {
         const amount = filteredRevenues
           .filter((r: Revenue) => r.businessId === b.id)
-          .reduce((s, r) => s + toUsd(r.capturedAmount, r.currency), 0);
+          .reduce(
+            (s, r) => s + toChf(r.capturedAmount, r.currency, r.month),
+            0,
+          );
         return {
           id: b.id,
           name: b.name,
@@ -246,24 +286,44 @@ export function useAnalyseAggregates(period: Period): AnalyseAggregates {
       .sort((a, b) => b.amount - a.amount);
   }, [businesses, revenues, months]);
 
-  // Volume par processeur (EMP, Centrobill…) — converti en USD.
+  // Volume par processeur (EMP, Centrobill…) en CHF.
   const byProcessor = useMemo<Record<string, number>>(() => {
     const map: Record<string, number> = {};
     for (const r of revenues) {
       if (!months.includes(r.month)) continue;
       const key = r.processor || "—";
-      map[key] = (map[key] ?? 0) + toUsd(r.capturedAmount, r.currency);
+      map[key] = (map[key] ?? 0) + toChf(r.capturedAmount, r.currency, r.month);
     }
     return map;
   }, [revenues, months]);
 
-  return { loading, months, series, totals, byBusiness, byProcessor };
+  // Récap des taux FX utilisés sur la période — moyenne simple sur les
+  // mois inclus, pour donner un repère visuel à l'utilisateur.
+  const fx = useMemo<FxRatesSummary>(() => {
+    const perMonth = months.map((month) => ({
+      month,
+      USD: getRateToChf(month, "USD"),
+      EUR: getRateToChf(month, "EUR"),
+    }));
+    const avg = (key: "USD" | "EUR") =>
+      perMonth.length
+        ? perMonth.reduce((s, p) => s + p[key], 0) / perMonth.length
+        : DEFAULT_FX_TO_CHF[key];
+    const hasOverrides = months.some((m) => MONTHLY_FX_TO_CHF[m] != null);
+    return {
+      averages: { USD: avg("USD"), EUR: avg("EUR") },
+      perMonth,
+      hasOverrides,
+    };
+  }, [months]);
+
+  return { loading, months, series, totals, byBusiness, byProcessor, fx };
 }
 
-/** Convertit un montant local en USD via la table FX. Tolère les currency
- *  inconnues en les considérant comme USD. */
-function toUsd(amount: number, currency: string): number {
+/** Convertit un montant local en CHF via la table FX du mois.
+ *  Tolère les currency inconnues en les considérant comme CHF. */
+function toChf(amount: number, currency: string, month: string): number {
   const c = currency.toUpperCase() as AccountCurrency;
-  const rate = FX_TO_USD[c];
-  return amount * (rate ?? 1);
+  if (!(c in DEFAULT_FX_TO_CHF)) return amount; // unknown → treat as CHF
+  return amount * getRateToChf(month, c);
 }

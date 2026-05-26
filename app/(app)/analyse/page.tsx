@@ -17,7 +17,10 @@ import {
   mockEbit,
   type KPI,
 } from "@/lib/analyse-mock";
-import { useAnalyseAggregates } from "@/lib/analyse-data";
+import {
+  DISPLAY_CURRENCY,
+  useAnalyseAggregates,
+} from "@/lib/analyse-data";
 import { formatAmount } from "@/lib/format";
 import {
   TrendingUp,
@@ -26,6 +29,7 @@ import {
   Activity,
   LineChart,
   Info,
+  ArrowRightLeft,
 } from "lucide-react";
 
 type IconType = typeof TrendingUp;
@@ -40,42 +44,43 @@ export default function AnalysePage() {
   const ebitda = mockEbitda(period);
   const ebit = mockEbit(period);
 
-  // KPIs réels CA — somme capturedAmount sur la période (USD).
-  // 4 tuiles : CA total, Net, volume EMP, volume Centrobill.
+  // KPIs réels CA — somme capturedAmount sur la période, convertie en CHF
+  // via taux moyens mensuels. 4 tuiles : CA total, Net, Volume EMP, Volume Centrobill.
   const volumeEmp = agg.byProcessor["EMP"] ?? 0;
   const volumeCentrobill = agg.byProcessor["Centrobill"] ?? 0;
   const caKpis: KPI[] = [
     {
       label: "Chiffre d'affaires",
       value: agg.totals.revenue,
-      currency: "USD",
+      currency: DISPLAY_CURRENCY,
       hint: agg.loading
         ? "Chargement…"
-        : "Somme des capturedAmount des revenus du mois (merchant pay).",
+        : "Somme des revenus du mois, convertie en CHF via taux moyens.",
     },
     {
       label: "Net",
       value: agg.totals.net,
-      currency: "USD",
-      hint: "CA − dépenses (somme des débits des 3 rapprochements Excel).",
+      currency: DISPLAY_CURRENCY,
+      hint: "CA − dépenses (somme des débits des 3 rapprochements Excel, le tout en CHF).",
     },
     {
       label: "Volume EMP",
       value: volumeEmp,
-      currency: "USD",
-      hint: "Captured EMP, hors fees.",
+      currency: DISPLAY_CURRENCY,
+      hint: "Captured EMP (CHF), hors fees.",
     },
     {
       label: "Volume Centrobill",
       value: volumeCentrobill,
-      currency: "USD",
+      currency: DISPLAY_CURRENCY,
       hint: volumeCentrobill > 0
-        ? "Captured Centrobill, hors fees."
+        ? "Captured Centrobill (CHF), hors fees."
         : "Pas encore de revenus Centrobill saisis.",
     },
   ];
 
-  // KPIs réels Bénéfice net = CA - dépenses (sommes des débits des 3 Excel).
+  // KPIs réels Bénéfice net = CA - dépenses (sommes des débits des 3 Excel,
+  // convertis en CHF).
   const marginPct = agg.totals.revenue > 0
     ? (agg.totals.net / agg.totals.revenue) * 100
     : 0;
@@ -83,25 +88,25 @@ export default function AnalysePage() {
     {
       label: "Bénéfice net",
       value: agg.totals.net,
-      currency: "USD",
-      hint: "CA − somme des débits des 3 rapprochements Excel (USD/EUR/CHF, convertis en USD).",
+      currency: DISPLAY_CURRENCY,
+      hint: "CA − somme des débits des 3 rapprochements Excel (tout en CHF).",
     },
     {
       label: "Marge nette",
       value: marginPct,
-      currency: "USD",
+      currency: DISPLAY_CURRENCY,
       hint: "Bénéfice net / CA.",
     },
     {
       label: "Total dépenses",
       value: agg.totals.expenses,
-      currency: "USD",
-      hint: "Somme des débits des 3 rapprochements Excel (convertis en USD).",
+      currency: DISPLAY_CURRENCY,
+      hint: "Somme des débits des 3 rapprochements Excel (convertis en CHF).",
     },
     {
       label: "Nb de mois",
       value: agg.months.length,
-      currency: "USD",
+      currency: DISPLAY_CURRENCY,
       hint: "Période couverte par les calculs.",
     },
   ];
@@ -110,11 +115,14 @@ export default function AnalysePage() {
     <>
       <PageHeader
         title="Analyse financière"
-        subtitle={`Vue d'ensemble — ${formatPeriodLabel(period)}. CA et bénéfice net branchés sur les données réelles (revenus + rapprochements Excel). EBITDA / EBIT / Bénéfice brut restent à calculer.`}
+        subtitle={`Vue d'ensemble — ${formatPeriodLabel(period)}. Tout est en CHF (taux moyens du mois). EBITDA / EBIT / Bénéfice brut restent à calculer.`}
         actions={<AnalysePeriodPicker value={period} onChange={setPeriod} />}
       />
 
-      <div className="p-8 space-y-12">
+      <div className="p-8 space-y-8">
+        {/* Bandeau FX : indique les taux utilisés pour la conversion CHF. */}
+        <FxRatesBanner agg={agg} />
+
         <Section
           icon={TrendingUp}
           title="Chiffre d'affaires"
@@ -125,7 +133,7 @@ export default function AnalysePage() {
           <div className="grid grid-cols-[2fr_1fr] gap-4">
             <SeriesChart
               data={agg.series}
-              title="Évolution mensuelle (USD)"
+              title="Évolution mensuelle (CHF)"
               isLive
             />
             <BreakdownList
@@ -144,13 +152,13 @@ export default function AnalysePage() {
         <Section
           icon={Coins}
           title="Bénéfice net"
-          subtitle="CA − dépenses (somme des débits des 3 rapprochements Excel, convertis en USD)."
+          subtitle="CA − dépenses (somme des débits des 3 rapprochements Excel, tout en CHF)."
           live
         >
           <KpiGrid kpis={netKpis} percentAt={1} countAt={[3]} />
           <SeriesChart
             data={agg.series}
-            title="Évolution du résultat net (USD)"
+            title="Évolution du résultat net (CHF)"
             isLive
           />
           <ExpensesByCurrencyCard agg={agg} />
@@ -187,6 +195,39 @@ export default function AnalysePage() {
         </Section>
       </div>
     </>
+  );
+}
+
+/** Bandeau visible en haut de la page indiquant les taux FX utilisés pour
+ *  convertir tous les montants en CHF. */
+function FxRatesBanner({ agg }: { agg: ReturnType<typeof useAnalyseAggregates> }) {
+  const usd = agg.fx.averages.USD;
+  const eur = agg.fx.averages.EUR;
+  return (
+    <div className="card px-5 py-3 flex items-center gap-4 flex-wrap text-[12px]">
+      <div className="flex items-center gap-2 text-text">
+        <ArrowRightLeft size={14} className="text-accent" />
+        <span className="font-medium">Taux de change utilisés</span>
+      </div>
+      <div className="flex items-center gap-4 text-muted">
+        <span>
+          1 USD ={" "}
+          <span className="font-mono text-text">{usd.toFixed(4)} CHF</span>
+        </span>
+        <span>
+          1 EUR ={" "}
+          <span className="font-mono text-text">{eur.toFixed(4)} CHF</span>
+        </span>
+        <span>
+          1 CHF = <span className="font-mono text-text">1.0000 CHF</span>
+        </span>
+      </div>
+      <div className="text-[11px] text-muted ml-auto">
+        {agg.fx.hasOverrides
+          ? `Moyenne sur ${agg.fx.perMonth.length} mois (taux exacts par mois)`
+          : `Approximations stables (à brancher sur un feed FX réel)`}
+      </div>
+    </div>
   );
 }
 
@@ -265,7 +306,7 @@ function KpiGrid({
 }
 
 /** Détail "dépenses par devise" pour la section Bénéfice net — montre les
- *  3 buckets avec leur montant local + équivalent USD + nom du fichier. */
+ *  3 buckets avec leur montant local + équivalent CHF + nom du fichier. */
 function ExpensesByCurrencyCard({ agg }: { agg: ReturnType<typeof useAnalyseAggregates> }) {
   return (
     <div className="card overflow-hidden">
@@ -274,7 +315,7 @@ function ExpensesByCurrencyCard({ agg }: { agg: ReturnType<typeof useAnalyseAggr
           Détail des dépenses par devise
         </div>
         <div className="text-[11px] text-muted">
-          Somme directe des débits par fichier de rapprochement, et équivalent USD pour le total.
+          Somme directe des débits par fichier de rapprochement, et équivalent CHF pour le total.
         </div>
       </div>
       <div className="divide-y divide-border">
@@ -293,7 +334,7 @@ function ExpensesByCurrencyCard({ agg }: { agg: ReturnType<typeof useAnalyseAggr
               {formatAmount(e.amount, e.currency)}
             </span>
             <span className="font-mono tabular-nums w-32 text-right text-muted">
-              ≈ {formatAmount(e.amountUsd, "USD")}
+              ≈ {formatAmount(e.amountChf, "CHF")}
             </span>
           </div>
         ))}
