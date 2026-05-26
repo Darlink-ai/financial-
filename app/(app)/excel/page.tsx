@@ -798,17 +798,28 @@ function DetectedColumns({ sheet }: { sheet: ParsedSheet }) {
           {fmt(cols.idxCreditor)}
         </div>
         <div>
-          <span className="text-muted">Débit / montant : </span>
+          <span className="text-muted">Montant : </span>
           {fmt(cols.idxAmount)}
         </div>
         <div>
           <span className="text-muted">Code : </span>
           {fmt(cols.idxCode)}
         </div>
+        <div>
+          <span className="text-muted">Débit (dédié) : </span>
+          {fmt(cols.idxDebit)}
+        </div>
+        <div>
+          <span className="text-muted">Crédit (dédié) : </span>
+          {fmt(cols.idxCredit)}
+        </div>
       </div>
       <div className="text-[10px] text-muted pt-1">
         Données réelles à partir de la ligne {cols.dataStartRow + 2} (les{" "}
         {cols.dataStartRow} ligne(s) avant = préambule ignoré).
+        {cols.idxDebit >= 0 && (
+          <> Total dépenses calculé via la colonne Débit dédiée.</>
+        )}
       </div>
     </div>
   );

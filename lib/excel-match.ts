@@ -69,6 +69,10 @@ export function detectColumns(sheet: ParsedSheet): {
   idxAmount: number;
   idxDate: number;
   idxCode: number;
+  /** Colonne Débit dédiée si le fichier en sépare une (sinon -1). */
+  idxDebit: number;
+  /** Colonne Crédit dédiée si le fichier en sépare une (sinon -1). */
+  idxCredit: number;
   dataStartRow: number;
 } {
   type Candidates = {
@@ -102,15 +106,32 @@ export function detectColumns(sheet: ParsedSheet): {
     code: ["code", "compte", "categorie", "catégorie"],
   };
 
+  // Mots dédiés pour distinguer Débit / Crédit quand les deux sont des
+  // colonnes séparées (cas UBS).
+  const DEBIT_KW = ["debit", "débit", "sortie", "soll", "out"];
+  const CREDIT_KW = ["credit", "crédit", "entree", "entrée", "haben", "in"];
+
   function scanRow(row: (string | number | null)[]) {
     const cells = row.map((c) => norm(String(c ?? "")));
     const find = (alts: string[]) =>
       cells.findIndex((c) => c && alts.some((a) => c.includes(a)));
+    // Pour debit/credit on cherche une correspondance plus stricte (sans
+    // matcher accidentellement "carte de crédit" dans une cellule longue).
+    const findStrict = (alts: string[]) =>
+      cells.findIndex((c) => {
+        if (!c) return false;
+        // Le header est généralement court (1-2 mots). On match seulement
+        // si la cellule entière est un de ces mots (avec tolérance suffixe
+        // type "Débit (CHF)").
+        return alts.some((a) => c === a || c.startsWith(a + " ") || c.startsWith(a + "("));
+      });
     return {
       creditor: find(KW.creditor),
       amount: find(KW.amount),
       date: find(KW.date),
       code: find(KW.code),
+      debit: findStrict(DEBIT_KW),
+      credit: findStrict(CREDIT_KW),
     };
   }
   function scoreOf(s: { creditor: number; amount: number; date: number }) {
@@ -144,6 +165,8 @@ export function detectColumns(sheet: ParsedSheet): {
     idxAmount: best.amount,
     idxDate: best.date,
     idxCode: best.code,
+    idxDebit: best.debit,
+    idxCredit: best.credit,
     dataStartRow: best.dataStartRow,
   };
 }
@@ -152,15 +175,14 @@ export function detectColumns(sheet: ParsedSheet): {
  * Calcule les totaux du fichier de rapprochement : somme des débits
  * (dépenses) et somme des crédits (entrées d'argent).
  *
- * Heuristique :
- * - Si la colonne montant détectée est explicitement nommée "Débit" /
- *   "Sortie", tous les nombres > 0 dans cette colonne sont des débits.
- * - Sinon (colonne "Montant" mixte), les nombres < 0 sont des débits
- *   (en valeur absolue), les > 0 sont des crédits.
- *
- * Pour un fichier UBS séparant "Débit" et "Crédit" en 2 colonnes,
- * detectColumns prend la 1ère matchée (souvent "Débit") — on reste
- * cohérent en sommant cette unique colonne.
+ * Logique :
+ * 1. Si le fichier sépare Débit et Crédit en 2 colonnes (cas UBS standard) :
+ *    on somme la colonne Débit (toutes les valeurs positives) pour les
+ *    dépenses, la colonne Crédit pour les entrées. Cas privilégié.
+ * 2. Sinon, on lit la colonne "Montant" générique :
+ *    - Si son header contient "débit" / "sortie" → toutes les valeurs > 0
+ *      sont des débits.
+ *    - Sinon (colonne signée) → < 0 = débit, > 0 = crédit.
  *
  * Le tableau `rowDebits` donne ligne par ligne le débit (positif) ou
  * 0 — utile pour ventiler par code comptable côté UI en croisant avec
@@ -173,8 +195,38 @@ export function computeExpenseTotal(sheet: ParsedSheet): {
   creditRowCount: number;
   rowDebits: number[]; // longueur = sheet.rows.length, 0 pour les rows non-debit
 } {
-  const { idxAmount, dataStartRow } = detectColumns(sheet);
+  const { idxAmount, idxDebit, idxCredit, dataStartRow } = detectColumns(sheet);
   const rowDebits: number[] = new Array(sheet.rows.length).fill(0);
+
+  let totalDebit = 0;
+  let totalCredit = 0;
+  let debitRowCount = 0;
+  let creditRowCount = 0;
+
+  // Cas 1 : colonnes Débit ET/OU Crédit dédiées.
+  if (idxDebit >= 0 || idxCredit >= 0) {
+    for (let i = dataStartRow; i < sheet.rows.length; i++) {
+      const row = sheet.rows[i];
+      if (idxDebit >= 0) {
+        const v = parseAmount(row[idxDebit]);
+        if (v != null && v > 0) {
+          totalDebit += v;
+          debitRowCount += 1;
+          rowDebits[i] = v;
+        }
+      }
+      if (idxCredit >= 0) {
+        const v = parseAmount(row[idxCredit]);
+        if (v != null && v > 0) {
+          totalCredit += v;
+          creditRowCount += 1;
+        }
+      }
+    }
+    return { totalDebit, totalCredit, debitRowCount, creditRowCount, rowDebits };
+  }
+
+  // Cas 2 : colonne "Montant" générique.
   if (idxAmount < 0) {
     return {
       totalDebit: 0,
@@ -185,32 +237,29 @@ export function computeExpenseTotal(sheet: ParsedSheet): {
     };
   }
 
-  // Détecte si la colonne est sémantiquement "Débit pur" (toutes les
-  // valeurs positives sont des sorties) ou "Montant signé".
-  const header = norm(String(sheet.headers[idxAmount] ?? ""));
+  // Lit la VRAIE ligne d'en-tête (peut être > 0 si préambule UBS), pas
+  // sheet.headers (qui correspond à la row 0 du fichier).
+  const headerRow =
+    dataStartRow > 0
+      ? sheet.rows[dataStartRow - 1] ?? sheet.headers
+      : sheet.headers;
+  const header = norm(String(headerRow[idxAmount] ?? ""));
   const isPureDebitColumn =
     header.includes("debit") ||
     header.includes("débit") ||
     header.includes("sortie");
-
-  let totalDebit = 0;
-  let totalCredit = 0;
-  let debitRowCount = 0;
-  let creditRowCount = 0;
 
   for (let i = dataStartRow; i < sheet.rows.length; i++) {
     const row = sheet.rows[i];
     const v = parseAmount(row[idxAmount]);
     if (v == null) continue;
     if (isPureDebitColumn) {
-      // Tous les nombres > 0 sont des débits dans une colonne "Débit pur".
       if (v > 0) {
         totalDebit += v;
         debitRowCount += 1;
         rowDebits[i] = v;
       }
     } else {
-      // Colonne montant signée : négatif = débit, positif = crédit.
       if (v < 0) {
         totalDebit += -v;
         debitRowCount += 1;
