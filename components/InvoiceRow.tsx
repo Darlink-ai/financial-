@@ -9,12 +9,24 @@ import { formatAmount, formatRelative, formatBytes, formatSwissDate } from "@/li
 export function InvoiceRow({ invoice }: { invoice: Invoice }) {
   const [open, setOpen] = useState(false);
   const account = invoice.accountCurrency ?? "USD";
+  // Facture déjà rapprochée Excel → fond vert subtil + barre verte
+  // à gauche, pour repérer en un coup d'œil ce qui est "fait".
+  const isMatched = invoice.status === "matched";
 
   return (
-    <div id={invoice.id} className="border-b border-border last:border-b-0">
+    <div
+      id={invoice.id}
+      className={`border-b border-border last:border-b-0 ${
+        isMatched ? "border-l-2 border-l-ok" : ""
+      }`}
+    >
       <button
         onClick={() => setOpen((o) => !o)}
-        className="w-full px-5 py-3 flex items-center gap-4 hover:bg-panel2 transition-colors text-left"
+        className={`w-full px-5 py-3 flex items-center gap-4 transition-colors text-left ${
+          isMatched
+            ? "bg-ok/[0.07] hover:bg-ok/[0.12]"
+            : "hover:bg-panel2"
+        }`}
       >
         <span className="text-muted">
           {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
