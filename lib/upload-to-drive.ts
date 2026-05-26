@@ -14,23 +14,23 @@
  */
 
 const MONTHS_FR = [
-  "01 janvier",
-  "02 février",
-  "03 mars",
-  "04 avril",
-  "05 mai",
-  "06 juin",
-  "07 juillet",
-  "08 août",
-  "09 septembre",
-  "10 octobre",
-  "11 novembre",
-  "12 décembre",
+  "01_Janvier",
+  "02_Février",
+  "03_Mars",
+  "04_Avril",
+  "05_Mai",
+  "06_Juin",
+  "07_Juillet",
+  "08_Août",
+  "09_Septembre",
+  "10_Octobre",
+  "11_Novembre",
+  "12_Décembre",
 ];
 
 function monthFolderName(invoiceDateIso: string): string {
   const m = parseInt(invoiceDateIso.slice(5, 7), 10);
-  return MONTHS_FR[m - 1] ?? "00 inconnu";
+  return MONTHS_FR[m - 1] ?? "00_Inconnu";
 }
 
 import {

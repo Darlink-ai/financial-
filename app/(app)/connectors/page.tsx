@@ -876,7 +876,7 @@ function DriveCard() {
   const [savingFolder, setSavingFolder] = useState(false);
 
   const saveFolderId = async () => {
-    const id = customFolderId.trim();
+    const id = extractDriveFolderId(customFolderId);
     if (!id) {
       alert("Colle un ID de dossier Drive valide (ou laisse vide pour réinitialiser).");
       return;
@@ -1241,4 +1241,22 @@ function DriveCard() {
       </div>
     </div>
   );
+}
+
+/**
+ * Extrait un Drive folder ID depuis ce que l'utilisateur a collé.
+ * Accepte :
+ *   - "1ov1T2woxFL78Z6ti7P6oO4zsuziejUCc"               (ID brut)
+ *   - "1ov1T2woxFL78Z6ti7P6oO4zsuziejUCc?usp=sharing"   (avec params)
+ *   - "https://drive.google.com/drive/folders/<ID>?…"   (URL complète)
+ *   - "https://drive.google.com/drive/u/4/folders/<ID>" (URL multi-compte)
+ */
+function extractDriveFolderId(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  // URL contenant /folders/<ID>
+  const urlMatch = trimmed.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  if (urlMatch) return urlMatch[1];
+  // Sinon on prend tout ce qui est avant le premier ? ou /
+  return trimmed.split(/[?/]/)[0];
 }
