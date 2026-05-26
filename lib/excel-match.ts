@@ -54,30 +54,98 @@ function parseDate(v: unknown): string | null {
   return null;
 }
 
+/**
+ * Détecte les vraies colonnes (créditeur / montant / date / code) dans
+ * un fichier Excel qui peut avoir des lignes de préambule (numéro de
+ * compte, etc.) AVANT le vrai en-tête.
+ *
+ * Stratégie : on examine sheet.headers (row 0) puis les 15 premières
+ * lignes de data. On prend la ligne qui matche le plus de keywords.
+ * Tout ce qui est avant cette ligne est considéré comme préambule
+ * et ignoré lors du matching.
+ */
+function detectColumns(sheet: ParsedSheet): {
+  idxCreditor: number;
+  idxAmount: number;
+  idxDate: number;
+  idxCode: number;
+  dataStartRow: number;
+} {
+  type Candidates = {
+    creditor: string[];
+    amount: string[];
+    date: string[];
+    code: string[];
+  };
+  const KW: Candidates = {
+    creditor: [
+      "creditor", "fournisseur", "creditrice", "creanc", "vendor", "nom",
+      "libelle", "libellé", "description", "denomination", "transaction",
+      "objet", "buchungstext", "verwendungszweck", "details", "détails",
+    ],
+    amount: [
+      "montant", "amount", "ttc", "total", "debit", "débit", "credit",
+      "crédit", "betrag", "valeur", "somme",
+    ],
+    date: [
+      "date", "facture", "valuta", "comptabilis", "operation", "opération",
+      "buchung", "execution", "exécution",
+    ],
+    code: ["code", "compte", "categorie", "catégorie"],
+  };
+
+  function scanRow(row: (string | number | null)[]) {
+    const cells = row.map((c) => norm(String(c ?? "")));
+    const find = (alts: string[]) =>
+      cells.findIndex((c) => c && alts.some((a) => c.includes(a)));
+    return {
+      creditor: find(KW.creditor),
+      amount: find(KW.amount),
+      date: find(KW.date),
+      code: find(KW.code),
+    };
+  }
+  function scoreOf(s: { creditor: number; amount: number; date: number }) {
+    return (
+      (s.creditor >= 0 ? 1 : 0) +
+      (s.amount >= 0 ? 1 : 0) +
+      (s.date >= 0 ? 1 : 0)
+    );
+  }
+
+  // Candidat 1 : sheet.headers (row 0 du fichier)
+  const fromHeaders = scanRow(sheet.headers as unknown as (string | number | null)[]);
+  let best = {
+    ...fromHeaders,
+    score: scoreOf(fromHeaders),
+    dataStartRow: 0,
+  };
+
+  // Candidat 2..N : les 15 premières lignes de data
+  const limit = Math.min(15, sheet.rows.length);
+  for (let i = 0; i < limit; i++) {
+    const sc = scanRow(sheet.rows[i]);
+    const score = scoreOf(sc);
+    if (score > best.score) {
+      best = { ...sc, score, dataStartRow: i + 1 };
+    }
+  }
+
+  return {
+    idxCreditor: best.creditor,
+    idxAmount: best.amount,
+    idxDate: best.date,
+    idxCode: best.code,
+    dataStartRow: best.dataStartRow,
+  };
+}
+
 export function matchInvoicesAgainstSheet(
   sheet: ParsedSheet,
   invoices: Invoice[],
 ): MatchResult[] {
-  const headerNorm = sheet.headers.map(norm);
-  const colIdx = (...candidates: string[]) =>
-    headerNorm.findIndex((h) => candidates.some((c) => h.includes(c)));
-
-  // Aliases élargis pour bien capter les colonnes typiques des relevés
-  // bancaires UBS / PostFinance / etc. en plus des fichiers "comptables".
-  const idxCreditor = colIdx(
-    "creditor", "fournisseur", "creditrice", "creanc", "vendor", "nom",
-    "libelle", "libellé", "description", "denomination", "transaction",
-    "objet", "buchungstext", "verwendungszweck",
-  );
-  const idxAmount = colIdx(
-    "montant", "amount", "ttc", "total",
-    "debit", "débit", "credit", "crédit", "betrag", "valeur",
-  );
-  const idxDate = colIdx(
-    "date", "facture",
-    "valuta", "valeur", "comptabilis", "operation", "buchung",
-  );
-  const idxCode = colIdx("code", "compte", "categorie");
+  const { idxCreditor, idxAmount, idxDate, idxCode, dataStartRow } =
+    detectColumns(sheet);
 
   const results: MatchResult[] = [];
 
@@ -96,6 +164,10 @@ export function matchInvoicesAgainstSheet(
     let best: { score: number; result: MatchResult } | null = null;
 
     sheet.rows.forEach((row, rowIndex) => {
+      // Skip les lignes de préambule (numéro de compte, etc.) AVANT
+      // la vraie ligne d'en-tête.
+      if (rowIndex < dataStartRow) return;
+
       const reasons: string[] = [];
       let score = 0;
 
@@ -199,29 +271,14 @@ export function findBestCandidate(
   sheet: ParsedSheet,
   inv: Invoice,
 ): { result: MatchResult; score: number } | null {
-  const headerNorm = sheet.headers.map(norm);
-  const colIdx = (...candidates: string[]) =>
-    headerNorm.findIndex((h) => candidates.some((c) => h.includes(c)));
-
-  const idxCreditor = colIdx(
-    "creditor", "fournisseur", "creditrice", "creanc", "vendor", "nom",
-    "libelle", "libellé", "description", "denomination", "transaction",
-    "objet", "buchungstext", "verwendungszweck",
-  );
-  const idxAmount = colIdx(
-    "montant", "amount", "ttc", "total",
-    "debit", "débit", "credit", "crédit", "betrag", "valeur",
-  );
-  const idxDate = colIdx(
-    "date", "facture",
-    "valuta", "valeur", "comptabilis", "operation", "buchung",
-  );
-  const idxCode = colIdx("code", "compte", "categorie");
+  const { idxCreditor, idxAmount, idxDate, idxCode, dataStartRow } =
+    detectColumns(sheet);
 
   const invCreditorTokens = creditorTokens(inv.creditor);
   let best: { result: MatchResult; score: number } | null = null;
 
   sheet.rows.forEach((row, rowIndex) => {
+    if (rowIndex < dataStartRow) return;
     const reasons: string[] = [];
     let score = 0;
 
