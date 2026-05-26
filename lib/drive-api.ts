@@ -64,6 +64,26 @@ export async function findFolder(
   return data.files[0] ?? null;
 }
 
+/**
+ * Cherche un fichier (non-dossier) par nom dans un parent donné.
+ * Utilisé pour la détection de doublons avant upload.
+ */
+export async function findFileByName(
+  accessToken: string,
+  parentId: string,
+  name: string,
+): Promise<DriveFile | null> {
+  const q = [
+    `mimeType != '${FOLDER_MIME}'`,
+    `name = '${name.replace(/'/g, "\\'")}'`,
+    `'${parentId}' in parents`,
+    "trashed = false",
+  ].join(" and ");
+  const url = `${DRIVE_BASE}/files?q=${encodeURIComponent(q)}&fields=files(id,name,webViewLink)&pageSize=1`;
+  const data = await driveFetch<{ files: DriveFile[] }>(accessToken, url);
+  return data.files[0] ?? null;
+}
+
 /** Crée un sous-dossier dans un parent donné. */
 export async function createFolder(
   accessToken: string,
@@ -94,9 +114,16 @@ export async function findOrCreateFolder(
 }
 
 /**
- * Upload d'un PDF (Buffer) dans un dossier Drive donné.
- * Utilise le multipart upload (1 seul appel, < 5 MB recommandé — nos
- * factures font typiquement quelques centaines de KB).
+ * Upload d'un PDF dans un dossier Drive donné.
+ *
+ * - Vérifie d'abord qu'aucun fichier avec ce nom n'existe déjà dans
+ *   le dossier (skip + retourne l'existant si oui → évite les doublons
+ *   facture/reçu sur Drive).
+ * - Utilise une approche en 2 temps (resumable-ish) :
+ *     1) POST sur /files avec uniquement les métadonnées JSON
+ *     2) PATCH /upload/files/<id> avec le binaire PDF
+ *   → plus fiable que le multipart-related manuel (qui avait un souci
+ *     d'encodage produisant des PDFs corrompus).
  */
 export async function uploadPdf(opts: {
   accessToken: string;
@@ -104,40 +131,62 @@ export async function uploadPdf(opts: {
   name: string; // sans extension
   pdfBuffer: Buffer;
 }): Promise<DriveFile> {
-  const metadata = {
-    name: `${opts.name}.pdf`,
-    mimeType: "application/pdf",
-    parents: [opts.parentId],
-  };
+  const fullName = `${opts.name}.pdf`;
 
-  const boundary = `factura-${Date.now().toString(36)}-${Math.random()
-    .toString(36)
-    .slice(2)}`;
-  const CRLF = "\r\n";
-  const meta = Buffer.from(
-    `--${boundary}${CRLF}Content-Type: application/json; charset=UTF-8${CRLF}${CRLF}${JSON.stringify(
-      metadata,
-    )}${CRLF}`,
-  );
-  const fileHeader = Buffer.from(
-    `--${boundary}${CRLF}Content-Type: application/pdf${CRLF}${CRLF}`,
-  );
-  const closing = Buffer.from(`${CRLF}--${boundary}--`);
-  const body = Buffer.concat([meta, fileHeader, opts.pdfBuffer, closing]);
+  // ---- 1. Skip si le fichier existe déjà ----
+  try {
+    const existing = await findFileByName(
+      opts.accessToken,
+      opts.parentId,
+      fullName,
+    );
+    if (existing) {
+      // Doublon détecté : on retourne le fichier existant sans re-uploader.
+      return existing;
+    }
+  } catch (e) {
+    // Si la recherche échoue (réseau, droits…) on poursuit l'upload —
+    // mieux vaut un éventuel doublon qu'une exception bloquante.
+    console.warn("findFileByName failed before upload:", (e as Error).message);
+  }
 
-  const url = `${DRIVE_UPLOAD}/files?uploadType=multipart&fields=id,name,webViewLink`;
-  const r = await fetch(url, {
+  // ---- 2a. Créer la row Drive avec les métadonnées seulement ----
+  const meta = await driveFetch<DriveFile>(opts.accessToken, "/files", {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: fullName,
+      mimeType: "application/pdf",
+      parents: [opts.parentId],
+    }),
+  });
+
+  // ---- 2b. Upload du binaire (PATCH /upload/files/<id>?uploadType=media) ----
+  const uploadUrl = `${DRIVE_UPLOAD}/files/${meta.id}?uploadType=media&fields=id,name,webViewLink`;
+  const r = await fetch(uploadUrl, {
+    method: "PATCH",
     signal: timeoutSignal(DRIVE_UPLOAD_TIMEOUT_MS),
     headers: {
       Authorization: `Bearer ${opts.accessToken}`,
-      "Content-Type": `multipart/related; boundary=${boundary}`,
-      "Content-Length": body.length.toString(),
+      "Content-Type": "application/pdf",
     },
-    body: new Uint8Array(body),
+    // Passage direct du Buffer en tant que body — Node 20+ fetch
+    // gère Uint8Array/Buffer comme body binaire sans transformation.
+    body: new Uint8Array(opts.pdfBuffer),
   });
   if (!r.ok) {
     const text = await r.text();
+    // Si l'upload binaire échoue, on tente de supprimer la row vide pour
+    // ne pas laisser un fichier "fantôme" sur Drive.
+    try {
+      await fetch(`${DRIVE_BASE}/files/${meta.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${opts.accessToken}` },
+        signal: timeoutSignal(DRIVE_TIMEOUT_MS),
+      });
+    } catch {
+      /* ignore */
+    }
     throw new Error(`drive upload ${r.status}: ${text.slice(0, 300)}`);
   }
   return (await r.json()) as DriveFile;
