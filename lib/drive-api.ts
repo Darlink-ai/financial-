@@ -161,14 +161,34 @@ export async function uploadPdf(opts: {
     }),
   });
 
-  // ---- 2b. Upload du binaire (PATCH /upload/files/<id>?uploadType=media) ----
-  // Copie défensive : fetch transfère / détache l'ArrayBuffer du body
-  // quand il consomme. Si le caller réutilise ensuite le pdfBuffer
-  // (ex. autre étape pipeline), boom. On lui donne une copie propre.
-  const bodyBuffer = new Uint8Array(opts.pdfBuffer.byteLength);
-  bodyBuffer.set(opts.pdfBuffer);
+  // ---- 2b. Validation magic bytes ----
+  // Un PDF commence toujours par "%PDF-". Si le buffer reçu ne commence
+  // pas par ça, c'est qu'il a été corrompu quelque part en amont
+  // (base64 mal décodé, etc.). On clean la row vide et on throw clair.
+  const magic = opts.pdfBuffer.subarray(0, 5).toString("ascii");
+  if (magic !== "%PDF-") {
+    try {
+      await fetch(`${DRIVE_BASE}/files/${meta.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${opts.accessToken}` },
+        signal: timeoutSignal(DRIVE_TIMEOUT_MS),
+      });
+    } catch {
+      /* ignore */
+    }
+    throw new Error(
+      `pdf invalide (magic="${magic}", taille=${opts.pdfBuffer.length}) — base64 corrompu ?`,
+    );
+  }
 
-  const uploadUrl = `${DRIVE_UPLOAD}/files/${meta.id}?uploadType=media&fields=id,name,webViewLink`;
+  // ---- 2c. Upload du binaire via Blob ----
+  // Blob est plus standard / robuste que Uint8Array dans Node fetch :
+  // les bytes sont copiés en interne, fetch les envoie tels quels.
+  const blob = new Blob([new Uint8Array(opts.pdfBuffer)], {
+    type: "application/pdf",
+  });
+
+  const uploadUrl = `${DRIVE_UPLOAD}/files/${meta.id}?uploadType=media&fields=id,name,size,webViewLink`;
   const r = await fetch(uploadUrl, {
     method: "PATCH",
     signal: timeoutSignal(DRIVE_UPLOAD_TIMEOUT_MS),
@@ -176,12 +196,10 @@ export async function uploadPdf(opts: {
       Authorization: `Bearer ${opts.accessToken}`,
       "Content-Type": "application/pdf",
     },
-    body: bodyBuffer,
+    body: blob,
   });
   if (!r.ok) {
     const text = await r.text();
-    // Si l'upload binaire échoue, on tente de supprimer la row vide pour
-    // ne pas laisser un fichier "fantôme" sur Drive.
     try {
       await fetch(`${DRIVE_BASE}/files/${meta.id}`, {
         method: "DELETE",
@@ -193,7 +211,18 @@ export async function uploadPdf(opts: {
     }
     throw new Error(`drive upload ${r.status}: ${text.slice(0, 300)}`);
   }
-  return (await r.json()) as DriveFile;
+  const data = (await r.json()) as DriveFile & { size?: string };
+  // Sanity check : Drive renvoie size en string. Si elle est très loin
+  // de notre input, c'est qu'on a uploadé du vide / du tronqué.
+  if (data.size) {
+    const driveSize = parseInt(data.size, 10);
+    if (driveSize === 0 || driveSize < opts.pdfBuffer.length * 0.5) {
+      throw new Error(
+        `drive upload incomplet : envoyé ${opts.pdfBuffer.length} bytes, Drive a stocké ${driveSize}`,
+      );
+    }
+  }
+  return data;
 }
 
 /** Récupère l'email du compte Google connecté. */

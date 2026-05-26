@@ -109,6 +109,10 @@ export async function getAttachmentBase64(
     throw new Error(`gmail attachment ${r.status}: ${txt.slice(0, 200)}`);
   }
   const data = (await r.json()) as { data: string; size: number };
-  // Gmail renvoie en base64url, on convertit en base64 standard pour stocker.
-  return data.data.replace(/-/g, "+").replace(/_/g, "/");
+  // Gmail renvoie en base64url SANS padding. On convertit en base64
+  // standard (-→+, _→/) ET on ajoute le padding "=" requis pour que
+  // Buffer.from(..., "base64") décode sans perdre des bytes.
+  let b64 = data.data.replace(/-/g, "+").replace(/_/g, "/");
+  while (b64.length % 4 !== 0) b64 += "=";
+  return b64;
 }
