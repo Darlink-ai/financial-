@@ -22,6 +22,9 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Landmark,
+  Calculator,
+  Percent,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { SidebarMonthSelector } from "./SidebarMonthSelector";
@@ -73,6 +76,18 @@ const ENTRIES: NavEntry[] = [
         { href: "/manual", label: "À traiter manuellement", icon: AlertCircle, badge: "manual" },
         { href: "/import", label: "Ajout manuel", icon: UploadCloud },
         { href: "/excel", label: "Rapprochement Excel", icon: FileSpreadsheet },
+      ],
+    },
+  },
+  {
+    kind: "group",
+    group: {
+      id: "taxes",
+      label: "Taxes",
+      icon: Landmark,
+      items: [
+        { href: "/taxes/impots", label: "Impôts", icon: Calculator },
+        { href: "/taxes/tva", label: "TVA", icon: Percent },
       ],
     },
   },
