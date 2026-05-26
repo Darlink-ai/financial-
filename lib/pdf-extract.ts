@@ -9,9 +9,9 @@
  * a effectivement matché.
  */
 
-// pdf-parse v2 expose une classe `PDFParse` côté serveur ; on instancie
-// avec le Buffer du PDF et on appelle .getText() pour récupérer le texte.
-import { PDFParse } from "pdf-parse";
+// `unpdf` est un fork serverless-friendly de pdfjs : pas de native deps,
+// pas de polyfill DOM requis, fonctionne tel quel sur Vercel.
+import { extractText, getDocumentProxy } from "unpdf";
 
 export type ExtractedInvoice = {
   text: string;               // texte brut, pour debug/log
@@ -230,22 +230,18 @@ export async function extractInvoiceFromPdf({
   fromEmail: string;
 }): Promise<ExtractedInvoice> {
   let text = "";
-  let parser: PDFParse | null = null;
   try {
-    parser = new PDFParse({ data: pdfBuffer });
-    const result = await parser.getText();
+    const uint8 = new Uint8Array(
+      pdfBuffer.buffer,
+      pdfBuffer.byteOffset,
+      pdfBuffer.byteLength,
+    );
+    const doc = await getDocumentProxy(uint8);
+    const result = await extractText(doc, { mergePages: true });
     text = result.text ?? "";
   } catch {
     // PDF illisible (scanné, corrompu, etc.) — on continue avec text vide.
     text = "";
-  } finally {
-    if (parser) {
-      try {
-        await parser.destroy();
-      } catch {
-        /* ignore */
-      }
-    }
   }
 
   const amountInfo = findAmountWithCurrency(text);

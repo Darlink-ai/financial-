@@ -31,6 +31,19 @@ export async function GET(req: Request) {
     });
   }
 
-  const result = await runSync("cron", { lookbackDays: 6 });
-  return NextResponse.json(result);
+  try {
+    const result = await runSync("cron", { lookbackDays: 6 });
+    return NextResponse.json(result);
+  } catch (e) {
+    const err = e as Error;
+    console.error("/api/cron/sync-mailboxes crashed", err);
+    return NextResponse.json(
+      {
+        error: "cron_sync_failed",
+        message: err.message,
+        stack: err.stack?.split("\n").slice(0, 8).join("\n"),
+      },
+      { status: 500 },
+    );
+  }
 }

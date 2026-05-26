@@ -19,11 +19,24 @@ export async function POST(req: Request) {
     beforeDate?: string;
   };
 
-  const result = await runSync("manual", {
-    mailboxIds: body.mailboxIds,
-    lookbackDays: body.lookbackDays ?? 6,
-    afterDate: body.afterDate?.trim() || undefined,
-    beforeDate: body.beforeDate?.trim() || undefined,
-  });
-  return NextResponse.json(result);
+  try {
+    const result = await runSync("manual", {
+      mailboxIds: body.mailboxIds,
+      lookbackDays: body.lookbackDays ?? 6,
+      afterDate: body.afterDate?.trim() || undefined,
+      beforeDate: body.beforeDate?.trim() || undefined,
+    });
+    return NextResponse.json(result);
+  } catch (e) {
+    const err = e as Error;
+    console.error("/api/sync/run crashed", err);
+    return NextResponse.json(
+      {
+        error: "sync_failed",
+        message: err.message,
+        stack: err.stack?.split("\n").slice(0, 8).join("\n"),
+      },
+      { status: 500 },
+    );
+  }
 }
