@@ -25,7 +25,7 @@ export function PageHeader({
   if (!actions) return null;
 
   return (
-    <header className="px-8 pt-5 pb-4 border-b border-border">
+    <header className="px-8 pt-5 pb-2">
       <div className="flex items-center justify-end gap-3 flex-wrap">
         {actions}
       </div>
