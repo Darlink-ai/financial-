@@ -75,13 +75,14 @@ async function ensureSeeded() {
           INSERT INTO invoices (
             id, subject, from_email, mailbox, received_at, creditor, invoice_date,
             amount, currency, folder_code, folder_label, final_name, drive_path,
-            status, excel_row_matched, attachment
+            status, excel_row_matched, attachment, account_currency
           ) VALUES (
             ${i.id}, ${i.subject}, ${i.fromEmail}, ${i.mailbox}, ${i.receivedAt},
             ${i.creditor}, ${i.invoiceDate}, ${i.amount}, ${i.currency},
             ${i.folderCode}, ${i.folderLabel}, ${i.finalName}, ${i.drivePath},
             ${i.status}, ${i.excelRowMatched},
-            ${i.attachment ? sql.json(i.attachment) : null}
+            ${i.attachment ? sql.json(i.attachment) : null},
+            ${i.accountCurrency ?? "USD"}
           )
         `;
       }
@@ -184,6 +185,7 @@ type RawInvoice = {
   status: Invoice["status"];
   excel_row_matched: number | null;
   attachment: Invoice["attachment"]; // JSONB → parsed
+  account_currency: string | null;
 };
 const mapInvoice = (r: RawInvoice): Invoice => ({
   id: r.id,
@@ -202,6 +204,7 @@ const mapInvoice = (r: RawInvoice): Invoice => ({
   status: r.status,
   excelRowMatched: r.excel_row_matched,
   attachment: r.attachment ?? null,
+  accountCurrency: ((r.account_currency ?? "USD") as Invoice["accountCurrency"]),
 });
 
 type RawRevenue = {
@@ -557,6 +560,7 @@ export type IncomingInvoice = {
   attachmentName: string;
   attachmentBytes: number;
   attachmentB64: string;
+  accountCurrency?: string; // par défaut USD si non précisé
 };
 
 export async function insertIncomingInvoice(inv: IncomingInvoice) {
@@ -566,14 +570,15 @@ export async function insertIncomingInvoice(inv: IncomingInvoice) {
       id, mailbox_id, source_message_id, subject, from_email, mailbox,
       received_at, creditor, invoice_date, amount, currency,
       folder_code, folder_label, final_name, drive_path,
-      status, excel_row_matched, attachment, attachment_b64
+      status, excel_row_matched, attachment, attachment_b64, account_currency
     ) VALUES (
       ${inv.id}, ${inv.mailboxId}, ${inv.sourceMessageId},
       ${inv.subject}, ${inv.fromEmail}, ${inv.mailbox}, ${inv.receivedAt},
       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
       'analyzing', NULL,
       ${sql.json({ name: inv.attachmentName, sizeBytes: inv.attachmentBytes, pages: 1 })},
-      ${inv.attachmentB64}
+      ${inv.attachmentB64},
+      ${inv.accountCurrency ?? "USD"}
     )
     ON CONFLICT DO NOTHING
   `;
@@ -713,7 +718,8 @@ export async function updateInvoice(id: string, patch: Partial<Invoice>): Promis
       drive_path = ${merged.drivePath},
       status = ${merged.status},
       excel_row_matched = ${merged.excelRowMatched},
-      attachment = ${merged.attachment ? sql.json(merged.attachment) : null}
+      attachment = ${merged.attachment ? sql.json(merged.attachment) : null},
+      account_currency = ${merged.accountCurrency ?? "USD"}
     WHERE id = ${id}
   `;
   return merged;
@@ -772,6 +778,7 @@ export async function updateDrive(patch: Partial<DriveConfig>): Promise<DriveCon
 // ---- Excel sheets (1 par mois) ----
 export type StoredExcelSheet = {
   month: string;
+  accountCurrency: string;
   fileName: string;
   headers: string[];
   rows: (string | number | null)[][];
@@ -780,6 +787,7 @@ export type StoredExcelSheet = {
 
 type RawExcelSheet = {
   month: string;
+  account_currency: string;
   file_name: string;
   headers: string[];
   rows: (string | number | null)[][];
@@ -787,28 +795,34 @@ type RawExcelSheet = {
 };
 const mapExcelSheet = (r: RawExcelSheet): StoredExcelSheet => ({
   month: r.month,
+  accountCurrency: r.account_currency ?? "USD",
   fileName: r.file_name,
   headers: r.headers,
   rows: r.rows,
   uploadedAt: r.uploaded_at.toISOString(),
 });
 
-export async function getExcelSheet(month: string): Promise<StoredExcelSheet | null> {
+export async function getExcelSheet(
+  month: string,
+  accountCurrency: string,
+): Promise<StoredExcelSheet | null> {
   const sql = client();
   const rows = await sql<RawExcelSheet[]>`
-    SELECT month, file_name, headers, rows, uploaded_at
+    SELECT month, account_currency, file_name, headers, rows, uploaded_at
     FROM excel_sheets
-    WHERE month = ${month}
+    WHERE month = ${month} AND account_currency = ${accountCurrency}
   `;
   return rows[0] ? mapExcelSheet(rows[0]) : null;
 }
 
-export async function saveExcelSheet(s: Omit<StoredExcelSheet, "uploadedAt">): Promise<StoredExcelSheet> {
+export async function saveExcelSheet(
+  s: Omit<StoredExcelSheet, "uploadedAt">,
+): Promise<StoredExcelSheet> {
   const sql = client();
   await sql`
-    INSERT INTO excel_sheets (month, file_name, headers, rows, uploaded_at)
-    VALUES (${s.month}, ${s.fileName}, ${sql.json(s.headers)}, ${sql.json(s.rows)}, now())
-    ON CONFLICT (month) DO UPDATE SET
+    INSERT INTO excel_sheets (month, account_currency, file_name, headers, rows, uploaded_at)
+    VALUES (${s.month}, ${s.accountCurrency}, ${s.fileName}, ${sql.json(s.headers)}, ${sql.json(s.rows)}, now())
+    ON CONFLICT (month, account_currency) DO UPDATE SET
       file_name = EXCLUDED.file_name,
       headers = EXCLUDED.headers,
       rows = EXCLUDED.rows,
@@ -817,8 +831,11 @@ export async function saveExcelSheet(s: Omit<StoredExcelSheet, "uploadedAt">): P
   return { ...s, uploadedAt: new Date().toISOString() };
 }
 
-export async function deleteExcelSheet(month: string) {
-  await client()`DELETE FROM excel_sheets WHERE month = ${month}`;
+export async function deleteExcelSheet(month: string, accountCurrency: string) {
+  await client()`
+    DELETE FROM excel_sheets
+    WHERE month = ${month} AND account_currency = ${accountCurrency}
+  `;
 }
 
 // ---- Reset (dev) ----

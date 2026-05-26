@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { SidebarMonthSelector } from "./SidebarMonthSelector";
+import { SidebarAccountSelector } from "./SidebarAccountSelector";
 
 type NavItem = {
   href: string;
@@ -46,6 +47,7 @@ export function Sidebar({
   return (
     <aside className="w-64 shrink-0 border-r border-border bg-panel min-h-screen flex flex-col">
       <SidebarMonthSelector />
+      <SidebarAccountSelector />
 
       <nav className="flex-1 px-3 py-4 space-y-1">
         {items.map((item, idx) => {

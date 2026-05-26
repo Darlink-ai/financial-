@@ -237,6 +237,7 @@ export const mockInvoices: Invoice[] = [
     status: "matched",
     excelRowMatched: 47,
     attachment: { name: "runpod-2026-05.pdf", sizeBytes: 218_400, pages: 1 },
+    accountCurrency: "USD",
   },
   {
     id: "inv-2",
@@ -255,6 +256,7 @@ export const mockInvoices: Invoice[] = [
     status: "matched",
     excelRowMatched: 52,
     attachment: { name: "swisscom-05-2026.pdf", sizeBytes: 304_120, pages: 2 },
+    accountCurrency: "CHF",
   },
   {
     id: "inv-3",
@@ -273,6 +275,7 @@ export const mockInvoices: Invoice[] = [
     status: "uploaded",
     excelRowMatched: null,
     attachment: { name: "openai-receipt-may.pdf", sizeBytes: 87_200, pages: 1 },
+    accountCurrency: "USD",
   },
   {
     id: "inv-4",
@@ -291,6 +294,7 @@ export const mockInvoices: Invoice[] = [
     status: "renamed",
     excelRowMatched: null,
     attachment: { name: "stripe-mai-2026.pdf", sizeBytes: 95_800, pages: 1 },
+    accountCurrency: "CHF",
   },
   {
     id: "inv-5",
@@ -309,6 +313,7 @@ export const mockInvoices: Invoice[] = [
     status: "manual",
     excelRowMatched: null,
     attachment: { name: "facture-meyer-mai.pdf", sizeBytes: 64_100, pages: 1 },
+    accountCurrency: "CHF",
   },
   {
     id: "inv-6",
@@ -327,6 +332,7 @@ export const mockInvoices: Invoice[] = [
     status: "analyzing",
     excelRowMatched: null,
     attachment: { name: "receipt-A-2026-0451.pdf", sizeBytes: 110_000, pages: 1 },
+    accountCurrency: "USD",
   },
   {
     id: "inv-7",
@@ -345,6 +351,7 @@ export const mockInvoices: Invoice[] = [
     status: "classified",
     excelRowMatched: null,
     attachment: { name: "meta-ads-mai.pdf", sizeBytes: 71_300, pages: 1 },
+    accountCurrency: "CHF",
   },
   {
     id: "inv-8",
@@ -363,6 +370,7 @@ export const mockInvoices: Invoice[] = [
     status: "uploaded",
     excelRowMatched: null,
     attachment: { name: "loyer-mai-2026.pdf", sizeBytes: 132_000, pages: 1 },
+    accountCurrency: "CHF",
   },
   // Une facture du mois précédent pour démontrer le filtre mois
   {
@@ -382,6 +390,7 @@ export const mockInvoices: Invoice[] = [
     status: "uploaded",
     excelRowMatched: null,
     attachment: { name: "helvetia-trim-q2.pdf", sizeBytes: 88_400, pages: 1 },
+    accountCurrency: "CHF",
   },
 ];
 

@@ -17,7 +17,7 @@ import {
 import type { Invoice } from "@/lib/types";
 
 export default function ExcelPage() {
-  const { updateInvoice, selectedMonth } = useStore();
+  const { updateInvoice, selectedMonth, selectedAccountCurrency } = useStore();
   const invoices = useInvoicesForCurrentMonth();
   const fileRef = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState<string | null>(null);
@@ -29,7 +29,7 @@ export default function ExcelPage() {
   const [persistedAt, setPersistedAt] = useState<string | null>(null);
   const [persistError, setPersistError] = useState<string | null>(null);
 
-  // Recharge depuis la DB quand le mois sélectionné change.
+  // Recharge depuis la DB quand le mois ou le compte sélectionné change.
   useEffect(() => {
     let cancelled = false;
     setSheet(null);
@@ -41,9 +41,10 @@ export default function ExcelPage() {
     setLoadingPersisted(true);
     (async () => {
       try {
-        const r = await fetch(`/api/excel-sheets/${selectedMonth}`, {
-          cache: "no-store",
-        });
+        const r = await fetch(
+          `/api/excel-sheets/${selectedMonth}?currency=${selectedAccountCurrency}`,
+          { cache: "no-store" },
+        );
         if (cancelled) return;
         if (!r.ok) return;
         const data = (await r.json()) as {
@@ -66,7 +67,7 @@ export default function ExcelPage() {
     return () => {
       cancelled = true;
     };
-  }, [selectedMonth]);
+  }, [selectedMonth, selectedAccountCurrency]);
 
   const matches = useMemo<MatchResult[]>(() => {
     if (!sheet) return [];
@@ -118,15 +119,18 @@ export default function ExcelPage() {
     );
     setPersistError(null);
     try {
-      const r = await fetch(`/api/excel-sheets/${selectedMonth}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fileName: name,
-          headers: parsed.headers,
-          rows: safeRows,
-        }),
-      });
+      const r = await fetch(
+        `/api/excel-sheets/${selectedMonth}?currency=${selectedAccountCurrency}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fileName: name,
+            headers: parsed.headers,
+            rows: safeRows,
+          }),
+        },
+      );
       if (r.ok) {
         setPersistedAt(new Date().toISOString());
       } else {
@@ -166,8 +170,16 @@ export default function ExcelPage() {
   };
 
   const removePersisted = async () => {
-    if (!confirm(`Supprimer le fichier Excel pour ${formatMonthLabel(selectedMonth)} ?`)) return;
-    await fetch(`/api/excel-sheets/${selectedMonth}`, { method: "DELETE" });
+    if (
+      !confirm(
+        `Supprimer le fichier Excel ${selectedAccountCurrency} pour ${formatMonthLabel(selectedMonth)} ?`,
+      )
+    )
+      return;
+    await fetch(
+      `/api/excel-sheets/${selectedMonth}?currency=${selectedAccountCurrency}`,
+      { method: "DELETE" },
+    );
     setSheet(null);
     setFileName(null);
     setWorkbook(null);
@@ -206,8 +218,8 @@ export default function ExcelPage() {
   return (
     <>
       <PageHeader
-        title="Rapprochement Excel"
-        subtitle={`Charge ton fichier comptable du mois ${formatMonthLabel(selectedMonth)}. Les lignes qui correspondent à une facture passent en vert ; les factures sans ligne basculent dans « À traiter manuellement ».`}
+        title={`Rapprochement Excel — Compte ${selectedAccountCurrency}`}
+        subtitle={`Fichier comptable du mois ${formatMonthLabel(selectedMonth)} pour le compte ${selectedAccountCurrency}. Change de compte dans la sidebar pour gérer l'autre devise.`}
         actions={
           sheet && (
             <>

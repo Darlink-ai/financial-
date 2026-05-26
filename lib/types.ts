@@ -1,3 +1,10 @@
+/** Comptes bancaires de l'utilisateur — chaque facture et chaque fichier
+ *  de rapprochement Excel est rattaché à l'un d'eux. */
+export type AccountCurrency = "USD" | "EUR" | "CHF";
+
+export const ACCOUNT_CURRENCIES: AccountCurrency[] = ["USD", "EUR", "CHF"];
+export const DEFAULT_ACCOUNT_CURRENCY: AccountCurrency = "USD";
+
 export type InvoiceStatus =
   | "fetched"
   | "analyzing"
@@ -24,6 +31,7 @@ export type Invoice = {
   status: InvoiceStatus;
   excelRowMatched: number | null;
   attachment: { name: string; sizeBytes: number; pages: number } | null;
+  accountCurrency: AccountCurrency;
 };
 
 export type Mailbox = {

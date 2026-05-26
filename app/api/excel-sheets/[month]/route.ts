@@ -5,9 +5,16 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MONTH_RE = /^\d{4}-\d{2}$/;
+const ALLOWED_CURRENCIES = ["USD", "EUR", "CHF"] as const;
+
+function getCurrency(req: Request): string {
+  const url = new URL(req.url);
+  const c = (url.searchParams.get("currency") ?? "USD").toUpperCase();
+  return (ALLOWED_CURRENCIES as readonly string[]).includes(c) ? c : "USD";
+}
 
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ month: string }> },
 ) {
   const { month } = await params;
@@ -15,10 +22,10 @@ export async function GET(
     return NextResponse.json({ error: "bad_month" }, { status: 400 });
   }
   try {
-    const sheet = await getExcelSheet(month);
+    const sheet = await getExcelSheet(month, getCurrency(req));
     return NextResponse.json({ sheet });
   } catch (e) {
-    console.error("GET /api/excel-sheets/[month] failed", e);
+    console.error("GET /api/excel-sheets failed", e);
     return NextResponse.json({ error: "db_error" }, { status: 503 });
   }
 }
@@ -42,19 +49,20 @@ export async function PUT(
   try {
     const saved = await saveExcelSheet({
       month,
+      accountCurrency: getCurrency(req),
       fileName: body.fileName,
       headers: body.headers,
       rows: body.rows,
     });
     return NextResponse.json({ sheet: saved });
   } catch (e) {
-    console.error("PUT /api/excel-sheets/[month] failed", e);
-    return NextResponse.json({ error: "db_error" }, { status: 503 });
+    console.error("PUT /api/excel-sheets failed", e);
+    return NextResponse.json({ error: "db_error", message: (e as Error).message }, { status: 503 });
   }
 }
 
 export async function DELETE(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ month: string }> },
 ) {
   const { month } = await params;
@@ -62,10 +70,10 @@ export async function DELETE(
     return NextResponse.json({ error: "bad_month" }, { status: 400 });
   }
   try {
-    await deleteExcelSheet(month);
+    await deleteExcelSheet(month, getCurrency(req));
     return NextResponse.json({ ok: true });
   } catch (e) {
-    console.error("DELETE /api/excel-sheets/[month] failed", e);
+    console.error("DELETE /api/excel-sheets failed", e);
     return NextResponse.json({ error: "db_error" }, { status: 503 });
   }
 }
