@@ -872,6 +872,61 @@ function DriveCard() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [customFolderId, setCustomFolderId] = useState("");
+  const [savingFolder, setSavingFolder] = useState(false);
+
+  const saveFolderId = async () => {
+    const id = customFolderId.trim();
+    if (!id) {
+      alert("Colle un ID de dossier Drive valide (ou laisse vide pour réinitialiser).");
+      return;
+    }
+    setSavingFolder(true);
+    try {
+      const r = await fetch("/api/drive/root-folder", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folderId: id }),
+      });
+      const data = (await r.json().catch(() => null)) as
+        | { ok?: boolean; message?: string }
+        | null;
+      if (!r.ok) {
+        alert(`❌ ${data?.message ?? `HTTP ${r.status}`}`);
+        return;
+      }
+      alert(`✅ Dossier racine mis à jour. Tous les uploads futurs iront dans ce dossier.`);
+      setCustomFolderId("");
+      await reload();
+    } finally {
+      setSavingFolder(false);
+    }
+  };
+
+  const resetFolderId = async () => {
+    if (
+      !confirm(
+        "Réinitialiser le dossier racine ?\n\nLe prochain upload re-créera automatiquement le dossier « Comptabilité » à la racine de ton Drive.",
+      )
+    )
+      return;
+    setSavingFolder(true);
+    try {
+      const r = await fetch("/api/drive/root-folder", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folderId: null }),
+      });
+      if (!r.ok) {
+        const data = (await r.json().catch(() => null)) as { message?: string } | null;
+        alert(`❌ ${data?.message ?? `HTTP ${r.status}`}`);
+        return;
+      }
+      await reload();
+    } finally {
+      setSavingFolder(false);
+    }
+  };
 
   const testUpload = async () => {
     setTesting(true);
@@ -1120,6 +1175,44 @@ function DriveCard() {
             >
               {testing ? "Test en cours…" : "🧪 Tester l'upload"}
             </button>
+            {state.rootFolderId && (
+              <button
+                onClick={resetFolderId}
+                disabled={savingFolder}
+                className="btn !py-1 !px-2.5 text-[11px] disabled:opacity-50 ml-2"
+                title="Oublier ce dossier racine — le prochain upload en créera un nouveau"
+              >
+                Réinitialiser
+              </button>
+            )}
+          </div>
+
+          {/* Champ pour pointer vers un dossier Drive existant. */}
+          <div className="pt-2 border-t border-border/60 space-y-1.5">
+            <div className="text-[10px] uppercase tracking-wider text-muted">
+              Utiliser un dossier Drive existant
+            </div>
+            <div className="text-[11px] text-muted leading-relaxed">
+              Colle l'ID d'un dossier Drive (ex.{" "}
+              <span className="font-mono">1fcRTrPEREb6frpell6I2Gcb_iSA-Nteo</span> dans une URL
+              <span className="font-mono"> drive.google.com/drive/folders/&lt;ID&gt;</span>). Le
+              bot s'assure d'abord que tu y as l'accès en écriture.
+            </div>
+            <div className="flex gap-2 items-stretch">
+              <input
+                value={customFolderId}
+                onChange={(e) => setCustomFolderId(e.target.value)}
+                placeholder="Folder ID"
+                className="input font-mono !text-[11px] flex-1"
+              />
+              <button
+                onClick={saveFolderId}
+                disabled={savingFolder || !customFolderId.trim()}
+                className="btn btn-primary !py-1 !px-3 text-[11px] disabled:opacity-50"
+              >
+                {savingFolder ? "Sauvegarde…" : "Utiliser ce dossier"}
+              </button>
+            </div>
           </div>
         </div>
       )}

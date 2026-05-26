@@ -19,9 +19,12 @@ export const GMAIL_SCOPES = [
 ];
 
 // Scopes pour le compte Drive global (séparé des mailboxes Gmail).
-// `drive.file` ne donne accès qu'aux fichiers créés par notre app.
+// Scope `drive` complet : permet d'écrire dans n'importe quel dossier
+// auquel l'utilisateur OAuth a accès — y compris ceux créés manuellement.
+// (Si tu veux du moindre privilège, repasse à `drive.file`, mais alors
+//  le bot ne pourra ranger que dans son propre dossier auto-créé.)
 export const DRIVE_SCOPES = [
-  "https://www.googleapis.com/auth/drive.file",
+  "https://www.googleapis.com/auth/drive",
   "openid",
   "email",
 ];

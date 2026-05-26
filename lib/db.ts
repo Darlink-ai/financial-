@@ -1118,7 +1118,7 @@ export async function updateDriveAccessToken(
   `;
 }
 
-export async function setDriveRootFolderId(rootFolderId: string) {
+export async function setDriveRootFolderId(rootFolderId: string | null) {
   const sql = client();
   await sql`UPDATE drive_config SET root_folder_id = ${rootFolderId} WHERE id = 1`;
 }
