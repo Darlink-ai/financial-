@@ -27,9 +27,31 @@ import type { SyncRunResult } from "./types";
 type SyncOptions = {
   /** Filtre : ne syncer que ces boîtes. Par défaut : toutes celles avec sync_enabled. */
   mailboxIds?: string[];
-  /** Combien de jours en arrière (par défaut 6). */
+  /** Combien de jours en arrière (par défaut 6). Ignoré si afterDate/beforeDate posés. */
   lookbackDays?: number;
+  /** Plage personnalisée (YYYY-MM-DD). Inclusive aux deux bords si renseignée. */
+  afterDate?: string;
+  beforeDate?: string;
 };
+
+function buildGmailQuery(opts: SyncOptions): string {
+  const parts: string[] = ["has:attachment", "filename:pdf"];
+  if (opts.afterDate || opts.beforeDate) {
+    if (opts.afterDate) {
+      parts.push(`after:${opts.afterDate.replace(/-/g, "/")}`);
+    }
+    if (opts.beforeDate) {
+      // Gmail `before:` est strict — on ajoute 1 jour pour rendre la borne inclusive.
+      const d = new Date(opts.beforeDate + "T00:00:00Z");
+      d.setUTCDate(d.getUTCDate() + 1);
+      const inclusive = d.toISOString().slice(0, 10).replace(/-/g, "/");
+      parts.push(`before:${inclusive}`);
+    }
+  } else {
+    parts.push(`newer_than:${opts.lookbackDays ?? 6}d`);
+  }
+  return parts.join(" ");
+}
 
 async function getValidAccessToken(mb: {
   id: string;
@@ -66,8 +88,9 @@ export async function runSync(
   results: SyncRunResult[];
   totalAdded: number;
   totalSkipped: number;
+  query: string;
 }> {
-  const lookback = opts.lookbackDays ?? 6;
+  const query = buildGmailQuery(opts);
   const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   await createSyncRun(runId, trigger);
 
@@ -90,7 +113,6 @@ export async function runSync(
       try {
         const accessToken = await getValidAccessToken(mb);
 
-        const query = `newer_than:${lookback}d has:attachment filename:pdf`;
         const messageIds = await listMessages(accessToken, query, 100);
         r.totalMessages = messageIds.length;
 
@@ -152,5 +174,5 @@ export async function runSync(
 
   await finishSyncRun(runId, results, totalAdded, totalSkipped, runError);
 
-  return { runId, results, totalAdded, totalSkipped };
+  return { runId, results, totalAdded, totalSkipped, query };
 }

@@ -193,10 +193,13 @@ function CronSection({
   const eligible = mailboxes.filter((m) => m.hasRefreshToken);
   const [running, setRunning] = useState(false);
   const [runs, setRuns] = useState<SyncRun[]>([]);
+  const [afterDate, setAfterDate] = useState("");
+  const [beforeDate, setBeforeDate] = useState("");
   const [runResult, setRunResult] = useState<{
     totalAdded: number;
     totalSkipped: number;
     results: SyncRun["results"];
+    query?: string;
   } | null>(null);
 
   const loadRuns = async () => {
@@ -230,7 +233,12 @@ function CronSection({
       const r = await fetch("/api/sync/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mailboxIds: only, lookbackDays: 6 }),
+        body: JSON.stringify({
+          mailboxIds: only,
+          lookbackDays: 6,
+          afterDate: afterDate || undefined,
+          beforeDate: beforeDate || undefined,
+        }),
       });
       if (!r.ok) {
         const txt = await r.text();
@@ -241,11 +249,13 @@ function CronSection({
         results: SyncRun["results"];
         totalAdded: number;
         totalSkipped: number;
+        query?: string;
       };
       setRunResult({
         totalAdded: d.totalAdded,
         totalSkipped: d.totalSkipped,
         results: d.results,
+        query: d.query,
       });
       await loadRuns();
       onReload();
@@ -288,6 +298,59 @@ function CronSection({
             </>
           )}
         </button>
+      </div>
+
+      {/* Plage de dates pour test / sync manuelle ciblée */}
+      <div className="card p-4 mb-3 bg-panel2/30">
+        <div className="text-[12px] font-medium mb-2 flex items-center gap-2">
+          <Clock size={12} /> Plage de dates (optionnel — pour test)
+        </div>
+        <div className="grid grid-cols-[1fr_1fr_auto] gap-3 items-end">
+          <div>
+            <label className="text-[11px] text-muted block mb-1">Date début (incluse)</label>
+            <input
+              type="date"
+              value={afterDate}
+              onChange={(e) => setAfterDate(e.target.value)}
+              className="input"
+            />
+          </div>
+          <div>
+            <label className="text-[11px] text-muted block mb-1">Date fin (incluse)</label>
+            <input
+              type="date"
+              value={beforeDate}
+              onChange={(e) => setBeforeDate(e.target.value)}
+              className="input"
+            />
+          </div>
+          {(afterDate || beforeDate) && (
+            <button
+              onClick={() => {
+                setAfterDate("");
+                setBeforeDate("");
+              }}
+              className="btn text-[11px]"
+              title="Effacer les dates pour revenir au lookback 6 jours"
+            >
+              ✕ Effacer
+            </button>
+          )}
+        </div>
+        <div className="text-[11px] text-muted mt-2">
+          {afterDate || beforeDate ? (
+            <>
+              Sync ciblée :{" "}
+              <code className="font-mono text-text">
+                {afterDate ? `du ${afterDate}` : "depuis toujours"} jusqu&apos;à{" "}
+                {beforeDate || "aujourd&apos;hui"}
+              </code>{" "}
+              · Les boutons "Lancer" utiliseront cette plage.
+            </>
+          ) : (
+            <>Vide → utilise le lookback 6 jours du cron auto.</>
+          )}
+        </div>
       </div>
 
       {/* Liste des boîtes éligibles avec toggle */}
@@ -350,6 +413,11 @@ function CronSection({
             {runResult.totalAdded > 1 ? "s" : ""}, {runResult.totalSkipped} déjà connue
             {runResult.totalSkipped > 1 ? "s" : ""} (dédup)
           </div>
+          {runResult.query && (
+            <div className="text-[10px] font-mono text-muted mt-1">
+              Gmail query : <span className="text-text">{runResult.query}</span>
+            </div>
+          )}
           <div className="text-[11px] text-muted mt-2 space-y-0.5">
             {runResult.results.map((r) => (
               <div key={r.mailboxId}>
