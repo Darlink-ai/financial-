@@ -35,10 +35,19 @@ import {
 const MAX_AUTO_RETRIES = 3;
 import { matchInvoicesAgainstSheet } from "./excel-match";
 import type {
+  AccountCurrency,
   FolderMapping,
   Invoice,
   InvoiceStatus,
 } from "./types";
+
+/**
+ * Ordre de priorité pour chercher une facture dans les rapprochements
+ * Excel : la plupart des transactions tombent sur le compte EUR (carte
+ * liée), même quand le PDF est en USD ou CHF. On cherche donc EUR
+ * d'abord, puis CHF, puis USD. Le premier match gagne.
+ */
+const EXCEL_SEARCH_ORDER: AccountCurrency[] = ["EUR", "CHF", "USD"];
 
 /**
  * Re-trigger le matching Excel pour toutes les invoices d'un bucket
@@ -47,55 +56,76 @@ import type {
  */
 export async function rematchInvoicesForBucket(opts: {
   month: string;
-  accountCurrency: string;
+  /** @deprecated — le matching est désormais cross-currency, ce param est ignoré. */
+  accountCurrency?: string;
 }): Promise<{ matched: number; cleared: number; dedupedDuplicates: number }> {
-  const sheet = await getExcelSheet(opts.month, opts.accountCurrency);
-  const state = await getAllState();
+  // On charge les 3 sheets du mois et on essaie de matcher chaque
+  // facture dans l'ordre EUR > CHF > USD. Le premier match gagne et
+  // détermine l'accountCurrency de la facture.
+  const sheetsByCurrency: Partial<
+    Record<AccountCurrency, { headers: string[]; rows: (string | number | null)[][] }>
+  > = {};
+  for (const cur of EXCEL_SEARCH_ORDER) {
+    const s = await getExcelSheet(opts.month, cur);
+    if (s) sheetsByCurrency[cur] = { headers: s.headers, rows: s.rows };
+  }
 
-  // Candidats : factures du bon mois + compte, avec au minimum un créancier
-  // identifié. Le montant peut être absent ou faux : on s'en fout puisque
-  // l'Excel sera autoritaire.
+  const state = await getAllState();
   const candidates = state.invoices.filter((inv) => {
-    if ((inv.accountCurrency ?? "USD") !== opts.accountCurrency) return false;
     const ref = inv.invoiceDate ?? inv.receivedAt;
     if (ref.slice(0, 7) !== opts.month) return false;
     return inv.creditor != null;
   });
 
-  // Si pas de sheet : on ne touche rien (la sheet pourrait être en cours
-  // d'upload, on n'a pas envie de casser le state existant).
-  if (!sheet) return { matched: 0, cleared: 0, dedupedDuplicates: 0 };
-
-  let matched = 0;
-  let cleared = 0;
-  let dedupedDuplicates = 0;
-  const matches = matchInvoicesAgainstSheet(
-    { headers: sheet.headers, rows: sheet.rows },
-    candidates,
-  );
-
-  // ---- Dédoublonnage : on groupe par rowIndex et on garde le plus ancien ----
-  // Plusieurs invoices matchant la même ligne Excel = doublons (facture + reçu).
-  // L'ID survivant est celui de la facture la plus ancienne par receivedAt.
-  const byRow = new Map<number, typeof matches>();
-  for (const m of matches) {
-    const arr = byRow.get(m.rowIndex) ?? [];
-    arr.push(m);
-    byRow.set(m.rowIndex, arr);
+  if (Object.keys(sheetsByCurrency).length === 0) {
+    return { matched: 0, cleared: 0, dedupedDuplicates: 0 };
   }
-  const idsToDelete = new Set<string>();
-  for (const [, group] of byRow) {
-    if (group.length <= 1) continue;
-    // Trier par receivedAt asc, le premier est le keeper
-    const sorted = [...group].sort(
-      (a, b) =>
-        new Date(a.invoice.receivedAt).getTime() -
-        new Date(b.invoice.receivedAt).getTime(),
-    );
-    for (const loser of sorted.slice(1)) {
-      idsToDelete.add(loser.invoice.id);
+
+  // Premier passage : pour chaque facture, trouver son best match (EUR > CHF > USD).
+  type Resolved = {
+    invoiceId: string;
+    receivedAt: string;
+    currency: AccountCurrency;
+    rowIndex: number; // 0-based
+    excelAmount: number | null;
+  };
+  const resolved: Resolved[] = [];
+  for (const inv of candidates) {
+    for (const cur of EXCEL_SEARCH_ORDER) {
+      const sheet = sheetsByCurrency[cur];
+      if (!sheet) continue;
+      const matches = matchInvoicesAgainstSheet(sheet, [inv]);
+      if (matches.length > 0) {
+        resolved.push({
+          invoiceId: inv.id,
+          receivedAt: inv.receivedAt,
+          currency: cur,
+          rowIndex: matches[0].rowIndex,
+          excelAmount: matches[0].excelAmount,
+        });
+        break;
+      }
     }
   }
+
+  // ---- Dédoublonnage : par (currency, rowIndex). On garde le plus ancien. ----
+  const byKey = new Map<string, Resolved[]>();
+  for (const r of resolved) {
+    const key = `${r.currency}|${r.rowIndex}`;
+    const arr = byKey.get(key) ?? [];
+    arr.push(r);
+    byKey.set(key, arr);
+  }
+  const idsToDelete = new Set<string>();
+  for (const [, group] of byKey) {
+    if (group.length <= 1) continue;
+    const sorted = [...group].sort(
+      (a, b) =>
+        new Date(a.receivedAt).getTime() - new Date(b.receivedAt).getTime(),
+    );
+    for (const loser of sorted.slice(1)) idsToDelete.add(loser.invoiceId);
+  }
+  let dedupedDuplicates = 0;
   for (const id of idsToDelete) {
     try {
       await deleteInvoice(id);
@@ -105,40 +135,46 @@ export async function rematchInvoicesForBucket(opts: {
     }
   }
 
-  const matchedByInvoice = new Map(
-    matches
-      .filter((m) => !idsToDelete.has(m.invoice.id))
-      .map((m) => [m.invoice.id, m]),
+  // ---- Application des matches ----
+  const resolvedById = new Map(
+    resolved
+      .filter((r) => !idsToDelete.has(r.invoiceId))
+      .map((r) => [r.invoiceId, r]),
   );
 
+  let matched = 0;
+  let cleared = 0;
   for (const inv of candidates) {
-    if (idsToDelete.has(inv.id)) continue; // déjà supprimée, on skip
-    const m = matchedByInvoice.get(inv.id);
-    if (m) {
-      const rowExcel = m.rowIndex + 2;
+    if (idsToDelete.has(inv.id)) continue;
+    const r = resolvedById.get(inv.id);
+    if (r) {
+      const rowExcel = r.rowIndex + 2;
       const authoritativeAmount =
-        m.excelAmount != null && Number.isFinite(m.excelAmount)
-          ? Math.abs(m.excelAmount)
+        r.excelAmount != null && Number.isFinite(r.excelAmount)
+          ? Math.abs(r.excelAmount)
           : null;
 
       const needsUpdate =
         inv.excelRowMatched !== rowExcel ||
         inv.status !== "matched" ||
+        inv.accountCurrency !== r.currency ||
         (authoritativeAmount != null &&
           Math.abs((inv.amount ?? 0) - authoritativeAmount) > 0.01);
 
       if (needsUpdate) {
         await updateInvoice(inv.id, {
           excelRowMatched: rowExcel,
+          accountCurrency: r.currency,
           status: "matched",
           ...(authoritativeAmount != null ? { amount: authoritativeAmount } : {}),
         });
         matched++;
       }
     } else if (inv.status === "matched") {
+      // Avant matchée mais plus dans aucun sheet → rétrograde.
       await updateInvoice(inv.id, {
         excelRowMatched: null,
-        status: inv.drivePath ? "uploaded" : "classified",
+        status: inv.drivePath ? "uploaded" : "renamed",
       });
       cleared++;
     }
@@ -338,53 +374,63 @@ async function autoProcessInvoiceInner(
 
   patch.drivePath = drivePath;
 
-  // ---- 4. Match Excel ----
+  // ---- 4. Match Excel (cross-currency) ----
+  // On cherche dans les 3 sheets dans l'ordre EUR > CHF > USD parce
+  // que la devise du PDF (USD/CHF/EUR) n'indique PAS sur quel compte
+  // bancaire le débit a été fait — ça dépend de la carte liée. Le
+  // premier match gagne, et l'accountCurrency de la facture est mis
+  // à la devise du sheet matché.
   const dateForMonth = extracted.invoiceDate ?? input.receivedAt;
   const month = dateForMonth.slice(0, 7);
   let matchedRow: number | null = null;
-  try {
-    const sheet = await getExcelSheet(month, accountCurrency);
-    if (sheet) {
-      // On rebuild une "facture" minimale pour le matcher avec les valeurs extraites.
-      const dummy: Invoice = {
-        id: input.invoiceId,
-        subject: input.subject,
-        fromEmail: input.fromEmail,
-        mailbox: "",
-        receivedAt: input.receivedAt,
-        creditor: extracted.creditor,
-        invoiceDate: extracted.invoiceDate,
-        amount: extracted.amount,
-        currency: extracted.currency,
-        folderCode: mapping?.folderCode ?? null,
-        folderLabel: mapping?.folderLabel ?? null,
-        finalName,
-        drivePath,
-        status: "classified",
-        excelRowMatched: null,
-        attachment: null,
-        accountCurrency,
-      };
+  let matchedCurrency: AccountCurrency | null = null;
+
+  const dummy: Invoice = {
+    id: input.invoiceId,
+    subject: input.subject,
+    fromEmail: input.fromEmail,
+    mailbox: "",
+    receivedAt: input.receivedAt,
+    creditor: extracted.creditor,
+    invoiceDate: extracted.invoiceDate,
+    amount: extracted.amount,
+    currency: extracted.currency,
+    folderCode: mapping?.folderCode ?? null,
+    folderLabel: mapping?.folderLabel ?? null,
+    finalName,
+    drivePath,
+    status: "classified",
+    excelRowMatched: null,
+    attachment: null,
+    accountCurrency,
+  };
+
+  for (const currency of EXCEL_SEARCH_ORDER) {
+    try {
+      const sheet = await getExcelSheet(month, currency);
+      if (!sheet) continue;
       const matches = matchInvoicesAgainstSheet(
         { headers: sheet.headers, rows: sheet.rows },
         [dummy],
       );
       if (matches.length > 0) {
-        // +2 : +1 pour la ligne d'en-tête, +1 pour passer en 1-based (cohérent
-        // avec ce qui est affiché dans la page Excel).
         matchedRow = matches[0].rowIndex + 2;
-        // ---- Excel = source de vérité (relevé bancaire UBS) ----
-        // On écrase le montant extrait du PDF par celui de la ligne Excel.
-        // Le PDF n'est qu'un signal (et son extraction peut être bruyante :
-        // token counts, IDs, etc.). Le débit bancaire est canonique.
+        matchedCurrency = currency;
+        // Excel = source de vérité pour le montant.
         const excelAmount = matches[0].excelAmount;
         if (excelAmount != null && Number.isFinite(excelAmount)) {
           patch.amount = Math.abs(excelAmount);
         }
+        break;
       }
+    } catch (e) {
+      errors.push(`excel(${currency}): ${(e as Error).message}`);
     }
-  } catch (e) {
-    errors.push(`excel: ${(e as Error).message}`);
+  }
+
+  // Si match trouvé : l'accountCurrency vient du sheet, pas du PDF.
+  if (matchedCurrency) {
+    patch.accountCurrency = matchedCurrency;
   }
 
   // ---- 4b. Dédoublonnage facture / reçu ----
@@ -394,11 +440,11 @@ async function autoProcessInvoiceInner(
   // avant le reçu) et on supprime les autres.
   let deletedAsDuplicateOf: string | null = null;
   const deletedOtherIds: string[] = [];
-  if (matchedRow !== null) {
+  if (matchedRow !== null && matchedCurrency) {
     try {
       const others = await findInvoicesMatchingRow({
         excludeId: input.invoiceId,
-        accountCurrency,
+        accountCurrency: matchedCurrency,
         rowIndex: matchedRow,
       });
       if (others.length > 0) {
