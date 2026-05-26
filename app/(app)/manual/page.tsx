@@ -21,11 +21,12 @@ import {
   FileText,
   FileQuestion,
   Eye,
+  RefreshCw,
 } from "lucide-react";
 import type { Invoice, FolderMapping } from "@/lib/types";
 
 export default function ManualPage() {
-  const { mappings, updateInvoice, selectedMonth } = useStore();
+  const { mappings, updateInvoice, selectedMonth, reloadFromDb } = useStore();
   const monthInvoices = useInvoicesForCurrentMonth();
 
   const items = useMemo(
@@ -59,6 +60,7 @@ export default function ManualPage() {
               invoice={inv}
               normalCategories={normalCategories}
               fallback={fallback}
+              onReload={reloadFromDb}
               onAssign={(code, label) => {
                 const finalName = buildFinalName(inv.invoiceDate, inv.creditor, code);
                 updateInvoice(inv.id, {
@@ -81,18 +83,61 @@ function ManualCard({
   normalCategories,
   fallback,
   onAssign,
+  onReload,
 }: {
   invoice: Invoice;
   normalCategories: FolderMapping[];
   fallback?: FolderMapping;
   onAssign: (code: string, label: string) => void;
+  onReload: () => Promise<void>;
 }) {
   const [selectedId, setSelectedId] = useState<string>("");
   const [showFallback, setShowFallback] = useState(false);
+  const [reprocessing, setReprocessing] = useState(false);
 
   const selected =
     normalCategories.find((m) => m.id === selectedId) ??
     (selectedId === FALLBACK_CATEGORY_ID ? fallback : undefined);
+
+  const reprocess = async () => {
+    setReprocessing(true);
+    try {
+      const r = await fetch(`/api/invoices/${invoice.id}/reprocess`, {
+        method: "POST",
+      });
+      if (!r.ok) {
+        const data = (await r.json().catch(() => null)) as
+          | { message?: string }
+          | null;
+        alert(`Échec : ${data?.message ?? `HTTP ${r.status}`}`);
+        return;
+      }
+      const data = (await r.json()) as {
+        outcome: {
+          status: string;
+          uploadedToDrive: boolean;
+          matchedExcelRow: number | null;
+          errors: string[];
+        };
+      };
+      await onReload();
+      if (data.outcome.status === "manual") {
+        const why =
+          data.outcome.errors.length > 0
+            ? `\n\nDétails :\n• ${data.outcome.errors.join("\n• ")}`
+            : "\n\nLe LLM n'a pas pu inférer une catégorie avec assez de confiance, ou la clé ANTHROPIC_API_KEY n'est pas configurée. Classe manuellement.";
+        alert(`Toujours en manuel après re-traitement.${why}`);
+      } else if (data.outcome.errors.length > 0) {
+        alert(
+          `Re-traitement terminé (${data.outcome.status}) avec des avertissements :\n• ${data.outcome.errors.join("\n• ")}`,
+        );
+      }
+    } catch (e) {
+      alert(`Erreur : ${(e as Error).message}`);
+    } finally {
+      setReprocessing(false);
+    }
+  };
 
   return (
     <div className="card overflow-hidden">
@@ -127,9 +172,32 @@ function ManualCard({
               }
             />
           </div>
-          <button className="btn text-[11px] mt-3">
-            <Eye size={11} /> Ouvrir la PJ
-          </button>
+          <div className="flex flex-wrap gap-2 mt-3">
+            <a
+              href={`/api/invoices/${invoice.id}/pdf`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn text-[11px]"
+            >
+              <Eye size={11} /> Ouvrir la PJ
+            </a>
+            <button
+              onClick={reprocess}
+              disabled={reprocessing}
+              className="btn text-[11px] disabled:opacity-50"
+              title="Relance extraction PDF + classification (essaie le LLM si la regex échoue)"
+            >
+              {reprocessing ? (
+                <>
+                  <RefreshCw size={11} className="animate-spin" /> Re-traitement…
+                </>
+              ) : (
+                <>
+                  <RefreshCw size={11} /> Re-traiter (LLM)
+                </>
+              )}
+            </button>
+          </div>
         </div>
 
         {/* Pourquoi en manuel */}
