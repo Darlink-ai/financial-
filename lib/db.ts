@@ -761,6 +761,20 @@ export async function deleteMapping(id: string) {
 
 // ---- Invoices ----
 /**
+ * Liste les IDs des factures actuellement en status="analyzing" —
+ * typiquement bloquées par un timeout Vercel mi-pipeline.
+ */
+export async function getStuckAnalyzingInvoiceIds(): Promise<string[]> {
+  const sql = client();
+  const rows = await sql<{ id: string }[]>`
+    SELECT id FROM invoices
+    WHERE status = 'analyzing'
+    ORDER BY received_at ASC
+  `;
+  return rows.map((r) => r.id);
+}
+
+/**
  * Récupère une facture avec sa pièce jointe (base64) pour aperçu PDF
  * ou re-traitement. Retourne null si l'id n'existe pas.
  */

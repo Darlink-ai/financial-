@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { PageHeader } from "@/components/PageHeader";
 import { InvoiceRow } from "@/components/InvoiceRow";
 import { useInvoicesForCurrentMonth, formatMonthLabel, useStore } from "@/lib/store";
-import { RefreshCw, Search, Trash2 } from "lucide-react";
+import { RefreshCw, Search, Trash2, Zap } from "lucide-react";
 import type { InvoiceStatus } from "@/lib/types";
 
 const filters: { id: "all" | InvoiceStatus; label: string }[] = [
@@ -23,6 +23,49 @@ export default function InvoicesPage() {
   const [filter, setFilter] = useState<(typeof filters)[number]["id"]>("all");
   const [q, setQ] = useState("");
   const [wiping, setWiping] = useState(false);
+  const [reprocessingStuck, setReprocessingStuck] = useState(false);
+
+  const stuckCount = allInvoices.filter((i) => i.status === "analyzing").length;
+
+  const reprocessStuck = async () => {
+    if (stuckCount === 0) {
+      alert("Aucune facture en analyse figée.");
+      return;
+    }
+    setReprocessingStuck(true);
+    try {
+      const r = await fetch("/api/invoices/reprocess-stuck", { method: "POST" });
+      const data = (await r.json().catch(() => null)) as
+        | {
+            ok?: boolean;
+            total?: number;
+            processed?: number;
+            breakdown?: {
+              manual: number;
+              renamed: number;
+              uploaded: number;
+              matched: number;
+              failed: number;
+            };
+            message?: string;
+          }
+        | null;
+      if (!r.ok) {
+        alert(`Échec : ${data?.message ?? `HTTP ${r.status}`}`);
+        return;
+      }
+      await reloadFromDb();
+      const b = data?.breakdown;
+      const summary = b
+        ? `${data?.processed} traitée(s) sur ${data?.total}\n\nRépartition :\n• matched : ${b.matched}\n• uploaded : ${b.uploaded}\n• renamed : ${b.renamed}\n• manual : ${b.manual}\n• échecs : ${b.failed}`
+        : `${data?.processed ?? 0} traitée(s)`;
+      alert(summary);
+    } catch (e) {
+      alert(`Erreur : ${(e as Error).message}`);
+    } finally {
+      setReprocessingStuck(false);
+    }
+  };
 
   const wipeAll = async () => {
     const total = allInvoices.length;
@@ -70,6 +113,24 @@ export default function InvoicesPage() {
         subtitle={`Factures détectées pour ${formatMonthLabel(selectedMonth)}, à chaque étape du pipeline.`}
         actions={
           <>
+            {stuckCount > 0 && (
+              <button
+                onClick={reprocessStuck}
+                disabled={reprocessingStuck}
+                className="btn disabled:opacity-50"
+                title="Relance le pipeline sur les factures bloquées en analyse"
+              >
+                {reprocessingStuck ? (
+                  <>
+                    <RefreshCw size={14} className="animate-spin" /> Réveil…
+                  </>
+                ) : (
+                  <>
+                    <Zap size={14} /> Réveiller analyses figées ({stuckCount})
+                  </>
+                )}
+              </button>
+            )}
             <button
               onClick={wipeAll}
               disabled={wiping || allInvoices.length === 0}
