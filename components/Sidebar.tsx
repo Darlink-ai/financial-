@@ -68,7 +68,14 @@ const GROUPS: NavGroup[] = [
       { href: "/analyse/benefice-brut", label: "Bénéfice brut", icon: BarChart3 },
       { href: "/analyse/benefice-net", label: "Bénéfice net", icon: Coins },
       { href: "/analyse/ebitda", label: "EBITDA", icon: Activity },
-      { href: "/analyse/recurrents", label: "Factures récurrentes", icon: Repeat },
+      { href: "/analyse/ebit", label: "EBIT", icon: LineChart },
+    ],
+  },
+  {
+    id: "recurrents",
+    label: "Factures récurrentes",
+    items: [
+      { href: "/analyse/recurrents", label: "Abonnements & loyers", icon: Repeat },
     ],
   },
   {
@@ -82,7 +89,9 @@ const GROUPS: NavGroup[] = [
 ];
 
 const LS_COLLAPSED = "sidebar.collapsed";
-const LS_OPEN_GROUPS = "sidebar.openGroups";
+// v2 : bump car les noms de groupes ont changé et on veut que tout
+// soit fermé par défaut, même pour les utilisateurs existants.
+const LS_OPEN_GROUPS = "sidebar.openGroups.v2";
 
 function readJSON<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
@@ -106,21 +115,25 @@ export function Sidebar({
   const onAnalysePage = pathname.startsWith("/analyse");
 
   const [collapsed, setCollapsed] = useState(false);
-  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({
-    encaissements: true,
-    depenses: true,
-    analyse: true,
-    configuration: true,
-  });
+  // Tous les groupes fermés par défaut — l'utilisateur ouvre ce dont il
+  // a besoin. Si une page active est dans un groupe, on l'ouvre quand
+  // même au montage pour qu'il puisse voir où il est.
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
   const [hydrated, setHydrated] = useState(false);
 
   // Hydrate from localStorage (avoid SSR mismatch).
   useEffect(() => {
     setCollapsed(readJSON<boolean>(LS_COLLAPSED, false));
     const stored = readJSON<Record<string, boolean>>(LS_OPEN_GROUPS, {});
-    setOpenGroups((prev) => ({ ...prev, ...stored }));
+    // On part de "tout fermé", puis on applique l'état sauvegardé,
+    // puis on force l'ouverture du groupe contenant la page courante.
+    const next: Record<string, boolean> = { ...stored };
+    for (const g of GROUPS) {
+      if (g.items.some((it) => pathname === it.href)) next[g.id] = true;
+    }
+    setOpenGroups(next);
     setHydrated(true);
-  }, []);
+  }, [pathname]);
 
   // Persist.
   useEffect(() => {
@@ -178,7 +191,7 @@ export function Sidebar({
         />
 
         {GROUPS.map((g) => {
-          const isOpen = openGroups[g.id] ?? true;
+          const isOpen = openGroups[g.id] ?? false;
           const groupHasActive = g.items.some((it) => pathname === it.href);
           return (
             <div key={g.id} className="pt-2">

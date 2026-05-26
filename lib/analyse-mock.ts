@@ -158,6 +158,43 @@ export function mockBeneficeNet(p: Period): { kpis: KPI[]; series: MonthlyPoint[
   };
 }
 
+export function mockEbit(p: Period): { kpis: KPI[]; series: MonthlyPoint[] } {
+  const s = scale(p);
+  return {
+    kpis: [
+      {
+        label: "EBIT",
+        value: 26_600 * s,
+        currency: "USD",
+        delta: 10.1,
+        hint: "Earnings before interest & tax (résultat d'exploitation)",
+      },
+      {
+        label: "Marge EBIT",
+        value: 31.8,
+        currency: "USD",
+        delta: 0.9,
+        hint: "EBIT / CA",
+      },
+      {
+        label: "OPEX",
+        value: 55_800 * s,
+        currency: "USD",
+        delta: 6.1,
+        hint: "Charges opérationnelles",
+      },
+      {
+        label: "Amortissements",
+        value: 1_200 * s,
+        currency: "USD",
+        delta: 0,
+        hint: "Inclus dans l'EBIT (≠ EBITDA)",
+      },
+    ],
+    series: buildSeries(p, 70_000, 43_400),
+  };
+}
+
 export function mockEbitda(p: Period): { kpis: KPI[]; series: MonthlyPoint[] } {
   const s = scale(p);
   return {
