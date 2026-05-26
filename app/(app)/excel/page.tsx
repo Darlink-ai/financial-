@@ -17,6 +17,14 @@ import {
 import type { Invoice, AccountCurrency } from "@/lib/types";
 import { ACCOUNT_CURRENCIES } from "@/lib/types";
 
+// Les fichiers comptables de la banque commencent par 9 lignes d'en-tête
+// (numéro de compte, IBAN, libellés, etc.) avant les vraies lignes de
+// transactions. On les soustrait pour afficher le bon nombre de positions.
+const HEADER_ROWS = 9;
+function dataRowCount(total: number): number {
+  return Math.max(0, total - HEADER_ROWS);
+}
+
 export default function ExcelPage() {
   const { updateInvoice, selectedMonth } = useStore();
   const allMonthInvoices = useInvoicesForCurrentMonth();
@@ -292,7 +300,7 @@ export default function ExcelPage() {
                   )}
                 </div>
                 <div className="text-[11px] text-muted">
-                  {sheet.rows.length} lignes · {sheet.headers.length} colonnes · {matches.length} rapprochée(s)
+                  {dataRowCount(sheet.rows.length)} lignes · {sheet.headers.length} colonnes · {matches.length} rapprochée(s)
                 </div>
                 {persistError && (
                   <div className="text-[11px] text-err mt-1">{persistError}</div>
@@ -334,7 +342,7 @@ export default function ExcelPage() {
             </div>
 
             <div className="grid grid-cols-3 gap-3">
-              <StatTile label="Lignes Excel" value={sheet.rows.length} />
+              <StatTile label="Lignes Excel" value={dataRowCount(sheet.rows.length)} />
               <StatTile label="Rapprochées (vertes)" value={matches.length} tone="ok" />
               <StatTile label="Factures sans match" value={unmatchedInvoices.length} tone={unmatchedInvoices.length > 0 ? "warn" : "neutral"} />
             </div>
