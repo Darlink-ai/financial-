@@ -1,28 +1,33 @@
 import type { ReactNode } from "react";
 
+/**
+ * Bande supérieure des pages : ne rend QUE les actions (boutons).
+ * Le titre / sous-titre passés en props sont ignorés — la sidebar
+ * indique déjà où on est.
+ *
+ * Si aucune action, on ne rend rien du tout.
+ */
 export function PageHeader({
-  title,
-  subtitle,
+  title: _title,
+  subtitle: _subtitle,
   actions,
-  // Kept for backwards-compat with existing callers — month selector now lives in the sidebar.
   showMonthSelector: _showMonthSelector,
 }: {
-  title: string;
+  title?: string;
   subtitle?: string;
   actions?: ReactNode;
   showMonthSelector?: boolean;
 }) {
+  void _title;
+  void _subtitle;
   void _showMonthSelector;
+
+  if (!actions) return null;
+
   return (
-    <header className="px-8 pt-8 pb-6 border-b border-border">
-      <div className="flex items-start justify-between gap-6">
-        <div className="min-w-0">
-          <h1 className="text-[22px] font-semibold tracking-tight">{title}</h1>
-          {subtitle && <p className="text-[13px] text-muted mt-1 max-w-2xl">{subtitle}</p>}
-        </div>
-        {actions && (
-          <div className="flex items-center gap-3 shrink-0">{actions}</div>
-        )}
+    <header className="px-8 pt-5 pb-4 border-b border-border">
+      <div className="flex items-center justify-end gap-3 flex-wrap">
+        {actions}
       </div>
     </header>
   );

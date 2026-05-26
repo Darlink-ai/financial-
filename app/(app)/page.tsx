@@ -1,11 +1,11 @@
 "use client";
 
-import { PageHeader } from "@/components/PageHeader";
-import { useStore, useInvoicesForCurrentMonth, formatMonthLabel } from "@/lib/store";
+import { useStore, useInvoicesForCurrentMonth } from "@/lib/store";
 import { FileText, CheckCircle2, AlertCircle } from "lucide-react";
+import { DashboardChart } from "@/components/DashboardChart";
 
 export default function DashboardPage() {
-  const { mailboxes, mappings, selectedMonth } = useStore();
+  const { mailboxes, mappings } = useStore();
   const invoices = useInvoicesForCurrentMonth();
 
   const counts = {
@@ -20,43 +20,38 @@ export default function DashboardPage() {
   const connectedMb = mailboxes.filter((m) => m.connected).length;
 
   return (
-    <>
-      <PageHeader
-        title="Tableau de bord"
-        subtitle={`Vue d'ensemble du pipeline pour ${formatMonthLabel(selectedMonth)}.`}
-      />
+    <div className="p-8 space-y-6">
+      <section className="grid grid-cols-4 gap-4">
+        <StatCard
+          icon={FileText}
+          label="Factures du mois"
+          value={counts.total}
+          hint={`${connectedMb}/${mailboxes.length} boîtes mail connectées`}
+        />
+        <StatCard
+          icon={CheckCircle2}
+          label="Traitées"
+          value={counts.processed}
+          hint={`dont ${counts.matched} rapprochées Excel`}
+          tone="ok"
+        />
+        <StatCard
+          icon={AlertCircle}
+          label="À traiter manuellement"
+          value={counts.manual}
+          hint="Aucun mapping ou pas de ligne Excel"
+          tone={counts.manual > 0 ? "warn" : "neutral"}
+        />
+        <StatCard
+          icon={FolderTreeIcon}
+          label="Catégories de charges"
+          value={mappings.length}
+          hint="Créditeur → dossier"
+        />
+      </section>
 
-      <div className="p-8 space-y-8">
-        <section className="grid grid-cols-4 gap-4">
-          <StatCard
-            icon={FileText}
-            label="Factures du mois"
-            value={counts.total}
-            hint={`${connectedMb}/${mailboxes.length} boîtes mail connectées`}
-          />
-          <StatCard
-            icon={CheckCircle2}
-            label="Traitées"
-            value={counts.processed}
-            hint={`dont ${counts.matched} rapprochées Excel`}
-            tone="ok"
-          />
-          <StatCard
-            icon={AlertCircle}
-            label="À traiter manuellement"
-            value={counts.manual}
-            hint="Aucun mapping ou pas de ligne Excel"
-            tone={counts.manual > 0 ? "warn" : "neutral"}
-          />
-          <StatCard
-            icon={FolderTreeIcon}
-            label="Catégories de charges"
-            value={mappings.length}
-            hint="Créditeur → dossier"
-          />
-        </section>
-      </div>
-    </>
+      <DashboardChart />
+    </div>
   );
 }
 
