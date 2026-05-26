@@ -14,6 +14,9 @@ import {
   ShieldCheck,
   CheckCircle2,
   AlertCircle,
+  Lock,
+  Pencil,
+  Save,
 } from "lucide-react";
 import { formatRelative } from "@/lib/format";
 import type { Mailbox, DriveConfig } from "@/lib/types";
@@ -65,14 +68,14 @@ function ConnectorsInner() {
     <>
       <PageHeader
         title="Connexions"
-        subtitle="Une carte par boîte Gmail Workspace. Renseigne email + Client ID + Client Secret, puis connecte via Google."
+        subtitle="Une carte par boîte Gmail. Étape 1 : enregistrer email + credentials. Étape 2 : connecter à Google pour autoriser l'accès au mail."
         showMonthSelector={false}
       />
 
       <div className="p-8 space-y-6">
         {successParam && (
           <div className="card border-ok/40 bg-ok/5 p-3 text-[12px] text-ok flex items-center gap-2">
-            <CheckCircle2 size={14} /> Boîte connectée avec succès.
+            <CheckCircle2 size={14} /> Boîte connectée à Google avec succès.
           </div>
         )}
         {errorParam && (
@@ -80,16 +83,10 @@ function ConnectorsInner() {
             <AlertCircle size={14} className="mt-0.5 shrink-0" />
             <div>
               Échec de la connexion : <code className="font-mono">{errorParam}</code>
-              {errorParam === "missing_google_credentials" && (
-                <div className="mt-1 text-muted">
-                  Cette boîte n'a pas de Client ID/Secret enregistrés.
-                </div>
-              )}
             </div>
           </div>
         )}
 
-        {/* Mailboxes */}
         <section>
           <div className="flex items-center justify-between mb-3">
             <div>
@@ -97,8 +94,8 @@ function ConnectorsInner() {
                 <Mail size={16} /> Boîtes Gmail à surveiller
               </div>
               <div className="text-[12px] text-muted">
-                Tu peux utiliser les <strong>mêmes</strong> Client ID/Secret pour toutes les
-                boîtes de ton Workspace, ou des credentials différents par boîte.
+                Tu peux mettre la même paire Client ID/Secret pour plusieurs boîtes du même
+                Workspace, ou des credentials différents par boîte.
               </div>
             </div>
             <button onClick={handleAdd} className="btn btn-primary">
@@ -118,7 +115,12 @@ function ConnectorsInner() {
                 key={mb.id}
                 mailbox={mb}
                 onDelete={async () => {
-                  if (!confirm(`Supprimer la boîte "${mb.email || "(sans nom)"}" ?`)) return;
+                  if (
+                    !confirm(
+                      `Supprimer définitivement la boîte "${mb.email || "(sans nom)"}" ? Les credentials et la connexion Google seront perdus.`,
+                    )
+                  )
+                    return;
                   removeMailbox(mb.id);
                 }}
                 onReload={reloadFromDb}
@@ -127,13 +129,10 @@ function ConnectorsInner() {
           </div>
 
           <div className="mt-4 card bg-panel2/40 p-3 text-[11px] text-muted leading-relaxed">
-            <strong className="text-text">URI de redirection à configurer</strong> dans
-            ton/tes app(s) OAuth Google Cloud Console :
+            <strong className="text-text">URI de redirection à configurer</strong> dans ton/tes
+            app(s) OAuth Google Cloud Console :
             <div className="font-mono text-[12px] mt-1 text-text">
               https://financial.darlink.ai/api/auth/google/callback
-            </div>
-            <div className="mt-1">
-              (et <code>http://localhost:3030/api/auth/google/callback</code> pour le dev local)
             </div>
           </div>
         </section>
@@ -166,24 +165,42 @@ function MailboxCard({
   onDelete: () => void;
   onReload: () => void;
 }) {
+  const hasSavedCreds = !!mailbox.oauthClientId && mailbox.hasOauthSecret;
+  const isConnected = mailbox.hasRefreshToken;
+
+  // editing = true tant que les credentials ne sont pas sauvegardés.
+  // Une fois saved, la carte se verrouille (vert), bouton "Modifier" pour la rouvrir.
+  const [editing, setEditing] = useState(!hasSavedCreds);
   const [email, setEmail] = useState(mailbox.email);
   const [clientId, setClientId] = useState(mailbox.oauthClientId ?? "");
   const [clientSecret, setClientSecret] = useState("");
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
 
+  // Si la boîte vient juste d'être créée (id mais aucune saved cred), force editing.
+  useEffect(() => {
+    if (!hasSavedCreds) setEditing(true);
+  }, [hasSavedCreds]);
+
   const dirty =
     email !== mailbox.email ||
     clientId !== (mailbox.oauthClientId ?? "") ||
     clientSecret.length > 0;
 
+  const canSave =
+    editing &&
+    email.trim().length > 0 &&
+    clientId.trim().length > 0 &&
+    // pour la 1ère save, le secret est requis ; pour modifier, il peut rester vide (on conserve)
+    (mailbox.hasOauthSecret || clientSecret.length > 0);
+
   const save = async () => {
     setSaving(true);
     try {
       const body: Record<string, string | null> = {};
-      if (email !== mailbox.email) body.email = email;
+      if (email !== mailbox.email) body.email = email.trim();
       if (clientId !== (mailbox.oauthClientId ?? ""))
-        body.oauthClientId = clientId || null;
+        body.oauthClientId = clientId.trim() || null;
       if (clientSecret) body.oauthClientSecret = clientSecret;
 
       await fetch(`/api/mailboxes/${mailbox.id}`, {
@@ -193,6 +210,7 @@ function MailboxCard({
       });
       setClientSecret("");
       setSavedAt(Date.now());
+      setEditing(false);
       onReload();
     } finally {
       setSaving(false);
@@ -204,7 +222,12 @@ function MailboxCard({
   };
 
   const disconnect = async () => {
-    if (!confirm(`Déconnecter Google pour "${mailbox.email}" ?`)) return;
+    if (
+      !confirm(
+        `Déconnecter Google pour "${mailbox.email}" ? Les credentials restent enregistrés, tu pourras reconnecter ensuite.`,
+      )
+    )
+      return;
     await fetch("/api/auth/google/disconnect", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -213,25 +236,29 @@ function MailboxCard({
     onReload();
   };
 
-  const hasCredentials = !!mailbox.oauthClientId && mailbox.hasOauthSecret;
-  const isConnected = mailbox.hasRefreshToken;
-  const credsHaveChanged =
-    clientId !== (mailbox.oauthClientId ?? "") || clientSecret.length > 0;
+  const cardBorder = isConnected
+    ? "!border-ok/60"
+    : !editing && hasSavedCreds
+      ? "!border-ok/40"
+      : "";
 
   return (
-    <div className="card overflow-hidden">
+    <div className={`card overflow-hidden ${cardBorder}`}>
       <div className="px-5 py-4 border-b border-border flex items-center gap-3">
         <div className="w-8 h-8 rounded-md bg-panel2 border border-border flex items-center justify-center">
           <Mail size={14} className="text-muted" />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-[14px] font-medium truncate">
+          <div className="text-[14px] font-medium truncate flex items-center gap-2">
             {email || mailbox.email || "(nouvelle boîte)"}
+            {!editing && hasSavedCreds && (
+              <Lock size={11} className="text-muted" aria-label="Verrouillé" />
+            )}
           </div>
           <div className="text-[11px] text-muted">
             {isConnected ? (
-              <span className="text-ok">
-                ● Connectée
+              <span className="text-ok flex items-center gap-1">
+                <CheckCircle2 size={11} /> Connectée à Google
                 {mailbox.oauthUserEmail &&
                   mailbox.oauthUserEmail.toLowerCase() !== email.toLowerCase() && (
                     <span className="text-warn ml-1">
@@ -239,23 +266,16 @@ function MailboxCard({
                     </span>
                   )}
               </span>
-            ) : hasCredentials ? (
-              <span>○ Credentials OK, prête à connecter</span>
+            ) : hasSavedCreds ? (
+              <span>○ Credentials enregistrés — manque la connexion Google</span>
             ) : (
-              <span>○ Credentials manquants</span>
+              <span>○ Renseigne email + Client ID + Client Secret</span>
             )}
             {mailbox.lastSync && (
               <span className="ml-2">· Dernière synchro {formatRelative(mailbox.lastSync)}</span>
             )}
           </div>
         </div>
-        <button
-          onClick={onDelete}
-          className="btn !px-2 text-[11px]"
-          title="Supprimer cette boîte"
-        >
-          <Trash2 size={12} />
-        </button>
       </div>
 
       <div className="p-5 grid grid-cols-2 gap-4">
@@ -267,6 +287,7 @@ function MailboxCard({
             onChange={(e) => setEmail(e.target.value)}
             placeholder="comptabilite@famelink.ai"
             className="input"
+            disabled={!editing}
           />
         </div>
 
@@ -277,6 +298,7 @@ function MailboxCard({
             onChange={(e) => setClientId(e.target.value)}
             placeholder="123456-abc.apps.googleusercontent.com"
             className="input font-mono text-[12px]"
+            disabled={!editing}
           />
         </div>
         <div>
@@ -296,44 +318,69 @@ function MailboxCard({
                 : "GOCSPX-..."
             }
             className="input font-mono text-[12px]"
+            disabled={!editing}
           />
         </div>
 
-        <div className="col-span-2 flex items-center gap-2 pt-1">
-          <div className="text-[11px] text-muted flex items-center gap-1.5 flex-1">
-            <ShieldCheck size={11} /> Secret stocké en DB, jamais renvoyé au navigateur.
-          </div>
-          {savedAt && Date.now() - savedAt < 3000 && (
-            <span className="text-[11px] text-ok">Enregistré ✓</span>
-          )}
+        {/* Barre d'actions selon l'état */}
+        <div className="col-span-2 pt-1 flex items-center gap-2">
           <button
-            onClick={save}
-            disabled={saving || !dirty}
-            className="btn disabled:opacity-50"
+            onClick={onDelete}
+            className="btn !text-err hover:!border-err/40"
+            title="Supprimer cette boîte définitivement"
           >
-            {saving ? "Enregistrement…" : "Enregistrer"}
+            <Trash2 size={12} /> Supprimer
           </button>
-          {isConnected ? (
-            <button onClick={disconnect} className="btn">
-              <Unlink size={12} /> Déconnecter Google
-            </button>
-          ) : (
+
+          <div className="flex-1" />
+
+          {savedAt && Date.now() - savedAt < 3000 && (
+            <span className="text-[11px] text-ok flex items-center gap-1">
+              <CheckCircle2 size={11} /> Enregistré
+            </span>
+          )}
+
+          {editing ? (
             <button
-              onClick={connect}
-              disabled={!hasCredentials || credsHaveChanged}
-              title={
-                !hasCredentials
-                  ? "Enregistre d'abord Client ID + Secret"
-                  : credsHaveChanged
-                    ? "Enregistre avant de connecter"
-                    : "Connecter via Google"
-              }
+              onClick={save}
+              disabled={saving || !canSave || !dirty}
               className="btn btn-primary disabled:opacity-50"
             >
-              <Link2 size={12} /> Connecter via Google
+              <Save size={12} /> {saving ? "Enregistrement…" : "Enregistrer"}
+            </button>
+          ) : (
+            <button onClick={() => setEditing(true)} className="btn">
+              <Pencil size={12} /> Modifier
             </button>
           )}
+
+          {!editing && hasSavedCreds && (
+            isConnected ? (
+              <button onClick={disconnect} className="btn">
+                <Unlink size={12} /> Déconnecter Google
+              </button>
+            ) : (
+              <button
+                onClick={connect}
+                className="btn btn-primary"
+                title="Ouvre le consent Google pour autoriser l'app à lire cette boîte"
+              >
+                <Link2 size={12} /> Connecter via Google
+              </button>
+            )
+          )}
         </div>
+
+        {!editing && hasSavedCreds && !isConnected && (
+          <div className="col-span-2 -mt-2 text-[11px] text-muted leading-relaxed flex items-start gap-1.5">
+            <ShieldCheck size={11} className="mt-0.5 shrink-0" />
+            <span>
+              <strong className="text-text">Pourquoi "Connecter via Google" ?</strong> Tes
+              credentials sont enregistrés mais l'app n'a pas encore l'autorisation de lire la
+              boîte. Ce bouton ouvre le consent Google où tu autorises explicitement l'accès.
+            </span>
+          </div>
+        )}
       </div>
     </div>
   );
