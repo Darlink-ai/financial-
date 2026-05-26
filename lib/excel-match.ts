@@ -81,8 +81,19 @@ export function matchInvoicesAgainstSheet(
 
   const results: MatchResult[] = [];
 
+  // Quand le `name` ne match pas, on cherche le créditeur dans TOUTES
+  // les cellules string de la row : les relevés UBS mettent souvent le
+  // nom du fournisseur dans une "Description" longue avec d'autres infos.
+  function rowAsText(row: (string | number | null)[]): string {
+    return row
+      .map((c) => (typeof c === "string" ? c : ""))
+      .filter(Boolean)
+      .join(" ");
+  }
+
   for (const inv of invoices) {
-    let best: MatchResult | null = null;
+    const invCreditorTokens = creditorTokens(inv.creditor);
+    let best: { score: number; result: MatchResult } | null = null;
 
     sheet.rows.forEach((row, rowIndex) => {
       const reasons: string[] = [];
@@ -93,30 +104,63 @@ export function matchInvoicesAgainstSheet(
       const rowDate = idxDate >= 0 ? parseDate(row[idxDate]) : null;
       const rowCode = idxCode >= 0 ? String(row[idxCode] ?? "").trim() : "";
 
-      const invCreditor = norm(inv.creditor);
-      if (invCreditor && rowCreditor && rowCreditor.includes(invCreditor)) {
-        score += 3;
-        reasons.push(`créditeur "${inv.creditor}"`);
+      // ---- Créditeur (tokenisé) ----
+      // On cherche n'importe quel token significatif (>= 4 chars, hors
+      // suffixes corporate type "inc", "ltd", etc.) dans la cellule
+      // créditeur OU dans toute la row text. Beaucoup plus flexible.
+      if (invCreditorTokens.length > 0) {
+        const haystack = rowCreditor + " " + norm(rowAsText(row));
+        const hitTokens = invCreditorTokens.filter((t) => haystack.includes(t));
+        if (hitTokens.length > 0) {
+          score += 3;
+          reasons.push(`créditeur "${hitTokens.join(", ")}"`);
+        }
       }
+
+      // ---- Montant ----
       if (inv.amount != null && rowAmount != null) {
-        const diff = Math.abs(inv.amount - rowAmount);
+        const diff = Math.abs(inv.amount - Math.abs(rowAmount));
+        const rel = diff / Math.max(inv.amount, Math.abs(rowAmount));
         if (diff < 0.01) {
           score += 3;
           reasons.push("montant exact");
-        } else if (diff / Math.max(inv.amount, rowAmount) < 0.02) {
+        } else if (rel < 0.05) {
+          score += 2;
+          reasons.push("montant proche (±5%)");
+        } else if (rel < 0.15) {
           score += 1;
-          reasons.push("montant proche");
+          reasons.push("montant proche (±15%, FX possible)");
         }
       }
-      if (inv.invoiceDate && rowDate && inv.invoiceDate === rowDate) {
-        score += 2;
-        reasons.push("date facture");
+
+      // ---- Date (tolérance ±7 jours, classique pour booking bancaire) ----
+      if (inv.invoiceDate && rowDate) {
+        const diffDays = Math.abs(
+          (new Date(inv.invoiceDate).getTime() - new Date(rowDate).getTime()) /
+            86_400_000,
+        );
+        if (diffDays === 0) {
+          score += 2;
+          reasons.push("date exacte");
+        } else if (diffDays <= 3) {
+          score += 1.5;
+          reasons.push("date à ±3j");
+        } else if (diffDays <= 7) {
+          score += 1;
+          reasons.push("date à ±7j");
+        }
       }
+
       if (inv.folderCode && rowCode && rowCode === inv.folderCode) {
         score += 1;
         reasons.push(`code ${inv.folderCode}`);
       }
 
+      // Seuil 4 → le créditeur seul (3) ne suffit pas mais
+      // créditeur + montant proche (4-5) ou créditeur + date (4.5-5)
+      // passe. Le créditeur SEUL avec rien d'autre on rejette pour
+      // éviter les faux positifs (plusieurs paiements du même
+      // fournisseur dans le mois).
       if (score >= 4) {
         const candidate: MatchResult = {
           rowIndex,
@@ -126,14 +170,36 @@ export function matchInvoicesAgainstSheet(
           excelAmount: rowAmount,
           excelDate: rowDate,
         };
-        if (!best || score > (best.reasons.length + (best.confidence === "high" ? 3 : best.confidence === "medium" ? 2 : 1))) {
-          best = candidate;
+        if (!best || score > best.score) {
+          best = { score, result: candidate };
         }
       }
     });
 
-    if (best) results.push(best);
+    if (best) results.push((best as { score: number; result: MatchResult }).result);
   }
 
   return results;
+}
+
+/**
+ * Tokenise un nom de créancier pour matcher de manière fuzzy.
+ * "DigitalOcean Support" → ["digitalocean"]
+ * "Deep Infra Inc." → ["deep", "infra"]
+ * Filtre les tokens < 4 chars + les suffixes corporate.
+ */
+const CORPORATE_STOPWORDS = new Set([
+  "inc", "ltd", "llc", "gmbh", "corp", "corporation", "ag", "sa",
+  "sarl", "limited", "company", "co", "support", "billing", "payments",
+  "payment", "team", "the",
+]);
+
+function creditorTokens(creditor: string | null): string[] {
+  if (!creditor) return [];
+  const tokens = norm(creditor)
+    .split(/[^a-z0-9]+/i)
+    .filter(Boolean);
+  return tokens.filter(
+    (t) => t.length >= 4 && !CORPORATE_STOPWORDS.has(t),
+  );
 }

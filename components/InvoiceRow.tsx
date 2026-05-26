@@ -17,11 +17,46 @@ import { useStore } from "@/lib/store";
 export function InvoiceRow({ invoice }: { invoice: Invoice }) {
   const [open, setOpen] = useState(false);
   const [reprocessing, setReprocessing] = useState(false);
-  const { reloadFromDb } = useStore();
+  const [manualRow, setManualRow] = useState("");
+  const [assigning, setAssigning] = useState(false);
+  const { reloadFromDb, updateInvoice: updateInvoiceStore } = useStore();
   const account = invoice.accountCurrency ?? "USD";
   // Facture déjà rapprochée Excel → fond vert subtil + barre verte
   // à gauche, pour repérer en un coup d'œil ce qui est "fait".
   const isMatched = invoice.status === "matched";
+
+  const assignExcelRow = async () => {
+    const n = parseInt(manualRow.trim(), 10);
+    if (!Number.isFinite(n) || n < 2) {
+      alert("Entre un numéro de ligne valide (>= 2 — la ligne 1 étant l'en-tête)");
+      return;
+    }
+    setAssigning(true);
+    try {
+      updateInvoiceStore(invoice.id, {
+        excelRowMatched: n,
+        status: "matched",
+      });
+      await reloadFromDb();
+      setManualRow("");
+    } finally {
+      setAssigning(false);
+    }
+  };
+
+  const unmatchExcelRow = async () => {
+    if (!confirm("Retirer le rapprochement Excel de cette facture ?")) return;
+    setAssigning(true);
+    try {
+      updateInvoiceStore(invoice.id, {
+        excelRowMatched: null,
+        status: invoice.drivePath ? "uploaded" : "renamed",
+      });
+      await reloadFromDb();
+    } finally {
+      setAssigning(false);
+    }
+  };
 
   const reprocess = async () => {
     setReprocessing(true);
@@ -165,14 +200,60 @@ export function InvoiceRow({ invoice }: { invoice: Invoice }) {
             <FieldGroup label="Sortie">
               <Field label="Nom final" value={invoice.finalName ?? "—"} mono />
               <Field label="Chemin Drive" value={invoice.drivePath ?? "—"} mono small />
-              <Field
-                label="Ligne Excel"
-                value={
-                  invoice.excelRowMatched
-                    ? `Ligne ${invoice.excelRowMatched} (verte ✓)`
-                    : "Non rapprochée"
-                }
-              />
+              {invoice.excelRowMatched ? (
+                <div className="flex gap-3 items-center pt-0.5">
+                  <div className="text-[11px] text-muted w-24 shrink-0">
+                    Ligne Excel
+                  </div>
+                  <div className="text-[12px] flex items-center gap-2">
+                    <span>
+                      Ligne <span className="text-ok font-medium">{invoice.excelRowMatched}</span>{" "}
+                      (verte ✓)
+                    </span>
+                    <button
+                      onClick={unmatchExcelRow}
+                      disabled={assigning}
+                      className="text-[10px] text-muted hover:text-err underline"
+                      title="Retirer ce rapprochement"
+                    >
+                      retirer
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex gap-3 items-start pt-0.5">
+                  <div className="text-[11px] text-muted w-24 shrink-0 mt-1.5">
+                    Ligne Excel
+                  </div>
+                  <div className="flex-1 space-y-1">
+                    <div className="text-[12px] text-muted">Non rapprochée</div>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="number"
+                        min={2}
+                        placeholder="N°"
+                        value={manualRow}
+                        onChange={(e) => setManualRow(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") void assignExcelRow();
+                        }}
+                        className="input !py-1 !px-2 text-[11px] !w-20"
+                      />
+                      <button
+                        onClick={assignExcelRow}
+                        disabled={assigning || !manualRow.trim()}
+                        className="btn !py-1 !px-2.5 text-[11px] disabled:opacity-50"
+                        title="Marquer la facture comme rapprochée à cette ligne Excel"
+                      >
+                        Valider
+                      </button>
+                    </div>
+                    <div className="text-[10px] text-muted">
+                      Numéro affiché en colonne « # » dans la table Excel.
+                    </div>
+                  </div>
+                </div>
+              )}
             </FieldGroup>
             <div className="flex gap-2 mt-4">
               <a
