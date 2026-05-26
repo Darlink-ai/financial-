@@ -33,7 +33,7 @@ function shiftMonth(ym: string, delta: number): string {
   return compose(d.getFullYear(), d.getMonth() + 1);
 }
 
-export function SidebarMonthSelector() {
+export function SidebarMonthSelector({ disabled = false }: { disabled?: boolean }) {
   const { selectedMonth, setSelectedMonth } = useStore();
   const [year, month] = parse(selectedMonth);
 
@@ -47,11 +47,12 @@ export function SidebarMonthSelector() {
         Période
       </div>
 
-      <div className="flex items-center gap-1">
+      <div className={`flex items-center gap-1 ${disabled ? "opacity-50" : ""}`}>
         <button
           onClick={() => setSelectedMonth(shiftMonth(selectedMonth, -1))}
           className="btn !px-1.5 !py-1"
           title="Mois précédent"
+          disabled={disabled}
         >
           <ChevronLeft size={12} />
         </button>
@@ -62,6 +63,7 @@ export function SidebarMonthSelector() {
             onChange={(e) => setSelectedMonth(compose(year, parseInt(e.target.value, 10)))}
             className="input !py-1 !px-2 text-[12px] cursor-pointer"
             title="Mois"
+            disabled={disabled}
           >
             {MONTHS_FR.map((label, i) => (
               <option key={i} value={i + 1}>
@@ -74,6 +76,7 @@ export function SidebarMonthSelector() {
             onChange={(e) => setSelectedMonth(compose(parseInt(e.target.value, 10), month))}
             className="input !py-1 !px-2 text-[12px] cursor-pointer tabular-nums w-[68px]"
             title="Année"
+            disabled={disabled}
           >
             {years.map((y) => (
               <option key={y} value={y}>
@@ -87,10 +90,17 @@ export function SidebarMonthSelector() {
           onClick={() => setSelectedMonth(shiftMonth(selectedMonth, 1))}
           className="btn !px-1.5 !py-1"
           title="Mois suivant"
+          disabled={disabled}
         >
           <ChevronRight size={12} />
         </button>
       </div>
+
+      {disabled && (
+        <div className="text-[10px] text-muted px-1 pt-2 leading-tight">
+          Période gérée dans la page d'analyse.
+        </div>
+      )}
     </div>
   );
 }
