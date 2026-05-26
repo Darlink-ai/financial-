@@ -83,9 +83,41 @@ function parseNumber(raw: string): number | null {
   return isFinite(n) ? n : null;
 }
 
+// Plafond raisonnable pour un montant de facture. Au-dessus, c'est presque
+// certainement pas de l'argent (token count, ID de transaction, etc.).
+const MAX_REASONABLE_AMOUNT = 10_000_000;
+
+// Mots-clés qui indiquent un montant total. La proximité avec un de ces
+// mots booste le score d'un candidat — typiquement le bon montant.
+const TOTAL_KEYWORDS = [
+  "total due",
+  "amount due",
+  "balance due",
+  "grand total",
+  "total amount",
+  "net amount",
+  "total ttc",
+  "total ht",
+  "total :",
+  "total\n",
+  "à payer",
+  "montant total",
+  "montant dû",
+  "sous-total",
+  "subtotal",
+  "betrag",
+  "gesamtbetrag",
+];
+
 /**
- * Trouve toutes les paires (devise, montant) dans le texte.
- * Retourne la plus grosse — c'est presque toujours le total TTC.
+ * Trouve la paire (devise, montant) la plus probable dans le texte.
+ *
+ * Stratégie :
+ *  1. Récolte tous les candidats (regex CHF/EUR/USD/€/$/Fr. + nombre)
+ *  2. Filtre les valeurs absurdes (> 10M, ou > 100k sans décimale —
+ *     typiquement des token counts ou IDs de Deep Infra, Stripe, etc.)
+ *  3. Score chaque candidat par proximité d'un mot-clé "total"
+ *  4. Retourne le meilleur score, à amount égal le plus gros
  */
 function findAmountWithCurrency(
   text: string,
@@ -97,26 +129,84 @@ function findAmountWithCurrency(
   const postPattern =
     /([0-9]{1,3}(?:[\s ',.][0-9]{3})*(?:[.,][0-9]{2})?)\s*(CHF|EUR|USD|€|\$|Fr\.?)/gi;
 
-  const candidates: { amount: number; currency: ExtractedInvoice["currency"] }[] = [];
+  type Candidate = {
+    amount: number;
+    currency: ExtractedInvoice["currency"];
+    index: number;
+    hasDecimal: boolean;
+  };
+
+  const hasExplicitDecimal = (raw: string) =>
+    /[.,]\d{2}\s*$/.test(raw.trim());
+
+  const candidates: Candidate[] = [];
 
   let m: RegExpExecArray | null;
   while ((m = prePattern.exec(text)) !== null) {
     const sym = m[1].toUpperCase().replace(".", "");
     const cur = CURRENCY_BY_SYMBOL[sym] ?? null;
     const amt = parseNumber(m[2]);
-    if (cur && amt !== null && amt > 0) candidates.push({ amount: amt, currency: cur });
+    if (cur && amt !== null && amt > 0) {
+      candidates.push({
+        amount: amt,
+        currency: cur,
+        index: m.index,
+        hasDecimal: hasExplicitDecimal(m[2]),
+      });
+    }
   }
   while ((m = postPattern.exec(text)) !== null) {
     const sym = m[2].toUpperCase().replace(".", "");
     const cur = CURRENCY_BY_SYMBOL[sym] ?? null;
     const amt = parseNumber(m[1]);
-    if (cur && amt !== null && amt > 0) candidates.push({ amount: amt, currency: cur });
+    if (cur && amt !== null && amt > 0) {
+      candidates.push({
+        amount: amt,
+        currency: cur,
+        index: m.index,
+        hasDecimal: hasExplicitDecimal(m[1]),
+      });
+    }
   }
 
-  if (candidates.length === 0) return null;
-  // On prend le plus gros — heuristique classique pour le total TTC.
-  candidates.sort((a, b) => b.amount - a.amount);
-  return candidates[0];
+  // ---- Filtrage des candidats déraisonnables ----
+  const filtered = candidates.filter((c) => {
+    if (c.amount > MAX_REASONABLE_AMOUNT) return false;
+    // > 100k sans décimale → typiquement un token count ou un ID, pas un montant
+    if (c.amount > 100_000 && !c.hasDecimal) return false;
+    return true;
+  });
+
+  if (filtered.length === 0) return null;
+
+  // ---- Scoring par proximité de mots-clés "total" ----
+  const lower = text.toLowerCase();
+  const keywordPositions: number[] = [];
+  for (const kw of TOTAL_KEYWORDS) {
+    let idx = 0;
+    while ((idx = lower.indexOf(kw, idx)) >= 0) {
+      keywordPositions.push(idx);
+      idx += kw.length;
+    }
+  }
+
+  const scored = filtered.map((c) => {
+    let score = 0;
+    // Bonus structure : un vrai montant a presque toujours 2 décimales
+    if (c.hasDecimal) score += 8;
+    // Bonus proximité keyword (max 20, dégressif sur 80 chars)
+    if (keywordPositions.length > 0) {
+      const minDist = Math.min(
+        ...keywordPositions.map((kp) => Math.abs(c.index - kp)),
+      );
+      if (minDist <= 80) score += Math.round(20 - minDist / 4);
+    }
+    return { ...c, score };
+  });
+
+  // Score décroissant, puis montant décroissant en tiebreaker.
+  scored.sort((a, b) => b.score - a.score || b.amount - a.amount);
+  return { amount: scored[0].amount, currency: scored[0].currency };
 }
 
 /** Construit une ISO YYYY-MM-DD si tous les composants sont valides. */
