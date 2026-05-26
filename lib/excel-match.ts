@@ -10,6 +10,10 @@ export type MatchResult = {
   invoice: Invoice;
   confidence: "high" | "medium" | "low";
   reasons: string[];
+  /** Montant lu dans la ligne Excel — source de vérité (relevé bancaire). */
+  excelAmount: number | null;
+  /** Date de comptabilisation / valuta lue dans la ligne Excel. */
+  excelDate: string | null;
 };
 
 const norm = (s: unknown) =>
@@ -58,9 +62,21 @@ export function matchInvoicesAgainstSheet(
   const colIdx = (...candidates: string[]) =>
     headerNorm.findIndex((h) => candidates.some((c) => h.includes(c)));
 
-  const idxCreditor = colIdx("creditor", "fournisseur", "creditrice", "creanc", "vendor", "nom");
-  const idxAmount = colIdx("montant", "amount", "ttc", "total");
-  const idxDate = colIdx("date", "facture");
+  // Aliases élargis pour bien capter les colonnes typiques des relevés
+  // bancaires UBS / PostFinance / etc. en plus des fichiers "comptables".
+  const idxCreditor = colIdx(
+    "creditor", "fournisseur", "creditrice", "creanc", "vendor", "nom",
+    "libelle", "libellé", "description", "denomination", "transaction",
+    "objet", "buchungstext", "verwendungszweck",
+  );
+  const idxAmount = colIdx(
+    "montant", "amount", "ttc", "total",
+    "debit", "débit", "credit", "crédit", "betrag", "valeur",
+  );
+  const idxDate = colIdx(
+    "date", "facture",
+    "valuta", "valeur", "comptabilis", "operation", "buchung",
+  );
   const idxCode = colIdx("code", "compte", "categorie");
 
   const results: MatchResult[] = [];
@@ -107,6 +123,8 @@ export function matchInvoicesAgainstSheet(
           invoice: inv,
           confidence: score >= 6 ? "high" : score >= 5 ? "medium" : "low",
           reasons,
+          excelAmount: rowAmount,
+          excelDate: rowDate,
         };
         if (!best || score > (best.reasons.length + (best.confidence === "high" ? 3 : best.confidence === "medium" ? 2 : 1))) {
           best = candidate;

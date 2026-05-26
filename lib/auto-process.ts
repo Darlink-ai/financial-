@@ -40,13 +40,14 @@ export async function rematchInvoicesForBucket(opts: {
   const sheet = await getExcelSheet(opts.month, opts.accountCurrency);
   const state = await getAllState();
 
-  // Candidats : factures du bon mois + compte + déjà classifiées au moins
-  // (i.e. on a un montant et un créancier pour matcher).
+  // Candidats : factures du bon mois + compte, avec au minimum un créancier
+  // identifié. Le montant peut être absent ou faux : on s'en fout puisque
+  // l'Excel sera autoritaire.
   const candidates = state.invoices.filter((inv) => {
     if ((inv.accountCurrency ?? "USD") !== opts.accountCurrency) return false;
     const ref = inv.invoiceDate ?? inv.receivedAt;
     if (ref.slice(0, 7) !== opts.month) return false;
-    return inv.creditor != null && inv.amount != null;
+    return inv.creditor != null;
   });
 
   // Si pas de sheet : on ne touche rien (la sheet pourrait être en cours
@@ -65,10 +66,23 @@ export async function rematchInvoicesForBucket(opts: {
     const m = matchedByInvoice.get(inv.id);
     if (m) {
       const rowExcel = m.rowIndex + 2;
-      if (inv.excelRowMatched !== rowExcel || inv.status !== "matched") {
+      // Excel = source de vérité — on récupère son montant.
+      const authoritativeAmount =
+        m.excelAmount != null && Number.isFinite(m.excelAmount)
+          ? Math.abs(m.excelAmount)
+          : null;
+
+      const needsUpdate =
+        inv.excelRowMatched !== rowExcel ||
+        inv.status !== "matched" ||
+        (authoritativeAmount != null &&
+          Math.abs((inv.amount ?? 0) - authoritativeAmount) > 0.01);
+
+      if (needsUpdate) {
         await updateInvoice(inv.id, {
           excelRowMatched: rowExcel,
           status: "matched",
+          ...(authoritativeAmount != null ? { amount: authoritativeAmount } : {}),
         });
         matched++;
       }
@@ -230,6 +244,14 @@ export async function autoProcessInvoice(
         // +2 : +1 pour la ligne d'en-tête, +1 pour passer en 1-based (cohérent
         // avec ce qui est affiché dans la page Excel).
         matchedRow = matches[0].rowIndex + 2;
+        // ---- Excel = source de vérité (relevé bancaire UBS) ----
+        // On écrase le montant extrait du PDF par celui de la ligne Excel.
+        // Le PDF n'est qu'un signal (et son extraction peut être bruyante :
+        // token counts, IDs, etc.). Le débit bancaire est canonique.
+        const excelAmount = matches[0].excelAmount;
+        if (excelAmount != null && Number.isFinite(excelAmount)) {
+          patch.amount = Math.abs(excelAmount);
+        }
       }
     }
   } catch (e) {

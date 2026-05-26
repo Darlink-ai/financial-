@@ -141,7 +141,15 @@ export function InvoiceRow({ invoice }: { invoice: Invoice }) {
             <FieldGroup label="Analyse extraite">
               <Field label="Créditeur" value={invoice.creditor ?? "—"} />
               <Field label="Date facture" value={formatSwissDate(invoice.invoiceDate)} />
-              <Field label="Montant" value={formatAmount(invoice.amount, invoice.currency)} />
+              <Field
+                label="Montant"
+                value={formatAmount(invoice.amount, invoice.currency)}
+              />
+              {isMatched && (
+                <div className="text-[10px] text-ok mt-0.5">
+                  ✓ Montant rapproché à la ligne Excel #{invoice.excelRowMatched}
+                </div>
+              )}
             </FieldGroup>
             <FieldGroup label="Classement">
               <Field
