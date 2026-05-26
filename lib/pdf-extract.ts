@@ -399,11 +399,13 @@ export async function extractInvoiceFromPdf({
 }): Promise<ExtractedInvoice> {
   let text = "";
   try {
-    const uint8 = new Uint8Array(
-      pdfBuffer.buffer,
-      pdfBuffer.byteOffset,
-      pdfBuffer.byteLength,
-    );
+    // ⚠️ Copie DÉFENSIVE : unpdf détache l'ArrayBuffer sous-jacent du
+    // Uint8Array qu'on lui donne. Si on partage le buffer avec pdfBuffer
+    // (via .buffer + offset), pdfBuffer devient "detached" et toute
+    // utilisation ultérieure (genre l'upload Drive après) plante avec
+    // "Cannot perform Construct on a detached ArrayBuffer".
+    const uint8 = new Uint8Array(pdfBuffer.byteLength);
+    uint8.set(pdfBuffer);
     const doc = await getDocumentProxy(uint8);
     const result = await extractText(doc, { mergePages: true });
     text = result.text ?? "";

@@ -162,6 +162,12 @@ export async function uploadPdf(opts: {
   });
 
   // ---- 2b. Upload du binaire (PATCH /upload/files/<id>?uploadType=media) ----
+  // Copie défensive : fetch transfère / détache l'ArrayBuffer du body
+  // quand il consomme. Si le caller réutilise ensuite le pdfBuffer
+  // (ex. autre étape pipeline), boom. On lui donne une copie propre.
+  const bodyBuffer = new Uint8Array(opts.pdfBuffer.byteLength);
+  bodyBuffer.set(opts.pdfBuffer);
+
   const uploadUrl = `${DRIVE_UPLOAD}/files/${meta.id}?uploadType=media&fields=id,name,webViewLink`;
   const r = await fetch(uploadUrl, {
     method: "PATCH",
@@ -170,9 +176,7 @@ export async function uploadPdf(opts: {
       Authorization: `Bearer ${opts.accessToken}`,
       "Content-Type": "application/pdf",
     },
-    // Passage direct du Buffer en tant que body — Node 20+ fetch
-    // gère Uint8Array/Buffer comme body binaire sans transformation.
-    body: new Uint8Array(opts.pdfBuffer),
+    body: bodyBuffer,
   });
   if (!r.ok) {
     const text = await r.text();

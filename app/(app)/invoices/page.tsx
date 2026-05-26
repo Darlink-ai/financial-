@@ -19,11 +19,31 @@ const filters: { id: "all" | InvoiceStatus; label: string }[] = [
 
 export default function InvoicesPage() {
   const invoices = useInvoicesForCurrentMonth();
-  const { selectedMonth, invoices: allInvoices, reloadFromDb } = useStore();
+  const {
+    selectedMonth,
+    invoices: allInvoices,
+    reloadFromDb,
+    setSelectedMonth,
+  } = useStore();
   const [filter, setFilter] = useState<(typeof filters)[number]["id"]>("all");
   const [q, setQ] = useState("");
   const [wiping, setWiping] = useState(false);
   const [reprocessingStuck, setReprocessingStuck] = useState(false);
+
+  // Calcule où sont les factures par mois — utile pour rediriger
+  // l'utilisateur quand le mois courant est vide mais qu'il y a des
+  // factures ailleurs (date de facture ≠ mois courant).
+  const invoicesByMonth = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const inv of allInvoices) {
+      const ref = inv.invoiceDate ?? inv.receivedAt;
+      const m = ref.slice(0, 7);
+      map.set(m, (map.get(m) ?? 0) + 1);
+    }
+    return Array.from(map.entries())
+      .filter(([m]) => m !== selectedMonth)
+      .sort(([a], [b]) => b.localeCompare(a));
+  }, [allInvoices, selectedMonth]);
 
   const stuckCount = allInvoices.filter((i) => i.status === "analyzing").length;
 
@@ -197,8 +217,31 @@ export default function InvoicesPage() {
 
         <div className="card overflow-hidden">
           {filtered.length === 0 ? (
-            <div className="p-12 text-center text-muted text-[13px]">
-              Aucune facture ne correspond.
+            <div className="p-10 text-center space-y-4">
+              <div className="text-muted text-[13px]">
+                Aucune facture en {formatMonthLabel(selectedMonth)}.
+              </div>
+              {invoicesByMonth.length > 0 && (
+                <div className="space-y-2">
+                  <div className="text-[12px] text-muted">
+                    {allInvoices.length} facture{allInvoices.length > 1 ? "s" : ""} en
+                    DB, classée{allInvoices.length > 1 ? "s" : ""} sous d'autres mois :
+                  </div>
+                  <div className="flex items-center justify-center gap-2 flex-wrap">
+                    {invoicesByMonth.map(([month, count]) => (
+                      <button
+                        key={month}
+                        onClick={() => setSelectedMonth(month)}
+                        className="btn !py-1.5 text-[12px]"
+                        title={`Voir les ${count} facture(s) de ${formatMonthLabel(month)}`}
+                      >
+                        {formatMonthLabel(month)}{" "}
+                        <span className="text-muted">({count})</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <>
