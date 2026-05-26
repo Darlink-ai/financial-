@@ -114,8 +114,16 @@ export function detectColumns(sheet: ParsedSheet): {
 
   function scanRow(row: (string | number | null)[]) {
     const cells = row.map((c) => norm(String(c ?? "")));
-    const find = (alts: string[]) =>
-      cells.findIndex((c) => c && alts.some((a) => c.includes(a)));
+    // skipDate : ignore les en-têtes qui commencent par "date" pour les
+    // catégories non-date. Sinon "Date de transaction" matche "transaction"
+    // dans la liste creditor, "Date de valeur" matche "valeur" dans amount,
+    // etc. → on choppe par erreur une colonne date pour autre chose.
+    const find = (alts: string[], skipDate = true) =>
+      cells.findIndex((c) => {
+        if (!c) return false;
+        if (skipDate && c.startsWith("date")) return false;
+        return alts.some((a) => c.includes(a));
+      });
     // Pour debit/credit on cherche un startsWith — distingue "debit" de
     // "credit" (aucun des deux n'est préfixe de l'autre) tout en couvrant
     // "Débit", "Débit CHF", "Débit(CHF)", "Débits", etc.
@@ -127,7 +135,7 @@ export function detectColumns(sheet: ParsedSheet): {
     return {
       creditor: find(KW.creditor),
       amount: find(KW.amount),
-      date: find(KW.date),
+      date: find(KW.date, false), // on autorise "date" dans le header date
       code: find(KW.code),
       debit: findStrict(DEBIT_KW),
       credit: findStrict(CREDIT_KW),
@@ -203,21 +211,25 @@ export function computeExpenseTotal(sheet: ParsedSheet): {
   let creditRowCount = 0;
 
   // Cas 1 : colonnes Débit ET/OU Crédit dédiées.
+  // Dans ces colonnes, la sémantique est implicite (toute valeur = sortie
+  // ou entrée d'argent), donc le signe ne porte aucune info — UBS exporte
+  // souvent les débits en négatif. On somme la valeur absolue.
   if (idxDebit >= 0 || idxCredit >= 0) {
     for (let i = dataStartRow; i < sheet.rows.length; i++) {
       const row = sheet.rows[i];
       if (idxDebit >= 0) {
         const v = parseAmount(row[idxDebit]);
-        if (v != null && v > 0) {
-          totalDebit += v;
+        if (v != null && v !== 0) {
+          const abs = Math.abs(v);
+          totalDebit += abs;
           debitRowCount += 1;
-          rowDebits[i] = v;
+          rowDebits[i] = abs;
         }
       }
       if (idxCredit >= 0) {
         const v = parseAmount(row[idxCredit]);
-        if (v != null && v > 0) {
-          totalCredit += v;
+        if (v != null && v !== 0) {
+          totalCredit += Math.abs(v);
           creditRowCount += 1;
         }
       }
