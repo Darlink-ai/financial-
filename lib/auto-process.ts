@@ -218,13 +218,17 @@ async function autoProcessInvoiceInner(
   }
 
   // ---- 2. Classification (regex → cache DB → LLM Claude) ----
-  const mapping = await classifyAgainstMappings({
+  const classify = await classifyAgainstMappings({
     mappings: input.mappings,
     creditor: extracted.creditor,
     subject: input.subject,
     fromEmail: input.fromEmail,
     pdfTextExcerpt: extracted.text,
   });
+  const mapping = classify.mapping;
+  // On garde la raison du classement (ou de l'échec) dans errors → finit
+  // dans last_error → visible dans l'UI Diagnostics.
+  errors.push(`classify(${classify.via}): ${classify.reason}`);
   const accountCurrency = deriveBankAccount(extracted.currency);
   const finalName =
     mapping && extracted.creditor && extracted.invoiceDate

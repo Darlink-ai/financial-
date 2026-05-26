@@ -27,13 +27,62 @@ import {
 import type { Invoice, FolderMapping } from "@/lib/types";
 
 export default function ManualPage() {
-  const { mappings, updateInvoice, selectedMonth, reloadFromDb } = useStore();
+  const { mappings, updateInvoice, selectedMonth, reloadFromDb, invoices: allInvoices } =
+    useStore();
   const monthInvoices = useInvoicesForCurrentMonth();
+  const [bulkRunning, setBulkRunning] = useState(false);
 
   const items = useMemo(
     () => monthInvoices.filter((i) => i.status === "manual"),
     [monthInvoices],
   );
+
+  const totalManualAllMonths = allInvoices.filter(
+    (i) => i.status === "manual",
+  ).length;
+
+  const bulkRetry = async () => {
+    if (totalManualAllMonths === 0) return;
+    if (
+      !confirm(
+        `Relancer le pipeline auto sur ${totalManualAllMonths} facture(s) manuelle(s) (tous mois) ?\n\nUtile après avoir corrigé un mapping ou appliqué une migration. Le compteur de retry est remis à 0 pour chacune.`,
+      )
+    )
+      return;
+    setBulkRunning(true);
+    try {
+      const r = await fetch("/api/invoices/reprocess-manual", { method: "POST" });
+      const data = (await r.json().catch(() => null)) as
+        | {
+            ok?: boolean;
+            total?: number;
+            processed?: number;
+            breakdown?: {
+              matched: number;
+              uploaded: number;
+              renamed: number;
+              stillManual: number;
+              failed: number;
+            };
+            message?: string;
+          }
+        | null;
+      if (!r.ok) {
+        alert(`Échec : ${data?.message ?? `HTTP ${r.status}`}`);
+        return;
+      }
+      await reloadFromDb();
+      const b = data?.breakdown;
+      const summary = b
+        ? `${data?.processed} traitée(s) sur ${data?.total}\n\nRépartition :\n• matched : ${b.matched}\n• uploaded : ${b.uploaded}\n• renamed : ${b.renamed}\n• toujours manuel : ${b.stillManual}\n• échecs : ${b.failed}`
+        : `${data?.processed ?? 0} traitée(s)`;
+      alert(summary);
+    } catch (e) {
+      alert(`Erreur : ${(e as Error).message}`);
+    } finally {
+      setBulkRunning(false);
+    }
+  };
 
   const normalCategories = mappings.filter((m) => m.id !== FALLBACK_CATEGORY_ID);
   const fallback = mappings.find((m) => m.id === FALLBACK_CATEGORY_ID);
@@ -43,6 +92,26 @@ export default function ManualPage() {
       <PageHeader
         title="À traiter manuellement"
         subtitle={`Factures de ${formatMonthLabel(selectedMonth)} qui n'ont pas pu être classées : ouvre la pièce jointe, rapproche-la d'une ligne Excel, puis choisis une catégorie. Réserve « Charges non classées » au cas où aucune autre ne convient.`}
+        actions={
+          totalManualAllMonths > 0 && (
+            <button
+              onClick={bulkRetry}
+              disabled={bulkRunning}
+              className="btn btn-primary disabled:opacity-50"
+              title="Reset retry + relance pipeline auto sur toutes les manuelles (tous mois)"
+            >
+              {bulkRunning ? (
+                <>
+                  <RefreshCw size={14} className="animate-spin" /> Re-traitement…
+                </>
+              ) : (
+                <>
+                  <RefreshCw size={14} /> Tout retenter ({totalManualAllMonths})
+                </>
+              )}
+            </button>
+          )
+        }
       />
 
       <div className="p-8 space-y-4">

@@ -13,9 +13,16 @@ import {
   getCreditorClassification,
   saveCreditorClassification,
 } from "./db";
-import { classifyWithLLM } from "./llm-classify";
+import { classifyWithLLM, isLlmAccepted } from "./llm-classify";
 
 export const FALLBACK_MAPPING_ID = "fm-nc";
+
+/** Détails du dernier essai de classification — utile pour last_error. */
+export type ClassifyDiagnostic = {
+  mapping: FolderMapping | null;
+  via: "regex" | "cache" | "llm" | "none";
+  reason: string;
+};
 
 /** Test regex pur (étape 1). */
 function matchByRegex(
@@ -50,23 +57,33 @@ export async function classifyAgainstMappings({
   fromEmail: string;
   /** Extrait du texte du PDF pour donner du contexte au LLM si appelé. */
   pdfTextExcerpt?: string;
-}): Promise<FolderMapping | null> {
+}): Promise<ClassifyDiagnostic> {
   // ---- 1. Regex statique sur les mappings utilisateur ----
   const haystack = [creditor ?? "", subject, fromEmail]
     .filter(Boolean)
     .join(" ");
   const regexHit = matchByRegex(mappings, haystack);
-  if (regexHit) return regexHit;
+  if (regexHit) {
+    return {
+      mapping: regexHit,
+      via: "regex",
+      reason: `Regex "${regexHit.creditorPattern}" → ${regexHit.folderCode}`,
+    };
+  }
 
   // ---- 2. Cache DB ----
-  // Si la table n'existe pas (migration pas encore appliquée) on log
-  // et on continue avec le LLM, sans crasher tout le pipeline.
   if (creditor) {
     try {
       const cached = await getCreditorClassification(creditor);
       if (cached) {
         const mapping = mappings.find((m) => m.id === cached.mappingId);
-        if (mapping) return mapping;
+        if (mapping) {
+          return {
+            mapping,
+            via: "cache",
+            reason: `Cache ${cached.classifiedBy} → ${mapping.folderCode}`,
+          };
+        }
       }
     } catch (e) {
       console.warn(
@@ -85,14 +102,9 @@ export async function classifyAgainstMappings({
       pdfTextExcerpt,
       mappings,
     });
-    if (llm) {
+    if (isLlmAccepted(llm)) {
       const mapping = mappings.find((m) => m.id === llm.mappingId);
       if (mapping) {
-        // On grave la décision dans le cache pour éviter de re-appeler
-        // l'API sur la prochaine facture du même fournisseur.
-        // Si la table n'existe pas, on log + on continue (le LLM tournera
-        // à nouveau pour la prochaine facture du même fournisseur, c'est
-        // acceptable comme dégradation).
         try {
           await saveCreditorClassification({
             creditor,
@@ -107,12 +119,26 @@ export async function classifyAgainstMappings({
             (e as Error).message,
           );
         }
-        return mapping;
+        return {
+          mapping,
+          via: "llm",
+          reason: `LLM: ${llm.rawVerdict ?? mapping.folderCode}`,
+        };
       }
+    }
+    // Rejet du LLM : on remonte la raison
+    if (llm && "kind" in llm) {
+      return { mapping: null, via: "llm", reason: llm.reason };
     }
   }
 
-  return null;
+  return {
+    mapping: null,
+    via: "none",
+    reason: creditor
+      ? "Aucune règle, cache vide, LLM non concluant."
+      : "Créditeur non extrait du PDF — impossible de classer.",
+  };
 }
 
 /**

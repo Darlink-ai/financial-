@@ -16,7 +16,17 @@ export type LlmClassifyResult = {
   mappingId: string;
   confidence: number;
   reasoning: string;
+  /** Raw verdict pour debug — affiché dans last_error si on rejette. */
+  rawVerdict?: string;
 };
+
+/** Verdict trop bas → on log dans last_error pour debug, mais on rejette. */
+export type LlmRejected = {
+  kind: "rejected";
+  reason: string;
+};
+
+const CONFIDENCE_THRESHOLD = 0.5;
 
 export async function classifyWithLLM({
   creditor,
@@ -30,12 +40,13 @@ export async function classifyWithLLM({
   fromEmail: string;
   pdfTextExcerpt?: string;
   mappings: FolderMapping[];
-}): Promise<LlmClassifyResult | null> {
+}): Promise<LlmClassifyResult | LlmRejected | null> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    // Pas de clé API → on n'appelle pas l'LLM, la facture restera en
-    // manual. C'est intentionnel : on n'oblige personne à brancher l'API.
-    return null;
+    return {
+      kind: "rejected",
+      reason: "ANTHROPIC_API_KEY non configurée — LLM non appelé.",
+    };
   }
 
   // On exclut le fallback NC (Charges non classées) — réservé au tri
@@ -47,9 +58,8 @@ export async function classifyWithLLM({
     .map((m) => `- ${m.folderCode} : ${m.folderLabel}`)
     .join("\n");
 
-  const prompt = `Tu es un assistant comptable pour une PME suisse.
-Tu dois classer une facture dans la bonne catégorie comptable en t'appuyant
-sur ta connaissance du fournisseur.
+  const prompt = `Tu es un assistant comptable pour une PME tech suisse.
+Tu dois classer une facture fournisseur dans la bonne catégorie comptable.
 
 Créancier : ${creditor}
 Email expéditeur : ${fromEmail}
@@ -62,20 +72,37 @@ Sujet du mail : ${subject}${
 Catégories disponibles (code → libellé) :
 ${categoriesList}
 
-Détermine la catégorie la plus appropriée. Exemples de raisonnement :
-- Hetzner / OVH / DigitalOcean / AWS → hébergement / serveurs → TECH
-- Stripe / PayPal / Adyen → processeur de paiement → PROC
-- Helvetia / Vaudoise / AXA → assurance → ASS
-- Loyer, régie immobilière, SIG → locaux → LOC
-- Meta Ads, Google Ads, LinkedIn Ads → marketing → MKT
-- Notion, Slack, GitHub, Figma, Linear → outils SaaS dev → TECH
+Détermine la catégorie en t'appuyant sur ta connaissance du fournisseur.
+
+Exemples détaillés :
+- Hetzner, OVH, DigitalOcean, AWS, GCP, Azure, Cloudflare, Vercel,
+  Netlify, Linode → hébergement / cloud → TECH
+- OpenAI, Anthropic, xAI, Mistral, Cohere, Replicate, Deep Infra,
+  Hugging Face → API LLM / inference → TECH
+- GitHub, GitLab, Notion, Slack, Linear, Figma, Sentry, Datadog,
+  PostHog, Airtable, Zapier, Hubstaff → SaaS dev/ops → TECH
+- Stripe, PayPal, Adyen, Square, SumUp, Worldline, Twint, Mollie
+  → processeur de paiement → PROC
+- Helvetia, Vaudoise, AXA, Mobilière, Bâloise, Zurich → assurance
+  → ASS
+- Régie immobilière, SIG, Romande Energie, Eau → locaux → LOC
+- Meta Ads, Google Ads, LinkedIn Ads, TikTok Ads, X Ads, Mailchimp,
+  Brevo, HubSpot → marketing / acquisition → MKT
+- Swisscom, Sunrise, Salt, La Poste, CFF, Fiduciaire, comptable
+  → administration → ADM
+- Salaires, AVS, LPP, Suva, Caisse maladie → salaires & charges
+  → SAL
+
+Sois décisif. Si tu reconnais le fournisseur, donne une confidence ≥ 0.7.
+Si tu hésites entre deux catégories proches, choisis la plus probable
+avec confidence 0.5-0.65. Ne réponds null/0 QUE si tu ne reconnais
+absolument pas le fournisseur OU si c'est clairement pas une facture
+(rapport d'activité, time-tracking, newsletter).
 
 Réponds UNIQUEMENT avec un objet JSON, rien d'autre :
-{"code": "<CODE_OU_NULL>", "confidence": <0.0-1.0>, "reasoning": "<phrase courte>"}
+{"code": "<CODE_OU_NULL>", "confidence": <0.0-1.0>, "reasoning": "<phrase courte>"}`;
 
-Si tu n'es pas raisonnablement sûr (confidence < 0.6), réponds
-{"code": null, "confidence": 0, "reasoning": "raison"}.`;
-
+  let rawText = "";
   try {
     // Timeout dur de 15s : si l'API rame, on bascule l'invoice dans la
     // queue de retry plutôt que de bloquer tout le sync.
@@ -87,36 +114,72 @@ Si tu n'es pas raisonnablement sûr (confidence < 0.6), réponds
     });
 
     const block = response.content[0];
-    if (!block || block.type !== "text") return null;
-    const text = block.text;
+    if (!block || block.type !== "text") {
+      return { kind: "rejected", reason: "Réponse LLM vide ou non-texte." };
+    }
+    rawText = block.text;
 
     // Extraction du premier objet JSON dans la réponse (Claude peut
     // parfois ajouter du texte autour malgré l'instruction).
-    const match = text.match(/\{[\s\S]*?\}/);
-    if (!match) return null;
-    const parsed = JSON.parse(match[0]) as {
-      code: string | null;
-      confidence: number;
-      reasoning: string;
-    };
+    const match = rawText.match(/\{[\s\S]*?\}/);
+    if (!match) {
+      return {
+        kind: "rejected",
+        reason: `Pas de JSON trouvé dans la réponse LLM : "${rawText.slice(0, 120)}"`,
+      };
+    }
+    let parsed: { code: string | null; confidence: number; reasoning: string };
+    try {
+      parsed = JSON.parse(match[0]);
+    } catch {
+      return {
+        kind: "rejected",
+        reason: `JSON LLM invalide : ${match[0].slice(0, 120)}`,
+      };
+    }
 
-    if (!parsed.code) return null;
-    if (typeof parsed.confidence !== "number" || parsed.confidence < 0.6) {
-      return null;
+    if (!parsed.code) {
+      return {
+        kind: "rejected",
+        reason: `LLM n'a pas trouvé de catégorie : ${parsed.reasoning ?? "(pas de raison)"}`,
+      };
+    }
+    if (
+      typeof parsed.confidence !== "number" ||
+      parsed.confidence < CONFIDENCE_THRESHOLD
+    ) {
+      return {
+        kind: "rejected",
+        reason: `LLM confidence trop basse (${parsed.confidence}) : ${parsed.code} — ${parsed.reasoning ?? ""}`,
+      };
     }
 
     const mapping = validMappings.find(
       (m) => m.folderCode.toLowerCase() === String(parsed.code).toLowerCase(),
     );
-    if (!mapping) return null;
+    if (!mapping) {
+      return {
+        kind: "rejected",
+        reason: `LLM a renvoyé un code inconnu : ${parsed.code}`,
+      };
+    }
 
     return {
       mappingId: mapping.id,
       confidence: parsed.confidence,
       reasoning: parsed.reasoning ?? "",
+      rawVerdict: `${parsed.code} (${parsed.confidence}) — ${parsed.reasoning ?? ""}`,
     };
   } catch (e) {
-    console.error("LLM classify failed", (e as Error).message);
-    return null;
+    return {
+      kind: "rejected",
+      reason: `Erreur appel LLM : ${(e as Error).message}`,
+    };
   }
+}
+
+export function isLlmAccepted(
+  r: LlmClassifyResult | LlmRejected | null,
+): r is LlmClassifyResult {
+  return r !== null && !("kind" in r);
 }

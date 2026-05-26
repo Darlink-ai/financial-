@@ -829,6 +829,17 @@ export async function getStuckAnalyzingInvoiceIds(): Promise<string[]> {
   return rows.map((r) => r.id);
 }
 
+/** Liste les IDs de toutes les factures actuellement en status="manual". */
+export async function getManualInvoiceIds(): Promise<string[]> {
+  const sql = client();
+  const rows = await sql<{ id: string }[]>`
+    SELECT id FROM invoices
+    WHERE status = 'manual'
+    ORDER BY received_at ASC
+  `;
+  return rows.map((r) => r.id);
+}
+
 /**
  * Récupère une facture avec sa pièce jointe (base64) pour aperçu PDF
  * ou re-traitement. Retourne null si l'id n'existe pas.
