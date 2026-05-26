@@ -59,15 +59,17 @@ export async function classifyAgainstMappings({
   pdfTextExcerpt?: string;
 }): Promise<ClassifyDiagnostic> {
   // ---- 1. Regex statique sur les mappings utilisateur ----
-  const haystack = [creditor ?? "", subject, fromEmail]
-    .filter(Boolean)
-    .join(" ");
-  const regexHit = matchByRegex(mappings, haystack);
-  if (regexHit) {
+  // On exclut volontairement fromEmail : beaucoup de SaaS (Deep Infra,
+  // PostHog, etc.) facturent via stripe.com — l'email contiendrait
+  // "stripe" et matcherait faussement le pattern PROC. Le nom du
+  // créancier + le sujet sont des signaux beaucoup plus fiables.
+  const creditorHit = creditor ? matchByRegex(mappings, creditor) : null;
+  const subjectHit = creditorHit ?? matchByRegex(mappings, subject);
+  if (subjectHit) {
     return {
-      mapping: regexHit,
+      mapping: subjectHit,
       via: "regex",
-      reason: `Regex "${regexHit.creditorPattern}" → ${regexHit.folderCode}`,
+      reason: `Regex "${subjectHit.creditorPattern}" → ${subjectHit.folderCode}`,
     };
   }
 

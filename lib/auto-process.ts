@@ -226,9 +226,16 @@ async function autoProcessInvoiceInner(
     pdfTextExcerpt: extracted.text,
   });
   const mapping = classify.mapping;
-  // On garde la raison du classement (ou de l'échec) dans errors → finit
-  // dans last_error → visible dans l'UI Diagnostics.
-  errors.push(`classify(${classify.via}): ${classify.reason}`);
+  // Trace de la décision dans les logs serveur (pas dans last_error pour
+  // ne pas polluer l'UI sur les classifications réussies).
+  console.log(
+    `[autoProcess] ${input.invoiceId} classify(${classify.via}): ${classify.reason}`,
+  );
+  // Seul un échec de classification pousse une raison dans errors[] —
+  // sinon on aurait un faux "[warn]" sur chaque facture correctement classée.
+  if (!mapping) {
+    errors.push(`classify(${classify.via}): ${classify.reason}`);
+  }
   const accountCurrency = deriveBankAccount(extracted.currency);
   const finalName =
     mapping && extracted.creditor && extracted.invoiceDate
