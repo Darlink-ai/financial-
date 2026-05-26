@@ -59,11 +59,20 @@ export async function classifyAgainstMappings({
   if (regexHit) return regexHit;
 
   // ---- 2. Cache DB ----
+  // Si la table n'existe pas (migration pas encore appliquée) on log
+  // et on continue avec le LLM, sans crasher tout le pipeline.
   if (creditor) {
-    const cached = await getCreditorClassification(creditor);
-    if (cached) {
-      const mapping = mappings.find((m) => m.id === cached.mappingId);
-      if (mapping) return mapping;
+    try {
+      const cached = await getCreditorClassification(creditor);
+      if (cached) {
+        const mapping = mappings.find((m) => m.id === cached.mappingId);
+        if (mapping) return mapping;
+      }
+    } catch (e) {
+      console.warn(
+        "[classify] cache lookup failed (creditor_classifications migration ?)",
+        (e as Error).message,
+      );
     }
   }
 
@@ -81,6 +90,9 @@ export async function classifyAgainstMappings({
       if (mapping) {
         // On grave la décision dans le cache pour éviter de re-appeler
         // l'API sur la prochaine facture du même fournisseur.
+        // Si la table n'existe pas, on log + on continue (le LLM tournera
+        // à nouveau pour la prochaine facture du même fournisseur, c'est
+        // acceptable comme dégradation).
         try {
           await saveCreditorClassification({
             creditor,
@@ -90,7 +102,10 @@ export async function classifyAgainstMappings({
             reasoning: llm.reasoning,
           });
         } catch (e) {
-          console.error("saveCreditorClassification failed", e);
+          console.warn(
+            "[classify] cache save failed (creditor_classifications migration ?)",
+            (e as Error).message,
+          );
         }
         return mapping;
       }
