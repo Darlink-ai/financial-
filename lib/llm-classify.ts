@@ -77,7 +77,9 @@ Si tu n'es pas raisonnablement sûr (confidence < 0.6), réponds
 {"code": null, "confidence": 0, "reasoning": "raison"}.`;
 
   try {
-    const client = new Anthropic({ apiKey });
+    // Timeout dur de 15s : si l'API rame, on bascule l'invoice dans la
+    // queue de retry plutôt que de bloquer tout le sync.
+    const client = new Anthropic({ apiKey, timeout: 15_000, maxRetries: 1 });
     const response = await client.messages.create({
       model: "claude-haiku-4-5",
       max_tokens: 200,

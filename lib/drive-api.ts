@@ -11,6 +11,14 @@ const DRIVE_UPLOAD = "https://www.googleapis.com/upload/drive/v3";
 
 const FOLDER_MIME = "application/vnd.google-apps.folder";
 
+// Timeouts par défaut pour éviter qu'un appel Drive bloque tout le sync.
+const DRIVE_TIMEOUT_MS = 20_000;
+const DRIVE_UPLOAD_TIMEOUT_MS = 45_000; // upload PDF, plus lent
+
+function timeoutSignal(ms: number): AbortSignal {
+  return AbortSignal.timeout(ms);
+}
+
 export type DriveFile = {
   id: string;
   name: string;
@@ -26,6 +34,7 @@ async function driveFetch<T>(
   const url = path.startsWith("http") ? path : `${DRIVE_BASE}${path}`;
   const r = await fetch(url, {
     ...init,
+    signal: init?.signal ?? timeoutSignal(DRIVE_TIMEOUT_MS),
     headers: {
       Authorization: `Bearer ${accessToken}`,
       ...(init?.headers ?? {}),
@@ -119,6 +128,7 @@ export async function uploadPdf(opts: {
   const url = `${DRIVE_UPLOAD}/files?uploadType=multipart&fields=id,name,webViewLink`;
   const r = await fetch(url, {
     method: "POST",
+    signal: timeoutSignal(DRIVE_UPLOAD_TIMEOUT_MS),
     headers: {
       Authorization: `Bearer ${opts.accessToken}`,
       "Content-Type": `multipart/related; boundary=${boundary}`,
@@ -137,7 +147,10 @@ export async function uploadPdf(opts: {
 export async function fetchUserEmail(accessToken: string): Promise<string> {
   const r = await fetch(
     "https://openidconnect.googleapis.com/v1/userinfo",
-    { headers: { Authorization: `Bearer ${accessToken}` } },
+    {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      signal: timeoutSignal(DRIVE_TIMEOUT_MS),
+    },
   );
   if (!r.ok) throw new Error(`userinfo ${r.status}`);
   const data = (await r.json()) as { email: string };
