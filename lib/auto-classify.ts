@@ -1,34 +1,28 @@
 /**
- * Auto-classification d'une facture contre les folder_mappings.
+ * Auto-classification d'une facture — pipeline hybride :
+ *   1. Regex statique sur folder_mappings (rapide, gratuit)
+ *   2. Cache DB (creditor_classifications) — fournisseurs déjà résolus
+ *   3. Fallback Claude API si tout le reste a échoué
  *
- * On teste le regex de chaque mapping contre une string composée des
- * signaux disponibles (créancier extrait + sujet email + adresse).
- * Le premier match gagne — et on exclut explicitement le mapping
- * fallback (NC / Charges non classées) qui doit rester réservé au tri
- * manuel par l'utilisateur.
+ * On exclut explicitement le mapping fallback (NC / Charges non
+ * classées) qui doit rester réservé au tri manuel par l'utilisateur.
  */
 
-import type { FolderMapping } from "./types";
-import type { AccountCurrency } from "./types";
+import type { AccountCurrency, FolderMapping } from "./types";
+import {
+  getCreditorClassification,
+  saveCreditorClassification,
+} from "./db";
+import { classifyWithLLM } from "./llm-classify";
 
 export const FALLBACK_MAPPING_ID = "fm-nc";
 
-export function classifyAgainstMappings({
-  mappings,
-  creditor,
-  subject,
-  fromEmail,
-}: {
-  mappings: FolderMapping[];
-  creditor: string | null;
-  subject: string;
-  fromEmail: string;
-}): FolderMapping | null {
-  const haystack = [creditor ?? "", subject, fromEmail]
-    .filter(Boolean)
-    .join(" ");
+/** Test regex pur (étape 1). */
+function matchByRegex(
+  mappings: FolderMapping[],
+  haystack: string,
+): FolderMapping | null {
   if (!haystack.trim()) return null;
-
   for (const m of mappings) {
     if (m.id === FALLBACK_MAPPING_ID) continue;
     if (!m.creditorPattern) continue;
@@ -36,11 +30,73 @@ export function classifyAgainstMappings({
     try {
       re = new RegExp(m.creditorPattern, "i");
     } catch {
-      // Pattern invalide → on skip silencieusement.
       continue;
     }
     if (re.test(haystack)) return m;
   }
+  return null;
+}
+
+export async function classifyAgainstMappings({
+  mappings,
+  creditor,
+  subject,
+  fromEmail,
+  pdfTextExcerpt,
+}: {
+  mappings: FolderMapping[];
+  creditor: string | null;
+  subject: string;
+  fromEmail: string;
+  /** Extrait du texte du PDF pour donner du contexte au LLM si appelé. */
+  pdfTextExcerpt?: string;
+}): Promise<FolderMapping | null> {
+  // ---- 1. Regex statique sur les mappings utilisateur ----
+  const haystack = [creditor ?? "", subject, fromEmail]
+    .filter(Boolean)
+    .join(" ");
+  const regexHit = matchByRegex(mappings, haystack);
+  if (regexHit) return regexHit;
+
+  // ---- 2. Cache DB ----
+  if (creditor) {
+    const cached = await getCreditorClassification(creditor);
+    if (cached) {
+      const mapping = mappings.find((m) => m.id === cached.mappingId);
+      if (mapping) return mapping;
+    }
+  }
+
+  // ---- 3. Fallback LLM (Claude) ----
+  if (creditor) {
+    const llm = await classifyWithLLM({
+      creditor,
+      subject,
+      fromEmail,
+      pdfTextExcerpt,
+      mappings,
+    });
+    if (llm) {
+      const mapping = mappings.find((m) => m.id === llm.mappingId);
+      if (mapping) {
+        // On grave la décision dans le cache pour éviter de re-appeler
+        // l'API sur la prochaine facture du même fournisseur.
+        try {
+          await saveCreditorClassification({
+            creditor,
+            mappingId: mapping.id,
+            classifiedBy: "llm",
+            confidence: llm.confidence,
+            reasoning: llm.reasoning,
+          });
+        } catch (e) {
+          console.error("saveCreditorClassification failed", e);
+        }
+        return mapping;
+      }
+    }
+  }
+
   return null;
 }
 

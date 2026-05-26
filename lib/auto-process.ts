@@ -127,12 +127,13 @@ export async function autoProcessInvoice(
     };
   }
 
-  // ---- 2. Classification ----
-  const mapping = classifyAgainstMappings({
+  // ---- 2. Classification (regex → cache DB → LLM Claude) ----
+  const mapping = await classifyAgainstMappings({
     mappings: input.mappings,
     creditor: extracted.creditor,
     subject: input.subject,
     fromEmail: input.fromEmail,
+    pdfTextExcerpt: extracted.text,
   });
   const accountCurrency = deriveBankAccount(extracted.currency);
   const finalName =

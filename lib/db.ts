@@ -670,6 +670,62 @@ export async function setSetting(key: string, value: string) {
 }
 
 // ---- Mappings ----
+// ---- Creditor classification cache (LLM fallback) ----
+
+export function normalizeCreditor(c: string): string {
+  return c
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/[éèê]/g, "e")
+    .replace(/[àâ]/g, "a")
+    .replace(/[ç]/g, "c");
+}
+
+export async function getCreditorClassification(
+  creditor: string,
+): Promise<{ mappingId: string; classifiedBy: string } | null> {
+  const sql = client();
+  const rows = await sql<{
+    folder_mapping_id: string;
+    classified_by: string;
+  }[]>`
+    SELECT folder_mapping_id, classified_by
+    FROM creditor_classifications
+    WHERE creditor = ${normalizeCreditor(creditor)}
+    LIMIT 1
+  `;
+  if (rows.length === 0) return null;
+  return {
+    mappingId: rows[0].folder_mapping_id,
+    classifiedBy: rows[0].classified_by,
+  };
+}
+
+export async function saveCreditorClassification(opts: {
+  creditor: string;
+  mappingId: string;
+  classifiedBy: "llm" | "manual";
+  confidence?: number | null;
+  reasoning?: string | null;
+}): Promise<void> {
+  const sql = client();
+  await sql`
+    INSERT INTO creditor_classifications (
+      creditor, folder_mapping_id, classified_by, confidence, reasoning
+    ) VALUES (
+      ${normalizeCreditor(opts.creditor)}, ${opts.mappingId},
+      ${opts.classifiedBy}, ${opts.confidence ?? null}, ${opts.reasoning ?? null}
+    )
+    ON CONFLICT (creditor) DO UPDATE SET
+      folder_mapping_id = EXCLUDED.folder_mapping_id,
+      classified_by     = EXCLUDED.classified_by,
+      confidence        = EXCLUDED.confidence,
+      reasoning         = EXCLUDED.reasoning,
+      classified_at     = now()
+  `;
+}
+
 export async function getAllMappings(): Promise<FolderMapping[]> {
   await ensureSeeded();
   const sql = client();
