@@ -761,6 +761,35 @@ export async function deleteMapping(id: string) {
 
 // ---- Invoices ----
 /**
+ * Incrémente le compteur de retry d'une facture et renvoie la nouvelle
+ * valeur. Utilisé pour limiter les tentatives sur des PDFs non-factures.
+ */
+export async function incrementInvoiceRetryCount(id: string): Promise<number> {
+  const sql = client();
+  const rows = await sql<{ retry_count: number }[]>`
+    UPDATE invoices
+    SET retry_count = retry_count + 1
+    WHERE id = ${id}
+    RETURNING retry_count
+  `;
+  return rows[0]?.retry_count ?? 0;
+}
+
+/** Remet le compteur à zéro — utilisé quand l'utilisateur clique Re-traiter. */
+export async function resetInvoiceRetryCount(id: string): Promise<void> {
+  const sql = client();
+  await sql`UPDATE invoices SET retry_count = 0 WHERE id = ${id}`;
+}
+
+export async function getInvoiceRetryCount(id: string): Promise<number> {
+  const sql = client();
+  const rows = await sql<{ retry_count: number }[]>`
+    SELECT retry_count FROM invoices WHERE id = ${id}
+  `;
+  return rows[0]?.retry_count ?? 0;
+}
+
+/**
  * Liste les IDs des factures actuellement en status="analyzing" —
  * typiquement bloquées par un timeout Vercel mi-pipeline.
  */
@@ -796,6 +825,15 @@ export async function getInvoiceWithAttachment(id: string): Promise<{
     fromEmail: r.from_email,
     subject: r.subject,
   };
+}
+
+/** Supprime une seule facture. */
+export async function deleteInvoice(id: string): Promise<boolean> {
+  const sql = client();
+  const rows = await sql<{ id: string }[]>`
+    DELETE FROM invoices WHERE id = ${id} RETURNING id
+  `;
+  return rows.length > 0;
 }
 
 /**

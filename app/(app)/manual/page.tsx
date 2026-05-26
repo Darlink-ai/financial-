@@ -22,6 +22,7 @@ import {
   FileQuestion,
   Eye,
   RefreshCw,
+  Trash2,
 } from "lucide-react";
 import type { Invoice, FolderMapping } from "@/lib/types";
 
@@ -98,6 +99,28 @@ function ManualCard({
   const selected =
     normalCategories.find((m) => m.id === selectedId) ??
     (selectedId === FALLBACK_CATEGORY_ID ? fallback : undefined);
+
+  const [deleting, setDeleting] = useState(false);
+
+  const onDelete = async () => {
+    if (
+      !confirm(
+        `Supprimer définitivement cette facture ?\n\n"${invoice.subject}"\n\nÀ utiliser pour les PDFs qui ne sont pas des factures (rapports, time-tracking, etc.).`,
+      )
+    )
+      return;
+    setDeleting(true);
+    try {
+      const r = await fetch(`/api/invoices/${invoice.id}`, { method: "DELETE" });
+      if (!r.ok) {
+        alert(`Échec : HTTP ${r.status}`);
+        return;
+      }
+      await onReload();
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const reprocess = async () => {
     setReprocessing(true);
@@ -183,7 +206,7 @@ function ManualCard({
             </a>
             <button
               onClick={reprocess}
-              disabled={reprocessing}
+              disabled={reprocessing || deleting}
               className="btn text-[11px] disabled:opacity-50"
               title="Relance extraction PDF + classification (essaie le LLM si la regex échoue)"
             >
@@ -196,6 +219,14 @@ function ManualCard({
                   <RefreshCw size={11} /> Re-traiter (LLM)
                 </>
               )}
+            </button>
+            <button
+              onClick={onDelete}
+              disabled={reprocessing || deleting}
+              className="btn text-[11px] disabled:opacity-50 hover:!border-err/50 hover:!text-err"
+              title="Supprimer définitivement (utile pour les PDFs qui ne sont pas des factures)"
+            >
+              <Trash2 size={11} /> {deleting ? "Suppression…" : "Supprimer"}
             </button>
           </div>
         </div>

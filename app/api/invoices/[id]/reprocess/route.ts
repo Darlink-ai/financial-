@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
-import { getAllMappings, getInvoiceWithAttachment } from "@/lib/db";
+import {
+  getAllMappings,
+  getInvoiceWithAttachment,
+  resetInvoiceRetryCount,
+} from "@/lib/db";
 import { autoProcessInvoice } from "@/lib/auto-process";
 
 export const runtime = "nodejs";
@@ -28,6 +32,10 @@ export async function POST(
         { status: 400 },
       );
     }
+
+    // Action volontaire de l'utilisateur → on remet le compteur de
+    // retry à zéro pour redonner une chance complète au pipeline.
+    await resetInvoiceRetryCount(id).catch(() => {});
 
     const mappings = await getAllMappings();
     const outcome = await autoProcessInvoice({
