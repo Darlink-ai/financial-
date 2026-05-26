@@ -201,6 +201,13 @@ function CronSection({
     results: SyncRun["results"];
     query?: string;
   } | null>(null);
+  const [cronStatus, setCronStatus] = useState<{
+    enabled: boolean;
+    scheduleLabel: string;
+    nextRun: string | null;
+    lastCronRun: SyncRun | null;
+  } | null>(null);
+  const [toggling, setToggling] = useState(false);
 
   const loadRuns = async () => {
     try {
@@ -213,9 +220,41 @@ function CronSection({
     }
   };
 
+  const loadCronStatus = async () => {
+    try {
+      const r = await fetch("/api/cron/status", { cache: "no-store" });
+      if (!r.ok) return;
+      const d = (await r.json()) as {
+        enabled: boolean;
+        scheduleLabel: string;
+        nextRun: string | null;
+        lastCronRun: SyncRun | null;
+      };
+      setCronStatus(d);
+    } catch {
+      // silencieux
+    }
+  };
+
   useEffect(() => {
     void loadRuns();
+    void loadCronStatus();
   }, []);
+
+  const toggleCron = async () => {
+    if (!cronStatus) return;
+    setToggling(true);
+    try {
+      await fetch("/api/cron/status", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: !cronStatus.enabled }),
+      });
+      await loadCronStatus();
+    } finally {
+      setToggling(false);
+    }
+  };
 
   const toggleSync = async (mb: Mailbox) => {
     await fetch(`/api/mailboxes/${mb.id}`, {
@@ -299,6 +338,70 @@ function CronSection({
           )}
         </button>
       </div>
+
+      {/* Status du cron auto */}
+      {cronStatus && (
+        <div
+          className={`card p-4 mb-3 ${cronStatus.enabled ? "border-ok/30 bg-ok/5" : "border-warn/40 bg-warn/5"}`}
+        >
+          <div className="flex items-center gap-4">
+            <div
+              className={`w-9 h-9 rounded-full flex items-center justify-center ${cronStatus.enabled ? "bg-ok/20 text-ok" : "bg-warn/20 text-warn"}`}
+            >
+              {cronStatus.enabled ? (
+                <CheckCircle2 size={18} />
+              ) : (
+                <AlertCircle size={18} />
+              )}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div
+                className={`text-[13px] font-semibold ${cronStatus.enabled ? "text-ok" : "text-warn"}`}
+              >
+                {cronStatus.enabled ? "Cron actif" : "Cron en pause"}
+              </div>
+              <div className="text-[11px] text-muted">
+                {cronStatus.scheduleLabel}
+                {cronStatus.enabled && cronStatus.nextRun && (
+                  <>
+                    {" · "}Prochain run :{" "}
+                    <strong className="text-text">
+                      {new Date(cronStatus.nextRun).toLocaleString("fr-CH", {
+                        dateStyle: "medium",
+                        timeStyle: "short",
+                      })}
+                    </strong>
+                  </>
+                )}
+                {cronStatus.lastCronRun && (
+                  <>
+                    {" · "}Dernier auto :{" "}
+                    {formatRelative(cronStatus.lastCronRun.startedAt)} (+
+                    {cronStatus.lastCronRun.totalAdded} factures)
+                  </>
+                )}
+              </div>
+            </div>
+            <button
+              onClick={toggleCron}
+              disabled={toggling}
+              className="btn disabled:opacity-50"
+            >
+              {toggling ? (
+                "…"
+              ) : cronStatus.enabled ? (
+                <>
+                  <AlertCircle size={12} /> Mettre en pause
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 size={12} /> Activer le cron
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Plage de dates pour test / sync manuelle ciblée */}
       <div className="card p-4 mb-3 bg-panel2/30">
@@ -443,9 +546,7 @@ function CronSection({
       <div className="mt-3 text-[11px] text-muted flex items-start gap-1.5 max-w-2xl">
         <ShieldCheck size={11} className="mt-0.5 shrink-0" />
         <span>
-          Schedule cron : <code className="font-mono">0 6 */5 * *</code> (06:00 UTC, tous les
-          5 jours). Manuel possible à tout moment. Dédup par identifiant Gmail unique → tu peux
-          relancer autant que tu veux sans doublons.
+          Dédup par identifiant Gmail unique → tu peux relancer autant que tu veux sans doublons.
         </span>
       </div>
     </section>
