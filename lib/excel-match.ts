@@ -148,6 +148,83 @@ export function detectColumns(sheet: ParsedSheet): {
   };
 }
 
+/**
+ * Calcule les totaux du fichier de rapprochement : somme des débits
+ * (dépenses) et somme des crédits (entrées d'argent).
+ *
+ * Heuristique :
+ * - Si la colonne montant détectée est explicitement nommée "Débit" /
+ *   "Sortie", tous les nombres > 0 dans cette colonne sont des débits.
+ * - Sinon (colonne "Montant" mixte), les nombres < 0 sont des débits
+ *   (en valeur absolue), les > 0 sont des crédits.
+ *
+ * Pour un fichier UBS séparant "Débit" et "Crédit" en 2 colonnes,
+ * detectColumns prend la 1ère matchée (souvent "Débit") — on reste
+ * cohérent en sommant cette unique colonne.
+ *
+ * Le tableau `rowDebits` donne ligne par ligne le débit (positif) ou
+ * 0 — utile pour ventiler par code comptable côté UI en croisant avec
+ * les factures matchées.
+ */
+export function computeExpenseTotal(sheet: ParsedSheet): {
+  totalDebit: number;
+  totalCredit: number;
+  debitRowCount: number;
+  creditRowCount: number;
+  rowDebits: number[]; // longueur = sheet.rows.length, 0 pour les rows non-debit
+} {
+  const { idxAmount, dataStartRow } = detectColumns(sheet);
+  const rowDebits: number[] = new Array(sheet.rows.length).fill(0);
+  if (idxAmount < 0) {
+    return {
+      totalDebit: 0,
+      totalCredit: 0,
+      debitRowCount: 0,
+      creditRowCount: 0,
+      rowDebits,
+    };
+  }
+
+  // Détecte si la colonne est sémantiquement "Débit pur" (toutes les
+  // valeurs positives sont des sorties) ou "Montant signé".
+  const header = norm(String(sheet.headers[idxAmount] ?? ""));
+  const isPureDebitColumn =
+    header.includes("debit") ||
+    header.includes("débit") ||
+    header.includes("sortie");
+
+  let totalDebit = 0;
+  let totalCredit = 0;
+  let debitRowCount = 0;
+  let creditRowCount = 0;
+
+  for (let i = dataStartRow; i < sheet.rows.length; i++) {
+    const row = sheet.rows[i];
+    const v = parseAmount(row[idxAmount]);
+    if (v == null) continue;
+    if (isPureDebitColumn) {
+      // Tous les nombres > 0 sont des débits dans une colonne "Débit pur".
+      if (v > 0) {
+        totalDebit += v;
+        debitRowCount += 1;
+        rowDebits[i] = v;
+      }
+    } else {
+      // Colonne montant signée : négatif = débit, positif = crédit.
+      if (v < 0) {
+        totalDebit += -v;
+        debitRowCount += 1;
+        rowDebits[i] = -v;
+      } else if (v > 0) {
+        totalCredit += v;
+        creditRowCount += 1;
+      }
+    }
+  }
+
+  return { totalDebit, totalCredit, debitRowCount, creditRowCount, rowDebits };
+}
+
 export function matchInvoicesAgainstSheet(
   sheet: ParsedSheet,
   invoices: Invoice[],

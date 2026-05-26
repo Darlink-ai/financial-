@@ -2,13 +2,16 @@
 
 import type { MonthlyPoint } from "@/lib/analyse-mock";
 
-/** Bar chart minimal en SVG : revenu vs dépenses, net en ligne overlay. */
+/** Bar chart minimal en SVG : revenu vs dépenses, net en ligne overlay.
+ *  Quand `isLive`, on retire la mention "Mock-up". */
 export function SeriesChart({
   data,
   title,
+  isLive,
 }: {
   data: MonthlyPoint[];
   title?: string;
+  isLive?: boolean;
 }) {
   if (data.length === 0) return null;
 
@@ -36,9 +39,11 @@ export function SeriesChart({
       {title && (
         <div className="text-[14px] font-medium mb-1">{title}</div>
       )}
-      <div className="text-[11px] text-muted mb-4">
-        Mock-up — chiffres d'exemple, à brancher sur les vraies données.
-      </div>
+      {!isLive && (
+        <div className="text-[11px] text-muted mb-4">
+          Mock-up — chiffres d'exemple, à brancher sur les vraies données.
+        </div>
+      )}
       <div className="w-full overflow-x-auto">
         <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-[240px] block">
           {/* Grille horizontale */}

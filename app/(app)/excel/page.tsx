@@ -10,11 +10,13 @@ import {
 import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, Download, Trash2 } from "lucide-react";
 import * as XLSX from "xlsx";
 import {
+  computeExpenseTotal,
   detectColumns,
   matchInvoicesAgainstSheet,
   type MatchResult,
   type ParsedSheet,
 } from "@/lib/excel-match";
+import { formatAmount } from "@/lib/format";
 import type { Invoice, AccountCurrency } from "@/lib/types";
 import { ACCOUNT_CURRENCIES } from "@/lib/types";
 
@@ -99,6 +101,56 @@ export default function ExcelPage() {
     matches.forEach((m) => map.set(m.rowIndex, m));
     return map;
   }, [matches]);
+
+  // Totaux du fichier courant (somme des débits = dépenses du compte).
+  const expenseTotals = useMemo(
+    () =>
+      sheet
+        ? computeExpenseTotal(sheet)
+        : {
+            totalDebit: 0,
+            totalCredit: 0,
+            debitRowCount: 0,
+            creditRowCount: 0,
+            rowDebits: [] as number[],
+          },
+    [sheet],
+  );
+
+  // Ventilation des débits par code comptable, via les factures rapprochées :
+  // on n'a pas le code directement dans le fichier banque (sauf colonne dédiée
+  // rare), donc on prend chaque ligne matchée → on trouve la facture → on
+  // ajoute la valeur du débit (lue dans Excel, source de vérité) au seau de
+  // son folderCode. Le reste va dans "Non rapproché".
+  const expenseByCode = useMemo(() => {
+    if (!sheet)
+      return [] as { code: string; label: string; amount: number }[];
+    const byKey = new Map<string, { code: string; label: string; amount: number }>();
+    let unmatchedAmount = 0;
+    for (let i = 0; i < expenseTotals.rowDebits.length; i++) {
+      const debit = expenseTotals.rowDebits[i];
+      if (!debit) continue;
+      const m = matchedRows.get(i);
+      if (m && m.invoice.folderCode) {
+        const code = m.invoice.folderCode;
+        const label = m.invoice.folderLabel ?? code;
+        const bucket = byKey.get(code) ?? { code, label, amount: 0 };
+        bucket.amount += debit;
+        byKey.set(code, bucket);
+      } else {
+        unmatchedAmount += debit;
+      }
+    }
+    const arr = Array.from(byKey.values()).sort((a, b) => b.amount - a.amount);
+    if (unmatchedAmount > 0) {
+      arr.push({
+        code: "—",
+        label: "Lignes non rapprochées",
+        amount: unmatchedAmount,
+      });
+    }
+    return arr;
+  }, [sheet, matchedRows, expenseTotals]);
 
   const unmatchedInvoices = useMemo<Invoice[]>(() => {
     const matchedIds = new Set(matches.map((m) => m.invoice.id));
@@ -342,13 +394,27 @@ export default function ExcelPage() {
               )}
             </div>
 
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-4 gap-3">
               <StatTile label="Lignes Excel" value={dataRowCount(sheet.rows.length)} />
               <StatTile label="Rapprochées (vertes)" value={matches.length} tone="ok" />
               <StatTile label="Factures sans match" value={unmatchedInvoices.length} tone={unmatchedInvoices.length > 0 ? "warn" : "neutral"} />
+              <StatTile
+                label="Total dépenses"
+                value={formatAmount(expenseTotals.totalDebit, currency)}
+                tone="warn"
+                hint={`${expenseTotals.debitRowCount} débit${expenseTotals.debitRowCount > 1 ? "s" : ""} · ${formatAmount(expenseTotals.totalCredit, currency)} de crédits`}
+              />
             </div>
 
             <DetectedColumns sheet={sheet} />
+
+            {expenseByCode.length > 0 && (
+              <ExpenseBreakdown
+                items={expenseByCode}
+                total={expenseTotals.totalDebit}
+                currency={currency}
+              />
+            )}
 
             <SheetTable sheet={sheet} matchedRows={matchedRows} />
 
@@ -536,17 +602,98 @@ function StatTile({
   label,
   value,
   tone = "neutral",
+  hint,
 }: {
   label: string;
-  value: number;
+  value: number | string;
   tone?: "neutral" | "ok" | "warn";
+  hint?: string;
 }) {
   const toneClass = tone === "ok" ? "text-ok" : tone === "warn" ? "text-warn" : "text-text";
   return (
     <div className="card p-4">
       <div className="text-[11px] text-muted">{label}</div>
-      <div className={`text-[24px] font-semibold leading-none mt-2 ${toneClass}`}>{value}</div>
+      <div className={`text-[24px] font-semibold leading-none mt-2 tabular-nums ${toneClass}`}>{value}</div>
+      {hint && <div className="text-[10px] text-muted mt-2">{hint}</div>}
     </div>
+  );
+}
+
+/**
+ * Affiche la ventilation des dépenses du fichier par code comptable
+ * (via les factures rapprochées). Les lignes non rapprochées sont
+ * regroupées dans une catégorie "—" pour donner un aperçu du restant.
+ */
+function ExpenseBreakdown({
+  items,
+  total,
+  currency,
+}: {
+  items: { code: string; label: string; amount: number }[];
+  total: number;
+  currency: AccountCurrency;
+}) {
+  if (total <= 0) return null;
+  return (
+    <section className="card overflow-hidden">
+      <div className="px-5 py-3 border-b border-border flex items-center justify-between">
+        <div>
+          <div className="text-[13px] font-medium">
+            Dépenses par code comptable
+          </div>
+          <div className="text-[11px] text-muted">
+            Ventilation des débits du fichier via les factures rapprochées.
+            Les lignes non rapprochées sont en bas.
+          </div>
+        </div>
+        <div className="text-right">
+          <div className="text-[11px] text-muted">Total débits</div>
+          <div className="text-[15px] font-semibold tabular-nums text-warn">
+            {formatAmount(total, currency)}
+          </div>
+        </div>
+      </div>
+      <div className="divide-y divide-border">
+        {items.map((it) => {
+          const pct = total > 0 ? (it.amount / total) * 100 : 0;
+          const isUnmatched = it.code === "—";
+          return (
+            <div
+              key={`${it.code}-${it.label}`}
+              className="px-5 py-2.5 flex items-center gap-3 text-[12px]"
+            >
+              <span
+                className={`font-mono text-[11px] w-14 shrink-0 ${
+                  isUnmatched ? "text-muted" : "text-accent"
+                }`}
+              >
+                {it.code}
+              </span>
+              <span
+                className={`truncate flex-1 min-w-0 ${
+                  isUnmatched ? "text-muted italic" : ""
+                }`}
+                title={it.label}
+              >
+                {it.label}
+              </span>
+              <div className="w-32 h-1.5 rounded-full bg-panel2 overflow-hidden">
+                <div
+                  className={isUnmatched ? "h-full bg-muted/40" : "h-full bg-accent/70"}
+                  style={{ width: `${Math.min(100, pct)}%` }}
+                />
+              </div>
+              <span className="text-[11px] text-muted w-12 text-right tabular-nums">
+                {pct.toFixed(1)}%
+              </span>
+              <span className="font-mono w-28 text-right tabular-nums">
+                {formatAmount(it.amount, currency)}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
