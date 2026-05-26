@@ -1,9 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { TrendingUp } from "lucide-react";
 import { useStore, formatMonthLabel } from "@/lib/store";
 import { formatAmount } from "@/lib/format";
+
+const CA_COLOR = "#3b82f6"; // blue-500
+const NET_COLOR = "#10b981"; // emerald-500 (vert distinct du bleu)
 
 type MonthlyPoint = { month: string; ca: number; net: number };
 
@@ -64,7 +67,7 @@ export function DashboardChart() {
   );
 
   return (
-    <section className="card p-5">
+    <section className="card px-4 py-4">
       <div className="flex items-center justify-between gap-4 flex-wrap mb-4">
         <div>
           <div className="text-[14px] font-semibold flex items-center gap-2">
@@ -107,13 +110,31 @@ export function DashboardChart() {
 }
 
 function LineChart({ data }: { data: MonthlyPoint[] }) {
-  const width = 760;
+  // Mesure la largeur réelle du conteneur — comme ça la SVG remplit
+  // exactement l'espace dispo, sans bandes vides à cause d'un viewBox
+  // d'un autre ratio.
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(800);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const el = containerRef.current;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const w = Math.max(320, Math.floor(entry.contentRect.width));
+        setWidth(w);
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   const height = 260;
-  const padL = 56;
-  const padR = 20;
+  const padL = 44;
+  const padR = 12;
   const padT = 20;
   const padB = 36;
-  const innerW = width - padL - padR;
+  const innerW = Math.max(1, width - padL - padR);
   const innerH = height - padT - padB;
 
   const maxVal =
@@ -132,19 +153,21 @@ function LineChart({ data }: { data: MonthlyPoint[] }) {
     .map((d, i) => `${i === 0 ? "M" : "L"} ${xOf(i)} ${yOf(d.net)}`)
     .join(" ");
 
-  // Gradient area sous la courbe CA pour un peu de fond
   const caArea = `${caPath} L ${xOf(data.length - 1)} ${yOf(minVal)} L ${xOf(0)} ${yOf(minVal)} Z`;
-
-  // 4 graduations Y
   const yTicks = [0, 0.33, 0.66, 1].map((t) => minVal + range * t);
 
   return (
-    <div className="w-full overflow-x-auto">
-      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-[260px] block">
+    <div ref={containerRef} className="w-full">
+      <svg
+        width={width}
+        height={height}
+        viewBox={`0 0 ${width} ${height}`}
+        className="block"
+      >
         <defs>
           <linearGradient id="ca-area" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor="#60a5fa" stopOpacity="0.25" />
-            <stop offset="100%" stopColor="#60a5fa" stopOpacity="0" />
+            <stop offset="0%" stopColor={CA_COLOR} stopOpacity="0.22" />
+            <stop offset="100%" stopColor={CA_COLOR} stopOpacity="0" />
           </linearGradient>
         </defs>
 
@@ -179,15 +202,15 @@ function LineChart({ data }: { data: MonthlyPoint[] }) {
         <path d={caArea} fill="url(#ca-area)" />
 
         {/* Ligne CA */}
-        <path d={caPath} fill="none" stroke="#60a5fa" strokeWidth={2.5} />
+        <path d={caPath} fill="none" stroke={CA_COLOR} strokeWidth={2.5} />
         {/* Ligne Net */}
-        <path d={netPath} fill="none" stroke="#22d3ee" strokeWidth={2.5} />
+        <path d={netPath} fill="none" stroke={NET_COLOR} strokeWidth={2.5} />
 
         {/* Points + labels mois */}
         {data.map((d, i) => (
           <g key={d.month}>
-            <circle cx={xOf(i)} cy={yOf(d.ca)} r={3.5} fill="#60a5fa" />
-            <circle cx={xOf(i)} cy={yOf(d.net)} r={3.5} fill="#22d3ee" />
+            <circle cx={xOf(i)} cy={yOf(d.ca)} r={3.5} fill={CA_COLOR} />
+            <circle cx={xOf(i)} cy={yOf(d.net)} r={3.5} fill={NET_COLOR} />
             <text
               x={xOf(i)}
               y={height - 14}
@@ -211,8 +234,8 @@ function LineChart({ data }: { data: MonthlyPoint[] }) {
       </svg>
 
       <div className="flex items-center gap-4 text-[11px] text-muted pt-2 px-2">
-        <Legend color="#60a5fa" label="Chiffre d'affaires" />
-        <Legend color="#22d3ee" label="Bénéfice net" />
+        <Legend color={CA_COLOR} label="Chiffre d'affaires" />
+        <Legend color={NET_COLOR} label="Bénéfice net" />
         <div className="ml-auto tabular-nums text-text">
           Dernier mois : {formatAmount(data[data.length - 1].ca, "USD")} CA ·{" "}
           {formatAmount(data[data.length - 1].net, "USD")} net
