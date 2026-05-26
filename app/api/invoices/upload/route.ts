@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAllMappings, insertIncomingInvoice } from "@/lib/db";
+import { getAllMappings, insertIncomingInvoice, updateInvoice } from "@/lib/db";
 import { autoProcessInvoice } from "@/lib/auto-process";
 
 export const runtime = "nodejs";
@@ -21,6 +21,17 @@ export async function POST(req: Request) {
   try {
     const form = await req.formData();
     const file = form.get("file");
+    // Optionnel : numéro de ligne Excel à forcer en match après autoProcess.
+    // Si l'utilisateur a déjà repéré visuellement la ligne dans le rapprochement,
+    // il peut nous la donner directement pour court-circuiter le matcher.
+    const excelRowRaw = form.get("excelRow");
+    let forcedExcelRow: number | null = null;
+    if (typeof excelRowRaw === "string" && excelRowRaw.trim()) {
+      const parsed = parseInt(excelRowRaw.trim(), 10);
+      if (Number.isFinite(parsed) && parsed >= 2) {
+        forcedExcelRow = parsed;
+      }
+    }
 
     if (!file || !(file instanceof File)) {
       return NextResponse.json(
@@ -66,10 +77,30 @@ export async function POST(req: Request) {
       mappings,
     });
 
+    // Override manuel du match Excel : si l'utilisateur a fourni un n° de ligne,
+    // on force le match après le pipeline automatique. Le statut "matched" prime
+    // sur ce que autoProcess a pu décider (uploaded / renamed / manual).
+    let forcedMatch = false;
+    if (forcedExcelRow !== null) {
+      await updateInvoice(invoiceId, {
+        excelRowMatched: forcedExcelRow,
+        status: "matched",
+      });
+      forcedMatch = true;
+    }
+
     return NextResponse.json({
       ok: true,
       invoiceId,
-      outcome,
+      outcome: {
+        ...outcome,
+        // Si on a forcé le match, on reflète ça dans l'outcome pour que le
+        // client affiche bien "matched" plutôt que l'ancien statut.
+        ...(forcedMatch
+          ? { status: "matched", matchedExcelRow: forcedExcelRow }
+          : {}),
+      },
+      forcedExcelRow,
       fileName: file.name,
     });
   } catch (e) {

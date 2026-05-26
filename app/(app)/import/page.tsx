@@ -20,6 +20,8 @@ type FileItem = {
   status: ItemStatus;
   outcomeStatus?: string;
   message?: string;
+  /** Numéro de ligne Excel optionnel à forcer en match après autoProcess. */
+  excelRow: string;
 };
 
 export default function ImportPage() {
@@ -39,7 +41,11 @@ export default function ImportPage() {
     }
     setItems((prev) => [
       ...prev,
-      ...arr.map((f) => ({ file: f, status: "pending" as ItemStatus })),
+      ...arr.map((f) => ({
+        file: f,
+        status: "pending" as ItemStatus,
+        excelRow: "",
+      })),
     ]);
   };
 
@@ -67,6 +73,10 @@ export default function ImportPage() {
 
       const fd = new FormData();
       fd.append("file", it.file);
+      // Optionnel : si l'utilisateur a tapé un numéro de ligne Excel, on
+      // l'envoie pour forcer le match côté serveur après autoProcess.
+      const trimmedRow = it.excelRow.trim();
+      if (trimmedRow) fd.append("excelRow", trimmedRow);
 
       try {
         const r = await fetch("/api/invoices/upload", {
@@ -227,6 +237,30 @@ export default function ImportPage() {
                       )}
                     </div>
                   </div>
+                  {/* Input optionnel pour forcer le match à une ligne Excel
+                      précise. Vide = on laisse l'auto-match faire son boulot. */}
+                  {(it.status === "pending" || it.status === "failed") && (
+                    <input
+                      type="number"
+                      min={2}
+                      placeholder="Ligne Excel"
+                      value={it.excelRow}
+                      onChange={(e) =>
+                        updateItem(idx, { excelRow: e.target.value })
+                      }
+                      disabled={processing}
+                      className="input !py-1 !px-2 text-[11px] !w-24"
+                      title="Optionnel — n° de ligne dans le rapprochement Excel à forcer après traitement"
+                    />
+                  )}
+                  {it.status === "done" && it.excelRow.trim() && (
+                    <span
+                      className="text-[10px] text-ok font-mono"
+                      title="Match forcé sur cette ligne"
+                    >
+                      ↳ #{it.excelRow.trim()}
+                    </span>
+                  )}
                   {it.status === "pending" && (
                     <span className="badge">En attente</span>
                   )}
