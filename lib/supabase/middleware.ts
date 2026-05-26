@@ -2,7 +2,12 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseEnv, isAllowedEmail } from "./env";
 
-const PUBLIC_PATHS = ["/login", "/api/auth/callback", "/api/auth/signout"];
+const PUBLIC_PATHS = [
+  "/login",
+  "/api/auth/callback",
+  "/api/auth/signout",
+  "/api/diag",
+];
 
 function isPublic(pathname: string): boolean {
   if (PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/")))

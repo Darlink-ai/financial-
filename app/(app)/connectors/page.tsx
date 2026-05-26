@@ -176,6 +176,7 @@ function MailboxCard({
   const [clientSecret, setClientSecret] = useState("");
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Si la boîte vient juste d'être créée (id mais aucune saved cred), force editing.
   useEffect(() => {
@@ -196,6 +197,7 @@ function MailboxCard({
 
   const save = async () => {
     setSaving(true);
+    setSaveError(null);
     try {
       const body: Record<string, string | null> = {};
       if (email !== mailbox.email) body.email = email.trim();
@@ -203,15 +205,21 @@ function MailboxCard({
         body.oauthClientId = clientId.trim() || null;
       if (clientSecret) body.oauthClientSecret = clientSecret;
 
-      await fetch(`/api/mailboxes/${mailbox.id}`, {
+      const r = await fetch(`/api/mailboxes/${mailbox.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
+      if (!r.ok) {
+        const txt = await r.text();
+        throw new Error(`HTTP ${r.status} — ${txt.slice(0, 200)}`);
+      }
       setClientSecret("");
       setSavedAt(Date.now());
       setEditing(false);
       onReload();
+    } catch (e) {
+      setSaveError((e as Error).message);
     } finally {
       setSaving(false);
     }
@@ -334,7 +342,12 @@ function MailboxCard({
 
           <div className="flex-1" />
 
-          {savedAt && Date.now() - savedAt < 3000 && (
+          {saveError && (
+            <span className="text-[11px] text-err flex items-center gap-1 max-w-md truncate" title={saveError}>
+              <AlertCircle size={11} /> {saveError}
+            </span>
+          )}
+          {!saveError && savedAt && Date.now() - savedAt < 3000 && (
             <span className="text-[11px] text-ok flex items-center gap-1">
               <CheckCircle2 size={11} /> Enregistré
             </span>
