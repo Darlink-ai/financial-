@@ -33,6 +33,7 @@ export type Mailbox = {
   connected: boolean;
   invoicesFound: number;
   lastSync: string | null;
+  syncEnabled: boolean;              // inclure dans le cron de synchro
   // OAuth (Google pour l'instant) — credentials et tokens stockés par boîte.
   oauthClientId: string | null;      // visible côté client (OK)
   hasOauthSecret: boolean;           // jamais le secret lui-même côté client
@@ -40,6 +41,26 @@ export type Mailbox = {
   oauthExpiresAt: string | null;     // ISO de l'expiration du access_token
   oauthScope: string | null;
   hasRefreshToken: boolean;          // jamais le token lui-même côté client
+};
+
+export type SyncRun = {
+  id: string;
+  startedAt: string;
+  finishedAt: string | null;
+  trigger: "cron" | "manual";
+  results: SyncRunResult[];
+  totalAdded: number;
+  totalSkipped: number;
+  error: string | null;
+};
+
+export type SyncRunResult = {
+  mailboxId: string;
+  mailboxEmail: string;
+  added: number;
+  skipped: number;
+  totalMessages: number;
+  error?: string;
 };
 
 export type FolderMapping = {

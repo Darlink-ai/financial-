@@ -127,6 +127,7 @@ type RawMailbox = {
   connected: boolean;
   invoices_found: number;
   last_sync: Date | null;
+  sync_enabled: boolean | null;
   oauth_client_id: string | null;
   oauth_client_secret: string | null;
   oauth_refresh_token: string | null;
@@ -142,6 +143,7 @@ const mapMailbox = (r: RawMailbox): Mailbox => ({
   connected: r.connected,
   invoicesFound: r.invoices_found,
   lastSync: r.last_sync ? r.last_sync.toISOString() : null,
+  syncEnabled: r.sync_enabled !== false, // default true
   oauthClientId: r.oauth_client_id,
   hasOauthSecret: !!r.oauth_client_secret,
   oauthUserEmail: r.oauth_user_email,
@@ -344,7 +346,8 @@ export async function updateMailbox(id: string, patch: Partial<Mailbox>): Promis
       provider = ${merged.provider},
       connected = ${merged.connected},
       invoices_found = ${merged.invoicesFound},
-      last_sync = ${merged.lastSync}
+      last_sync = ${merged.lastSync},
+      sync_enabled = ${merged.syncEnabled}
     WHERE id = ${id}
   `;
   return merged;
@@ -451,6 +454,197 @@ export async function getMailboxOAuthCredentials(
     clientId: row.oauth_client_id.trim(),
     clientSecret: row.oauth_client_secret.trim(),
   };
+}
+
+// ---- Sync (server-only) ----
+
+export async function getMailboxesForSync(
+  filterIds?: string[],
+): Promise<Array<{
+  id: string;
+  email: string;
+  oauth_refresh_token: string;
+  oauth_access_token: string | null;
+  oauth_expires_at: Date | null;
+  oauth_client_id: string;
+  oauth_client_secret: string;
+}>> {
+  const sql = client();
+  if (filterIds && filterIds.length > 0) {
+    return await sql<{
+      id: string;
+      email: string;
+      oauth_refresh_token: string;
+      oauth_access_token: string | null;
+      oauth_expires_at: Date | null;
+      oauth_client_id: string;
+      oauth_client_secret: string;
+    }[]>`
+      SELECT id, email, oauth_refresh_token, oauth_access_token,
+             oauth_expires_at, oauth_client_id, oauth_client_secret
+      FROM mailboxes
+      WHERE connected = TRUE
+        AND oauth_refresh_token IS NOT NULL
+        AND oauth_client_id IS NOT NULL
+        AND oauth_client_secret IS NOT NULL
+        AND id = ANY(${filterIds})
+    `;
+  }
+  return await sql<{
+    id: string;
+    email: string;
+    oauth_refresh_token: string;
+    oauth_access_token: string | null;
+    oauth_expires_at: Date | null;
+    oauth_client_id: string;
+    oauth_client_secret: string;
+  }[]>`
+    SELECT id, email, oauth_refresh_token, oauth_access_token,
+           oauth_expires_at, oauth_client_id, oauth_client_secret
+    FROM mailboxes
+    WHERE connected = TRUE
+      AND sync_enabled = TRUE
+      AND oauth_refresh_token IS NOT NULL
+      AND oauth_client_id IS NOT NULL
+      AND oauth_client_secret IS NOT NULL
+  `;
+}
+
+export async function updateMailboxAccessToken(
+  id: string,
+  accessToken: string,
+  expiresAt: string,
+) {
+  await client()`
+    UPDATE mailboxes
+    SET oauth_access_token = ${accessToken}, oauth_expires_at = ${expiresAt}
+    WHERE id = ${id}
+  `;
+}
+
+export async function updateMailboxLastSync(id: string) {
+  await client()`UPDATE mailboxes SET last_sync = now() WHERE id = ${id}`;
+}
+
+export async function incrementMailboxInvoicesFound(id: string, n: number) {
+  await client()`
+    UPDATE mailboxes SET invoices_found = invoices_found + ${n} WHERE id = ${id}
+  `;
+}
+
+export async function invoiceExistsForMessage(
+  mailboxId: string,
+  sourceMessageId: string,
+): Promise<boolean> {
+  const sql = client();
+  const [row] = await sql<{ id: string }[]>`
+    SELECT id FROM invoices
+    WHERE mailbox_id = ${mailboxId}
+      AND source_message_id = ${sourceMessageId}
+    LIMIT 1
+  `;
+  return !!row;
+}
+
+export type IncomingInvoice = {
+  id: string;
+  mailboxId: string;
+  sourceMessageId: string;
+  subject: string;
+  fromEmail: string;
+  mailbox: string;
+  receivedAt: string;
+  attachmentName: string;
+  attachmentBytes: number;
+  attachmentB64: string;
+};
+
+export async function insertIncomingInvoice(inv: IncomingInvoice) {
+  const sql = client();
+  await sql`
+    INSERT INTO invoices (
+      id, mailbox_id, source_message_id, subject, from_email, mailbox,
+      received_at, creditor, invoice_date, amount, currency,
+      folder_code, folder_label, final_name, drive_path,
+      status, excel_row_matched, attachment, attachment_b64
+    ) VALUES (
+      ${inv.id}, ${inv.mailboxId}, ${inv.sourceMessageId},
+      ${inv.subject}, ${inv.fromEmail}, ${inv.mailbox}, ${inv.receivedAt},
+      NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+      'analyzing', NULL,
+      ${sql.json({ name: inv.attachmentName, sizeBytes: inv.attachmentBytes, pages: 1 })},
+      ${inv.attachmentB64}
+    )
+    ON CONFLICT DO NOTHING
+  `;
+}
+
+// --- Sync runs ---
+
+export type SyncRunRow = {
+  id: string;
+  startedAt: string;
+  finishedAt: string | null;
+  trigger: "cron" | "manual";
+  results: unknown[];
+  totalAdded: number;
+  totalSkipped: number;
+  error: string | null;
+};
+
+export async function createSyncRun(
+  id: string,
+  trigger: "cron" | "manual",
+): Promise<void> {
+  await client()`
+    INSERT INTO sync_runs (id, trigger, started_at)
+    VALUES (${id}, ${trigger}, now())
+  `;
+}
+
+export async function finishSyncRun(
+  id: string,
+  results: unknown[],
+  totalAdded: number,
+  totalSkipped: number,
+  error: string | null,
+): Promise<void> {
+  const sql = client();
+  await sql`
+    UPDATE sync_runs
+    SET finished_at = now(),
+        results = ${JSON.stringify(results)}::jsonb,
+        total_added = ${totalAdded},
+        total_skipped = ${totalSkipped},
+        error = ${error}
+    WHERE id = ${id}
+  `;
+}
+
+export async function getRecentSyncRuns(limit = 10): Promise<SyncRunRow[]> {
+  const sql = client();
+  const rows = await sql<{
+    id: string;
+    started_at: Date;
+    finished_at: Date | null;
+    trigger: "cron" | "manual";
+    results: unknown[];
+    total_added: number;
+    total_skipped: number;
+    error: string | null;
+  }[]>`
+    SELECT * FROM sync_runs ORDER BY started_at DESC LIMIT ${limit}
+  `;
+  return rows.map((r) => ({
+    id: r.id,
+    startedAt: r.started_at.toISOString(),
+    finishedAt: r.finished_at ? r.finished_at.toISOString() : null,
+    trigger: r.trigger,
+    results: r.results ?? [],
+    totalAdded: r.total_added,
+    totalSkipped: r.total_skipped,
+    error: r.error,
+  }));
 }
 
 // ---- App settings (key/value) ----

@@ -17,6 +17,9 @@ import {
   Lock,
   Pencil,
   Save,
+  Clock,
+  PlayCircle,
+  RefreshCw,
 } from "lucide-react";
 import { formatRelative } from "@/lib/format";
 import type { Mailbox, DriveConfig } from "@/lib/types";
@@ -55,6 +58,7 @@ function ConnectorsInner() {
       connected: false,
       invoicesFound: 0,
       lastSync: null,
+      syncEnabled: true,
       oauthClientId: null,
       hasOauthSecret: false,
       oauthUserEmail: null,
@@ -137,6 +141,9 @@ function ConnectorsInner() {
           </div>
         </section>
 
+        {/* Cron Job */}
+        <CronSection mailboxes={mailboxes} onReload={reloadFromDb} />
+
         {/* Drive */}
         <section>
           <div className="flex items-center justify-between mb-3">
@@ -153,6 +160,243 @@ function ConnectorsInner() {
         </section>
       </div>
     </>
+  );
+}
+
+// --- Cron section ---
+
+type SyncRun = {
+  id: string;
+  startedAt: string;
+  finishedAt: string | null;
+  trigger: "cron" | "manual";
+  results: {
+    mailboxId: string;
+    mailboxEmail: string;
+    added: number;
+    skipped: number;
+    totalMessages: number;
+    error?: string;
+  }[];
+  totalAdded: number;
+  totalSkipped: number;
+  error: string | null;
+};
+
+function CronSection({
+  mailboxes,
+  onReload,
+}: {
+  mailboxes: Mailbox[];
+  onReload: () => void;
+}) {
+  const eligible = mailboxes.filter((m) => m.hasRefreshToken);
+  const [running, setRunning] = useState(false);
+  const [runs, setRuns] = useState<SyncRun[]>([]);
+  const [runResult, setRunResult] = useState<{
+    totalAdded: number;
+    totalSkipped: number;
+    results: SyncRun["results"];
+  } | null>(null);
+
+  const loadRuns = async () => {
+    try {
+      const r = await fetch("/api/sync/runs", { cache: "no-store" });
+      if (!r.ok) return;
+      const d = (await r.json()) as { runs: SyncRun[] };
+      setRuns(d.runs);
+    } catch {
+      // silencieux
+    }
+  };
+
+  useEffect(() => {
+    void loadRuns();
+  }, []);
+
+  const toggleSync = async (mb: Mailbox) => {
+    await fetch(`/api/mailboxes/${mb.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ syncEnabled: !mb.syncEnabled }),
+    });
+    onReload();
+  };
+
+  const runNow = async (only?: string[]) => {
+    setRunning(true);
+    setRunResult(null);
+    try {
+      const r = await fetch("/api/sync/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mailboxIds: only, lookbackDays: 6 }),
+      });
+      if (!r.ok) {
+        const txt = await r.text();
+        alert(`Sync failed: HTTP ${r.status}\n${txt.slice(0, 300)}`);
+        return;
+      }
+      const d = (await r.json()) as {
+        results: SyncRun["results"];
+        totalAdded: number;
+        totalSkipped: number;
+      };
+      setRunResult({
+        totalAdded: d.totalAdded,
+        totalSkipped: d.totalSkipped,
+        results: d.results,
+      });
+      await loadRuns();
+      onReload();
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const lastRun = runs[0];
+
+  return (
+    <section>
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <div className="text-[15px] font-semibold flex items-center gap-2">
+            <Clock size={16} /> Cron de synchronisation
+          </div>
+          <div className="text-[12px] text-muted">
+            Tous les 5 jours, le bot va chercher les factures (PJ PDF) des 6 derniers jours sur
+            les boîtes activées. Dédup automatique par <code>messageId</code> Gmail.
+          </div>
+        </div>
+        <button
+          onClick={() => runNow()}
+          disabled={running || eligible.length === 0}
+          className="btn btn-primary disabled:opacity-50"
+          title={
+            eligible.length === 0
+              ? "Aucune boîte connectée à Google"
+              : "Lancer maintenant sur toutes les boîtes activées"
+          }
+        >
+          {running ? (
+            <>
+              <RefreshCw size={12} className="animate-spin" /> Sync en cours…
+            </>
+          ) : (
+            <>
+              <PlayCircle size={12} /> Lancer maintenant
+            </>
+          )}
+        </button>
+      </div>
+
+      {/* Liste des boîtes éligibles avec toggle */}
+      <div className="card overflow-hidden">
+        <div className="grid grid-cols-[1fr_140px_140px_120px] px-5 py-3 border-b border-border text-[10px] uppercase tracking-wider text-muted">
+          <div>Boîte mail</div>
+          <div className="text-center">Inclure dans cron</div>
+          <div>Dernière synchro</div>
+          <div className="text-right">Actions</div>
+        </div>
+        {eligible.length === 0 && (
+          <div className="px-5 py-6 text-center text-[12px] text-muted">
+            Aucune boîte connectée à Google pour l&apos;instant. Connecte une boîte via Google
+            dans la section précédente.
+          </div>
+        )}
+        {eligible.map((mb) => (
+          <div
+            key={mb.id}
+            className="grid grid-cols-[1fr_140px_140px_120px] px-5 py-3 items-center border-b border-border last:border-b-0 text-[13px]"
+          >
+            <div className="min-w-0">
+              <div className="truncate">{mb.email}</div>
+              <div className="text-[11px] text-muted">
+                {mb.invoicesFound} facture{mb.invoicesFound > 1 ? "s" : ""} importée
+                {mb.invoicesFound > 1 ? "s" : ""} au total
+              </div>
+            </div>
+            <div className="flex items-center justify-center">
+              <button
+                onClick={() => toggleSync(mb)}
+                className="text-[12px]"
+                title={mb.syncEnabled ? "Désactiver pour cette boîte" : "Activer pour cette boîte"}
+              >
+                <ToggleSwitch on={mb.syncEnabled} />
+              </button>
+            </div>
+            <div className="text-[12px] text-muted">
+              {mb.lastSync ? formatRelative(mb.lastSync) : "—"}
+            </div>
+            <div className="flex items-center gap-1 justify-end">
+              <button
+                onClick={() => runNow([mb.id])}
+                disabled={running}
+                className="btn text-[11px] disabled:opacity-50"
+                title="Synchroniser uniquement cette boîte"
+              >
+                <PlayCircle size={11} /> Cette boîte
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Résultat du dernier run manuel */}
+      {runResult && (
+        <div className="card mt-3 border-ok/30 bg-ok/5 p-3">
+          <div className="text-[13px] font-medium text-ok flex items-center gap-2">
+            <CheckCircle2 size={14} /> Sync terminé : {runResult.totalAdded} ajoutée
+            {runResult.totalAdded > 1 ? "s" : ""}, {runResult.totalSkipped} déjà connue
+            {runResult.totalSkipped > 1 ? "s" : ""} (dédup)
+          </div>
+          <div className="text-[11px] text-muted mt-2 space-y-0.5">
+            {runResult.results.map((r) => (
+              <div key={r.mailboxId}>
+                <strong className="text-text">{r.mailboxEmail}</strong> · {r.added} ajoutées
+                · {r.skipped} skippées · {r.totalMessages} mails trouvés
+                {r.error && <span className="text-err"> · ❌ {r.error}</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Historique compact */}
+      {lastRun && (
+        <div className="mt-3 text-[11px] text-muted px-1">
+          Dernier run : {formatRelative(lastRun.startedAt)} (
+          {lastRun.trigger === "cron" ? "automatique" : "manuel"}) · +
+          {lastRun.totalAdded} factures, {lastRun.totalSkipped} déjà connues
+          {lastRun.error && <span className="text-err"> · ❌ {lastRun.error}</span>}
+        </div>
+      )}
+
+      <div className="mt-3 text-[11px] text-muted flex items-start gap-1.5 max-w-2xl">
+        <ShieldCheck size={11} className="mt-0.5 shrink-0" />
+        <span>
+          Schedule cron : <code className="font-mono">0 6 */5 * *</code> (06:00 UTC, tous les
+          5 jours). Manuel possible à tout moment. Dédup par identifiant Gmail unique → tu peux
+          relancer autant que tu veux sans doublons.
+        </span>
+      </div>
+    </section>
+  );
+}
+
+function ToggleSwitch({ on }: { on: boolean }) {
+  return (
+    <span
+      className={`inline-flex items-center w-9 h-5 rounded-full transition-colors ${
+        on ? "bg-ok" : "bg-panel2 border border-border"
+      }`}
+    >
+      <span
+        className={`w-4 h-4 rounded-full bg-white transition-transform ${
+          on ? "translate-x-[18px]" : "translate-x-[2px]"
+        }`}
+      />
+    </span>
   );
 }
 

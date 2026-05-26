@@ -109,6 +109,7 @@ export const mockRevenues: Revenue[] = [
 ];
 
 const EMPTY_MAILBOX_OAUTH = {
+  syncEnabled: true,
   oauthClientId: null,
   hasOauthSecret: false,
   oauthUserEmail: null,
