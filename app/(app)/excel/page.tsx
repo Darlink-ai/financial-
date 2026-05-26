@@ -779,46 +779,79 @@ function formatCell(v: string | number | Date | null): string {
  */
 function DetectedColumns({ sheet }: { sheet: ParsedSheet }) {
   const cols = detectColumns(sheet);
-  const fmt = (i: number) =>
-    i < 0 ? <span className="text-err">non trouvée</span> : (
-      <span className="text-text font-mono">col {i + 1}</span>
+  // Lit la VRAIE ligne d'en-tête utilisée par le matcher (après skip du
+  // préambule), pour qu'on voie textuellement les en-têtes que l'algo lit.
+  const headerRow =
+    cols.dataStartRow > 0
+      ? sheet.rows[cols.dataStartRow - 1] ?? sheet.headers
+      : (sheet.headers as unknown as (string | number | null)[]);
+  // Échantillon : 1ère ligne de data après le header.
+  const sampleRow = sheet.rows[cols.dataStartRow] ?? [];
+
+  const cellText = (idx: number, row: (string | number | null)[]) => {
+    if (idx < 0) return null;
+    const v = row[idx];
+    if (v == null || v === "") return null;
+    return String(v);
+  };
+
+  const fmt = (
+    label: string,
+    i: number,
+    options?: { critical?: boolean },
+  ) => {
+    const headerText = cellText(i, headerRow);
+    const sampleText = cellText(i, sampleRow);
+    return (
+      <div className="space-y-0.5">
+        <div>
+          <span className="text-muted">{label} : </span>
+          {i < 0 ? (
+            <span
+              className={options?.critical ? "text-err font-medium" : "text-err"}
+            >
+              non trouvée
+            </span>
+          ) : (
+            <>
+              <span className="text-text font-mono">col {i + 1}</span>
+              {headerText && (
+                <span className="text-accent font-mono ml-1.5">
+                  « {headerText} »
+                </span>
+              )}
+            </>
+          )}
+        </div>
+        {sampleText && i >= 0 && (
+          <div className="text-[10px] text-muted pl-2">
+            ex. ligne {cols.dataStartRow + 2} : <span className="font-mono">{sampleText}</span>
+          </div>
+        )}
+      </div>
     );
+  };
+
   return (
-    <div className="card p-3 text-[11px] space-y-1">
+    <div className="card p-3 text-[11px] space-y-2">
       <div className="text-[10px] uppercase tracking-wider text-muted">
         Colonnes détectées par le matcher
       </div>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-1">
-        <div>
-          <span className="text-muted">Date : </span>
-          {fmt(cols.idxDate)}
-        </div>
-        <div>
-          <span className="text-muted">Description / créditeur : </span>
-          {fmt(cols.idxCreditor)}
-        </div>
-        <div>
-          <span className="text-muted">Montant : </span>
-          {fmt(cols.idxAmount)}
-        </div>
-        <div>
-          <span className="text-muted">Code : </span>
-          {fmt(cols.idxCode)}
-        </div>
-        <div>
-          <span className="text-muted">Débit (dédié) : </span>
-          {fmt(cols.idxDebit)}
-        </div>
-        <div>
-          <span className="text-muted">Crédit (dédié) : </span>
-          {fmt(cols.idxCredit)}
-        </div>
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-2">
+        {fmt("Date", cols.idxDate)}
+        {fmt("Description / créditeur", cols.idxCreditor)}
+        {fmt("Montant", cols.idxAmount)}
+        {fmt("Code", cols.idxCode)}
+        {fmt("Débit (dédié)", cols.idxDebit, { critical: true })}
+        {fmt("Crédit (dédié)", cols.idxCredit)}
       </div>
-      <div className="text-[10px] text-muted pt-1">
+      <div className="text-[10px] text-muted pt-1 border-t border-border">
         Données réelles à partir de la ligne {cols.dataStartRow + 2} (les{" "}
         {cols.dataStartRow} ligne(s) avant = préambule ignoré).
-        {cols.idxDebit >= 0 && (
-          <> Total dépenses calculé via la colonne Débit dédiée.</>
+        {cols.idxDebit >= 0 ? (
+          <> Total dépenses = somme de la colonne <strong className="text-ok">{cellText(cols.idxDebit, headerRow) ?? `col ${cols.idxDebit + 1}`}</strong>.</>
+        ) : (
+          <> Aucune colonne Débit dédiée détectée — fallback sur la colonne Montant signée (négatifs = débit).</>
         )}
       </div>
     </div>

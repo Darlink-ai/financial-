@@ -107,23 +107,22 @@ export function detectColumns(sheet: ParsedSheet): {
   };
 
   // Mots dédiés pour distinguer Débit / Crédit quand les deux sont des
-  // colonnes séparées (cas UBS).
-  const DEBIT_KW = ["debit", "débit", "sortie", "soll", "out"];
-  const CREDIT_KW = ["credit", "crédit", "entree", "entrée", "haben", "in"];
+  // colonnes séparées (cas UBS). Après norm() on n'a plus de diacritiques,
+  // donc "débit" et "debit" sont fusionnés.
+  const DEBIT_KW = ["debit", "sortie", "soll"];
+  const CREDIT_KW = ["credit", "entree", "haben"];
 
   function scanRow(row: (string | number | null)[]) {
     const cells = row.map((c) => norm(String(c ?? "")));
     const find = (alts: string[]) =>
       cells.findIndex((c) => c && alts.some((a) => c.includes(a)));
-    // Pour debit/credit on cherche une correspondance plus stricte (sans
-    // matcher accidentellement "carte de crédit" dans une cellule longue).
+    // Pour debit/credit on cherche un startsWith — distingue "debit" de
+    // "credit" (aucun des deux n'est préfixe de l'autre) tout en couvrant
+    // "Débit", "Débit CHF", "Débit(CHF)", "Débits", etc.
     const findStrict = (alts: string[]) =>
       cells.findIndex((c) => {
         if (!c) return false;
-        // Le header est généralement court (1-2 mots). On match seulement
-        // si la cellule entière est un de ces mots (avec tolérance suffixe
-        // type "Débit (CHF)").
-        return alts.some((a) => c === a || c.startsWith(a + " ") || c.startsWith(a + "("));
+        return alts.some((a) => c.startsWith(a));
       });
     return {
       creditor: find(KW.creditor),
