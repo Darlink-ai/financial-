@@ -119,47 +119,125 @@ function findAmountWithCurrency(
   return candidates[0];
 }
 
+/** Construit une ISO YYYY-MM-DD si tous les composants sont valides. */
+function isoIfValid(year: number, month: number, day: number): string | null {
+  if (year < 100) year = 2000 + year;
+  if (year < 2020 || year > 2099) return null;
+  if (month < 1 || month > 12) return null;
+  if (day < 1 || day > 31) return null;
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function normalizeMonthName(raw: string): number | null {
+  const cleaned = raw.toLowerCase().replace(/[éèê]/g, "e").replace(/\.$/, "");
+  return (
+    MONTHS_MAP[cleaned] ??
+    MONTHS_MAP[cleaned.slice(0, 4)] ??
+    MONTHS_MAP[cleaned.slice(0, 3)] ??
+    null
+  );
+}
+
+type DateCandidate = {
+  iso: string;
+  index: number;  // position dans le texte
+  format: "iso" | "numeric" | "dmy-text" | "mdy-text";
+};
+
 /**
- * Cherche une date. Priorité aux formats numériques DD.MM.YYYY / DD/MM/YYYY,
- * puis aux dates "15 mai 2026". Retourne au format ISO YYYY-MM-DD.
+ * Récolte tous les candidats de date dans le texte, dans tous les formats
+ * supportés (ISO, JJ.MM.AAAA, "15 mai 2026", "January 5, 2026", "Jan 5, 2026").
+ */
+function collectDateCandidates(text: string): DateCandidate[] {
+  const out: DateCandidate[] = [];
+  let m: RegExpExecArray | null;
+
+  // 1. ISO : 2026-05-22 (priorité haute, format non ambigu)
+  const isoRe = /\b(\d{4})-(\d{1,2})-(\d{1,2})\b/g;
+  while ((m = isoRe.exec(text)) !== null) {
+    const iso = isoIfValid(parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10));
+    if (iso) out.push({ iso, index: m.index, format: "iso" });
+  }
+
+  // 2. Numérique day-first : 22.05.2026, 22/05/2026, 22-05-26
+  // On évite ce qui ressemble à du ISO (commence par 4 digits) déjà capté.
+  const numericRe = /\b(\d{1,2})[./\-](\d{1,2})[./\-](\d{2,4})\b/g;
+  while ((m = numericRe.exec(text)) !== null) {
+    const iso = isoIfValid(
+      parseInt(m[3], 10),
+      parseInt(m[2], 10),
+      parseInt(m[1], 10),
+    );
+    if (iso) out.push({ iso, index: m.index, format: "numeric" });
+  }
+
+  // 3. Textuel day-first FR/EN : "15 mai 2026" / "15 May 2026" / "5 May, 2026"
+  const dmyTextRe = /\b(\d{1,2})\s+([A-Za-zéèêûâôÉÈÊÛÂÔ]{3,12})[.,]?\s+(\d{4})\b/g;
+  while ((m = dmyTextRe.exec(text)) !== null) {
+    const month = normalizeMonthName(m[2]);
+    if (!month) continue;
+    const iso = isoIfValid(parseInt(m[3], 10), month, parseInt(m[1], 10));
+    if (iso) out.push({ iso, index: m.index, format: "dmy-text" });
+  }
+
+  // 4. Textuel month-first EN : "January 5, 2026" / "Jan 5 2026"
+  const mdyTextRe = /\b([A-Za-zéèêûâôÉÈÊÛÂÔ]{3,12})\s+(\d{1,2})[.,]?\s+(\d{4})\b/g;
+  while ((m = mdyTextRe.exec(text)) !== null) {
+    const month = normalizeMonthName(m[1]);
+    if (!month) continue;
+    const iso = isoIfValid(parseInt(m[3], 10), month, parseInt(m[2], 10));
+    if (iso) out.push({ iso, index: m.index, format: "mdy-text" });
+  }
+
+  return out;
+}
+
+/**
+ * Cherche une date dans le PDF en privilégiant celles proches d'un
+ * mot-clé "invoice date", "facture du", "billed on", "rechnung", etc.
+ * À défaut, retourne la première date trouvée.
  */
 function findInvoiceDate(text: string): string | null {
-  // 1. Date numérique : 22.05.2026, 22/05/2026, 22-05-2026, 22.05.26
-  const numericRe = /\b(\d{1,2})[./\-](\d{1,2})[./\-](\d{2,4})\b/g;
-  const numericCandidates: string[] = [];
-  let m: RegExpExecArray | null;
-  while ((m = numericRe.exec(text)) !== null) {
-    const day = parseInt(m[1], 10);
-    const month = parseInt(m[2], 10);
-    let year = parseInt(m[3], 10);
-    if (year < 100) year = 2000 + year;
-    if (day < 1 || day > 31 || month < 1 || month > 12) continue;
-    if (year < 2020 || year > 2099) continue;
-    numericCandidates.push(
-      `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
-    );
-  }
-  if (numericCandidates.length > 0) {
-    // Si une date est proche du mot "date" ou "facture", on la prend.
-    // Sinon on prend la plus ancienne (plus probable pour une facture).
-    return numericCandidates[0];
-  }
+  const candidates = collectDateCandidates(text);
+  if (candidates.length === 0) return null;
 
-  // 2. Date textuelle : "15 mai 2026" / "15 May 2026"
-  const textRe =
-    /\b(\d{1,2})\s+([a-zéûâô]+)\s+(\d{4})\b/gi;
-  while ((m = textRe.exec(text)) !== null) {
-    const day = parseInt(m[1], 10);
-    const monthName = m[2].toLowerCase().replace(/[éèê]/g, "e").slice(0, 4);
-    const year = parseInt(m[3], 10);
-    const monthNum =
-      MONTHS_MAP[monthName] ?? MONTHS_MAP[monthName.slice(0, 3)] ?? null;
-    if (monthNum && day >= 1 && day <= 31 && year >= 2020 && year <= 2099) {
-      return `${year}-${String(monthNum).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  // Recherche d'un mot-clé pour scorer la proximité.
+  const lower = text.toLowerCase();
+  const keywords = [
+    "invoice date",
+    "date of invoice",
+    "billing date",
+    "billed on",
+    "issue date",
+    "issued",
+    "date de facture",
+    "date facture",
+    "facture du",
+    "facture émise",
+    "rechnungsdatum",
+    "datum",
+  ];
+  const keywordIndexes = keywords
+    .map((k) => lower.indexOf(k))
+    .filter((i) => i >= 0);
+
+  if (keywordIndexes.length > 0) {
+    // Pour chaque candidat, distance au keyword le plus proche. Plus c'est
+    // petit, mieux c'est. On accepte jusqu'à 80 chars de distance.
+    let best: { c: DateCandidate; distance: number } | null = null;
+    for (const c of candidates) {
+      const distance = Math.min(
+        ...keywordIndexes.map((ki) => Math.abs(c.index - ki)),
+      );
+      if (distance > 80) continue;
+      if (!best || distance < best.distance) best = { c, distance };
     }
+    if (best) return best.c.iso;
   }
 
-  return null;
+  // Pas de mot-clé exploitable → on prend la première candidate dans le
+  // PDF (souvent en en-tête).
+  return candidates[0].iso;
 }
 
 /**
