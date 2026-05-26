@@ -62,6 +62,8 @@ export type AnalyseAggregates = {
   };
   /** Ventilation CA par business sur la période. */
   byBusiness: { id: string; name: string; color: string; amount: number; share: number }[];
+  /** Ventilation CA par processeur de paiement (EMP, Centrobill, …) en USD. */
+  byProcessor: Record<string, number>;
 };
 
 /** Construit la liste des mois "YYYY-MM" couverts par la période. */
@@ -244,7 +246,18 @@ export function useAnalyseAggregates(period: Period): AnalyseAggregates {
       .sort((a, b) => b.amount - a.amount);
   }, [businesses, revenues, months]);
 
-  return { loading, months, series, totals, byBusiness };
+  // Volume par processeur (EMP, Centrobill…) — converti en USD.
+  const byProcessor = useMemo<Record<string, number>>(() => {
+    const map: Record<string, number> = {};
+    for (const r of revenues) {
+      if (!months.includes(r.month)) continue;
+      const key = r.processor || "—";
+      map[key] = (map[key] ?? 0) + toUsd(r.capturedAmount, r.currency);
+    }
+    return map;
+  }, [revenues, months]);
+
+  return { loading, months, series, totals, byBusiness, byProcessor };
 }
 
 /** Convertit un montant local en USD via la table FX. Tolère les currency

@@ -41,6 +41,9 @@ export default function AnalysePage() {
   const ebit = mockEbit(period);
 
   // KPIs réels CA — somme capturedAmount sur la période (USD).
+  // 4 tuiles : CA total, Net, volume EMP, volume Centrobill.
+  const volumeEmp = agg.byProcessor["EMP"] ?? 0;
+  const volumeCentrobill = agg.byProcessor["Centrobill"] ?? 0;
   const caKpis: KPI[] = [
     {
       label: "Chiffre d'affaires",
@@ -51,27 +54,24 @@ export default function AnalysePage() {
         : "Somme des capturedAmount des revenus du mois (merchant pay).",
     },
     {
-      label: "Business actifs",
-      value: agg.byBusiness.length,
+      label: "Net",
+      value: agg.totals.net,
       currency: "USD",
-      hint: "Nombre de business avec du capturedAmount sur la période.",
+      hint: "CA − dépenses (somme des débits des 3 rapprochements Excel).",
     },
     {
-      label: "Top business",
-      value: agg.byBusiness[0]?.amount ?? 0,
+      label: "Volume EMP",
+      value: volumeEmp,
       currency: "USD",
-      hint: agg.byBusiness[0]
-        ? `${agg.byBusiness[0].name} (${agg.byBusiness[0].share.toFixed(1)} % du CA)`
-        : "Aucun revenu sur la période.",
+      hint: "Captured EMP, hors fees.",
     },
     {
-      label: "Mois couverts",
-      value: agg.months.length,
+      label: "Volume Centrobill",
+      value: volumeCentrobill,
       currency: "USD",
-      hint:
-        agg.months.length > 0
-          ? `${agg.months[0]} → ${agg.months[agg.months.length - 1]}`
-          : "—",
+      hint: volumeCentrobill > 0
+        ? "Captured Centrobill, hors fees."
+        : "Pas encore de revenus Centrobill saisis.",
     },
   ];
 
@@ -121,7 +121,7 @@ export default function AnalysePage() {
           subtitle="Volume encaissé toutes activités confondues — depuis tes revenus saisis."
           live
         >
-          <KpiGrid kpis={caKpis} countAt={[1, 3]} />
+          <KpiGrid kpis={caKpis} />
           <div className="grid grid-cols-[2fr_1fr] gap-4">
             <SeriesChart
               data={agg.series}
