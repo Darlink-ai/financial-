@@ -24,7 +24,8 @@ import {
   getAllState,
   getExcelSheet,
   getInvoiceRetryCount,
-  incrementInvoiceRetryCount,
+  recordInvoiceFailure,
+  recordInvoiceProcessed,
   updateInvoice,
 } from "./db";
 
@@ -131,10 +132,25 @@ export async function autoProcessInvoice(
   // Compteur de retry : on tente jusqu'à MAX_AUTO_RETRIES, après quoi
   // on bascule en `manual`. Évite de boucler sur les PDFs non-factures
   // (rapports d'activité, time-tracking, etc.).
-  const currentCount = await getInvoiceRetryCount(input.invoiceId).catch(() => 0);
+  let currentCount = 0;
+  try {
+    currentCount = await getInvoiceRetryCount(input.invoiceId);
+  } catch (e) {
+    // Si la colonne retry_count n'existe pas, on log clairement —
+    // c'est probablement que la migration n'est pas appliquée.
+    console.error(
+      "[autoProcess] getInvoiceRetryCount failed (migration appliquée ?)",
+      (e as Error).message,
+    );
+  }
+
   if (currentCount >= MAX_AUTO_RETRIES) {
     try {
       await updateInvoice(input.invoiceId, { status: "manual" });
+      await recordInvoiceFailure(
+        input.invoiceId,
+        `Abandon après ${MAX_AUTO_RETRIES} tentatives échouées.`,
+      );
     } catch {
       /* ignore */
     }
@@ -148,12 +164,30 @@ export async function autoProcessInvoice(
   }
 
   try {
-    return await autoProcessInvoiceInner(input);
+    const outcome = await autoProcessInvoiceInner(input);
+    // Traçage de l'essai réussi. Si le pipeline a produit des warnings
+    // mais a quand même réussi, on garde la trace dans last_error.
+    try {
+      if (outcome.errors.length > 0) {
+        await recordInvoiceFailure(
+          input.invoiceId,
+          `[warn] ${outcome.errors.join(" | ")}`,
+        );
+      } else {
+        await recordInvoiceProcessed(input.invoiceId);
+      }
+    } catch {
+      /* migration pas appliquée ? on ignore le log mais l'invoice est ok */
+    }
+    return outcome;
   } catch (e) {
-    // Incrémente le compteur. Si on dépasse le seuil au prochain check,
-    // l'invoice sera basculée en `manual`. On laisse l'exception remonter
-    // pour qu'elle apparaisse dans les logs.
-    await incrementInvoiceRetryCount(input.invoiceId).catch(() => 0);
+    const err = (e as Error).message ?? String(e);
+    console.error("[autoProcess]", input.invoiceId, "failed:", err);
+    try {
+      await recordInvoiceFailure(input.invoiceId, err);
+    } catch {
+      /* ignore */
+    }
     throw e;
   }
 }

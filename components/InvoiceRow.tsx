@@ -201,6 +201,53 @@ export function InvoiceRow({ invoice }: { invoice: Invoice }) {
               </button>
             </div>
           </div>
+
+          {/* Bandeau diagnostics — visible si retry > 0 ou s'il y a une erreur */}
+          {((invoice.retryCount ?? 0) > 0 ||
+            invoice.lastError ||
+            invoice.lastProcessedAt) && (
+            <div className="col-span-3 mt-2 rounded-lg border border-border bg-panel2/40 p-3 space-y-1.5">
+              <div className="text-[10px] uppercase tracking-wider text-muted">
+                Diagnostics pipeline
+              </div>
+              <div className="grid grid-cols-3 gap-3 text-[11px]">
+                <div>
+                  <span className="text-muted">Tentatives auto : </span>
+                  <span
+                    className={
+                      (invoice.retryCount ?? 0) >= 3
+                        ? "text-warn font-medium"
+                        : "text-text"
+                    }
+                  >
+                    {invoice.retryCount ?? 0} / 3
+                  </span>
+                </div>
+                <div>
+                  <span className="text-muted">Dernier passage : </span>
+                  <span className="text-text">
+                    {invoice.lastProcessedAt
+                      ? new Date(invoice.lastProcessedAt).toLocaleString("fr-CH")
+                      : "—"}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-muted">État DB : </span>
+                  <span className="font-mono text-text">{invoice.status}</span>
+                </div>
+              </div>
+              {invoice.lastError && (
+                <div className="pt-1.5 border-t border-border/60">
+                  <div className="text-[10px] uppercase tracking-wider text-muted mb-1">
+                    Dernière erreur / warning
+                  </div>
+                  <div className="text-[11px] font-mono text-err break-words whitespace-pre-wrap">
+                    {invoice.lastError}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

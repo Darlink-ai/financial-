@@ -32,6 +32,10 @@ export type Invoice = {
   excelRowMatched: number | null;
   attachment: { name: string; sizeBytes: number; pages: number } | null;
   accountCurrency: AccountCurrency;
+  /** Diagnostics : nombre d'essais auto, dernière erreur, dernier tic du pipeline. */
+  retryCount?: number;
+  lastError?: string | null;
+  lastProcessedAt?: string | null;
 };
 
 export type Mailbox = {

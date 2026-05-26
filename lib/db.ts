@@ -186,6 +186,9 @@ type RawInvoice = {
   excel_row_matched: number | null;
   attachment: Invoice["attachment"]; // JSONB → parsed
   account_currency: string | null;
+  retry_count?: number | null;
+  last_error?: string | null;
+  last_processed_at?: Date | null;
 };
 const mapInvoice = (r: RawInvoice): Invoice => ({
   id: r.id,
@@ -205,6 +208,9 @@ const mapInvoice = (r: RawInvoice): Invoice => ({
   excelRowMatched: r.excel_row_matched,
   attachment: r.attachment ?? null,
   accountCurrency: ((r.account_currency ?? "USD") as Invoice["accountCurrency"]),
+  retryCount: r.retry_count ?? 0,
+  lastError: r.last_error ?? null,
+  lastProcessedAt: r.last_processed_at ? r.last_processed_at.toISOString() : null,
 });
 
 type RawRevenue = {
@@ -761,24 +767,44 @@ export async function deleteMapping(id: string) {
 
 // ---- Invoices ----
 /**
- * Incrémente le compteur de retry d'une facture et renvoie la nouvelle
- * valeur. Utilisé pour limiter les tentatives sur des PDFs non-factures.
+ * Incrémente retry_count, stocke last_error et timestampe last_processed_at
+ * en une seule requête. Renvoie le nouveau compteur (0 si l'UPDATE échoue,
+ * typiquement parce que la colonne n'existe pas — migration pas appliquée).
  */
-export async function incrementInvoiceRetryCount(id: string): Promise<number> {
+export async function recordInvoiceFailure(
+  id: string,
+  error: string,
+): Promise<number> {
   const sql = client();
   const rows = await sql<{ retry_count: number }[]>`
     UPDATE invoices
-    SET retry_count = retry_count + 1
+    SET retry_count = retry_count + 1,
+        last_error = ${error.slice(0, 1000)},
+        last_processed_at = now()
     WHERE id = ${id}
     RETURNING retry_count
   `;
   return rows[0]?.retry_count ?? 0;
 }
 
-/** Remet le compteur à zéro — utilisé quand l'utilisateur clique Re-traiter. */
+/** Trace un essai avec succès : timestamp + clear last_error. */
+export async function recordInvoiceProcessed(id: string): Promise<void> {
+  const sql = client();
+  await sql`
+    UPDATE invoices
+    SET last_processed_at = now(), last_error = NULL
+    WHERE id = ${id}
+  `;
+}
+
+/** Remet le compteur à zéro et efface l'erreur — quand l'utilisateur clique Re-traiter. */
 export async function resetInvoiceRetryCount(id: string): Promise<void> {
   const sql = client();
-  await sql`UPDATE invoices SET retry_count = 0 WHERE id = ${id}`;
+  await sql`
+    UPDATE invoices
+    SET retry_count = 0, last_error = NULL
+    WHERE id = ${id}
+  `;
 }
 
 export async function getInvoiceRetryCount(id: string): Promise<number> {
