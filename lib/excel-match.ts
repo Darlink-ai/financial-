@@ -209,8 +209,8 @@ export function matchInvoicesAgainstSheet(
         }
       }
 
-      // ---- Date (tolérance large pour booking bancaire — peut être
-      //         décalé jusqu'à 2 semaines après la date facture) ----
+      // ---- Date (tolérance max ±7 jours — au-delà on considère que
+      //         c'est pas la même transaction) ----
       if (inv.invoiceDate && rowDate) {
         const diffDays = Math.abs(
           (new Date(inv.invoiceDate).getTime() - new Date(rowDate).getTime()) /
@@ -225,10 +225,8 @@ export function matchInvoicesAgainstSheet(
         } else if (diffDays <= 7) {
           score += 1.2;
           reasons.push("date à ±7j");
-        } else if (diffDays <= 14) {
-          score += 1;
-          reasons.push("date à ±14j");
         }
+        // > 7 jours → 0 point (trop loin pour être la même tx)
       }
 
       if (inv.folderCode && rowCode && rowCode === inv.folderCode) {
@@ -328,10 +326,8 @@ export function findBestCandidate(
       } else if (diffDays <= 7) {
         score += 1.2;
         reasons.push("date ±7j");
-      } else if (diffDays <= 14) {
-        score += 1;
-        reasons.push("date ±14j");
       }
+      // > 7j : 0 point
     }
     if (inv.folderCode && rowCode && rowCode === inv.folderCode) {
       score += 1;
