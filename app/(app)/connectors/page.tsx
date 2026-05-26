@@ -870,7 +870,52 @@ function DriveCard() {
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const testUpload = async () => {
+    setTesting(true);
+    try {
+      const r = await fetch("/api/drive/test-upload", { method: "POST" });
+      const data = (await r.json().catch(() => null)) as
+        | {
+            ok?: boolean;
+            driveFileId?: string;
+            drivePath?: string;
+            webViewLink?: string;
+            rootFolderUrl?: string;
+            message?: string;
+            stack?: string;
+          }
+        | null;
+      if (!r.ok) {
+        alert(
+          `❌ Test upload échoué\n\n${data?.message ?? `HTTP ${r.status}`}${
+            data?.stack ? `\n\n${data.stack}` : ""
+          }`,
+        );
+        return;
+      }
+      const summary = [
+        `✅ Upload réussi.`,
+        ``,
+        `Compte Drive : ${state?.userEmail ?? "?"}`,
+        `Chemin : ${data?.drivePath ?? "?"}`,
+        ``,
+        `Liens (s'ouvrent dans le compte Google actuellement connecté dans ton navigateur — assure-toi d'être sur ${state?.userEmail ?? "le bon compte"}) :`,
+        data?.webViewLink ? `• Fichier test : ${data.webViewLink}` : null,
+        data?.rootFolderUrl ? `• Dossier racine : ${data.rootFolderUrl}` : null,
+      ]
+        .filter(Boolean)
+        .join("\n");
+      alert(summary);
+      await reload();
+    } catch (e) {
+      alert(`Erreur : ${(e as Error).message}`);
+    } finally {
+      setTesting(false);
+    }
+  };
 
   useEffect(() => {
     void reload();
@@ -1033,12 +1078,56 @@ function DriveCard() {
         )}
       </div>
 
+      {/* Lien direct + diagnostic */}
+      {state.connected && (
+        <div className="rounded-lg border border-border p-3 mb-3 space-y-2 text-[11px]">
+          <div>
+            <span className="text-muted">Dossier racine : </span>
+            <span className="font-mono text-text">{state.rootFolderName}</span>
+            {state.rootFolderId && (
+              <span className="text-muted">
+                {" "}
+                · ID <span className="font-mono text-text">{state.rootFolderId.slice(0, 12)}…</span>
+              </span>
+            )}
+          </div>
+          {state.rootFolderId ? (
+            <div>
+              <a
+                href={`https://drive.google.com/drive/folders/${state.rootFolderId}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-accent hover:underline"
+              >
+                → Ouvrir dans Drive
+              </a>
+              <span className="text-muted ml-2">
+                (s'ouvre avec le compte Google actif dans ton navigateur — si tu es sur plusieurs
+                comptes, switcher sur <span className="font-mono text-text">{state.userEmail}</span>)
+              </span>
+            </div>
+          ) : (
+            <div className="text-muted">
+              Le dossier racine n'a pas encore été créé — il le sera au premier upload.
+            </div>
+          )}
+          <div>
+            <button
+              onClick={testUpload}
+              disabled={testing}
+              className="btn !py-1 !px-2.5 text-[11px] disabled:opacity-50"
+              title="Crée un mini PDF de test dans le dossier racine pour vérifier la connexion"
+            >
+              {testing ? "Test en cours…" : "🧪 Tester l'upload"}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Bouton Connect / Disconnect */}
       <div className="flex items-center justify-between gap-3">
         <div className="text-[11px] text-muted">
-          {state.connected ? (
-            <>Dossier racine : <span className="font-mono text-text">{state.rootFolderName}</span></>
-          ) : (
+          {!state.connected && (
             <>Scope : <code>drive.file</code> — accès uniquement aux fichiers créés par l'app.</>
           )}
         </div>
