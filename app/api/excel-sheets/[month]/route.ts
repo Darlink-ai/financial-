@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getExcelSheet, saveExcelSheet, deleteExcelSheet } from "@/lib/db";
+import { rematchInvoicesForBucket } from "@/lib/auto-process";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -47,14 +48,23 @@ export async function PUT(
     return NextResponse.json({ error: "bad_body" }, { status: 400 });
   }
   try {
+    const accountCurrency = getCurrency(req);
     const saved = await saveExcelSheet({
       month,
-      accountCurrency: getCurrency(req),
+      accountCurrency,
       fileName: body.fileName,
       headers: body.headers,
       rows: body.rows,
     });
-    return NextResponse.json({ sheet: saved });
+    // Auto-trigger du matching pour toutes les factures éligibles du bucket.
+    // On ne fait pas planter le PUT si le re-match échoue.
+    let rematch: { matched: number; cleared: number } | null = null;
+    try {
+      rematch = await rematchInvoicesForBucket({ month, accountCurrency });
+    } catch (e) {
+      console.error("rematchInvoicesForBucket failed", e);
+    }
+    return NextResponse.json({ sheet: saved, rematch });
   } catch (e) {
     console.error("PUT /api/excel-sheets failed", e);
     return NextResponse.json({ error: "db_error", message: (e as Error).message }, { status: 503 });

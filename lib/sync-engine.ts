@@ -12,7 +12,6 @@ import {
   incrementMailboxInvoicesFound,
   insertIncomingInvoice,
   invoiceExistsForMessage,
-  updateInvoice,
   updateMailboxAccessToken,
   updateMailboxLastSync,
 } from "./db";
@@ -24,10 +23,9 @@ import {
   header,
   listMessages,
 } from "./gmail-api";
-import { extractInvoiceFromPdf } from "./pdf-extract";
-import { classifyAgainstMappings, deriveBankAccount } from "./auto-classify";
-import { buildFinalName } from "./format";
-import type { Invoice, SyncRunResult } from "./types";
+import { autoProcessInvoice } from "./auto-process";
+import type { DriveFolderCache } from "./upload-to-drive";
+import type { SyncRunResult } from "./types";
 
 type SyncOptions = {
   /** Filtre : ne syncer que ces boîtes. Par défaut : toutes celles avec sync_enabled. */
@@ -108,6 +106,9 @@ export async function runSync(
     // On charge les mappings comptables une fois pour l'ensemble du run,
     // ils servent à toute la classification auto downstream.
     const mappings = await getAllMappings();
+    // Cache des dossiers Drive partagé entre toutes les invoices du run :
+    // évite de re-chercher /Comptabilité/2026/05/TECH-… à chaque facture.
+    const driveFolderCache: DriveFolderCache = new Map();
 
     const mailboxes = await getMailboxesForSync(opts.mailboxIds);
 
@@ -165,56 +166,26 @@ export async function runSync(
               attachmentB64: b64,
             });
 
-            // ---- Auto-extraction + classification ----
-            // On retombe pas tout dans `analyzing` : on essaie tout de suite
-            // d'extraire créancier / montant / devise / date depuis le PDF,
-            // de classer contre les folder_mappings, et de basculer le status
-            // soit en `classified` (tout extrait + match) soit en `manual`.
+            // ---- Pipeline complet : extract → classify → Drive → Excel match ----
             try {
-              const pdfBuffer = Buffer.from(b64, "base64");
-              const extracted = await extractInvoiceFromPdf({
-                pdfBuffer,
+              const outcome = await autoProcessInvoice({
+                invoiceId,
                 fromEmail,
-              });
-              const mapping = classifyAgainstMappings({
-                mappings,
-                creditor: extracted.creditor,
                 subject,
-                fromEmail,
+                receivedAt,
+                pdfBase64: b64,
+                mappings,
+                driveFolderCache,
               });
-              const accountCurrency = deriveBankAccount(extracted.currency);
-              const finalName =
-                mapping && extracted.creditor && extracted.invoiceDate
-                  ? buildFinalName(
-                      extracted.invoiceDate,
-                      extracted.creditor,
-                      mapping.folderCode,
-                    )
-                  : null;
-              const allClassified =
-                !!(mapping && extracted.creditor && extracted.amount && extracted.invoiceDate);
-
-              const patch: Partial<Invoice> = {
-                creditor: extracted.creditor,
-                amount: extracted.amount,
-                currency: extracted.currency,
-                invoiceDate: extracted.invoiceDate,
-                accountCurrency,
-                folderCode: mapping?.folderCode ?? null,
-                folderLabel: mapping?.folderLabel ?? null,
-                finalName,
-                status: allClassified ? "classified" : "manual",
-              };
-              await updateInvoice(invoiceId, patch);
-            } catch (extractErr) {
-              // L'extraction a planté (PDF illisible, etc.) — on retombe
-              // simplement en `manual` pour que l'utilisateur s'en occupe.
-              console.error("auto-extract failed", invoiceId, extractErr);
-              try {
-                await updateInvoice(invoiceId, { status: "manual" });
-              } catch {
-                /* ignore */
+              if (outcome.errors.length > 0) {
+                console.warn(
+                  "autoProcess warnings",
+                  invoiceId,
+                  outcome.errors.join(" | "),
+                );
               }
+            } catch (e) {
+              console.error("autoProcess crashed", invoiceId, e);
             }
 
             r.added++;

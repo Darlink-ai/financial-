@@ -22,7 +22,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { formatRelative } from "@/lib/format";
-import type { Mailbox, DriveConfig } from "@/lib/types";
+import type { Mailbox } from "@/lib/types";
 
 export default function ConnectorsPage() {
   return (
@@ -41,8 +41,6 @@ function ConnectorsInner() {
     mailboxes,
     addMailbox,
     removeMailbox,
-    drive,
-    setDrive,
     reloadFromDb,
   } = useStore();
 
@@ -156,7 +154,7 @@ function ConnectorsInner() {
               </div>
             </div>
           </div>
-          <DriveCard drive={drive} setDrive={setDrive} />
+          <DriveCard />
         </section>
       </div>
     </>
@@ -812,72 +810,208 @@ function MailboxCard({
   );
 }
 
-function DriveCard({
-  drive,
-  setDrive,
-}: {
-  drive: DriveConfig;
-  setDrive: (d: Partial<DriveConfig>) => void;
-}) {
-  const isConfigured =
-    !!drive.provider && !!drive.rootPath?.trim() && !!drive.connected;
-  const cardBorder = isConfigured ? "!border-ok/60" : "";
+type DriveState = {
+  connected: boolean;
+  hasCredentials: boolean;
+  userEmail: string | null;
+  rootFolderId: string | null;
+  rootFolderName: string;
+  expiresAt: string | null;
+  scope: string | null;
+};
+
+function DriveCard() {
+  const [state, setState] = useState<DriveState | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void reload();
+  }, []);
+
+  const reload = async () => {
+    try {
+      const r = await fetch("/api/drive/credentials", { cache: "no-store" });
+      if (r.ok) setState((await r.json()) as DriveState);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const saveCreds = async () => {
+    if (!clientId.trim() || !clientSecret.trim()) {
+      setError("client_id et client_secret requis");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const r = await fetch("/api/drive/credentials", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clientId: clientId.trim(),
+          clientSecret: clientSecret.trim(),
+        }),
+      });
+      if (!r.ok) {
+        const data = (await r.json().catch(() => null)) as
+          | { message?: string }
+          | null;
+        setError(data?.message ?? `HTTP ${r.status}`);
+        return;
+      }
+      setState((await r.json()) as DriveState);
+      setEditing(false);
+      setClientId("");
+      setClientSecret("");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const disconnect = async () => {
+    if (!confirm("Déconnecter le Drive ? L'arborescence Drive existante n'est pas supprimée — seuls les tokens locaux le sont.")) return;
+    await fetch("/api/auth/drive/disconnect", { method: "POST" });
+    await reload();
+  };
+
+  if (!state) {
+    return (
+      <div className="card p-5 text-[12px] text-muted">Chargement…</div>
+    );
+  }
+
   return (
-    <div className={`card p-5 ${cardBorder}`}>
-      {isConfigured && (
-        <div className="text-[11px] text-ok flex items-center gap-1 mb-4">
-          <CheckCircle2 size={12} /> Drive configuré et connecté
+    <div className={`card p-5 ${state.connected ? "!border-ok/60" : ""}`}>
+      {/* Bandeau d'état */}
+      {state.connected ? (
+        <div className="flex items-center gap-2 mb-4 text-[12px] text-ok">
+          <CheckCircle2 size={14} />
+          <span>
+            Drive connecté
+            {state.userEmail && (
+              <span className="text-muted">
+                {" "}
+                — <span className="font-mono">{state.userEmail}</span>
+              </span>
+            )}
+          </span>
+        </div>
+      ) : state.hasCredentials ? (
+        <div className="flex items-center gap-2 mb-4 text-[12px] text-warn">
+          <AlertCircle size={14} />
+          Credentials enregistrés — il reste à lancer l'OAuth Google.
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 mb-4 text-[12px] text-muted">
+          <AlertCircle size={14} />
+          Pas encore configuré. Renseigne le client_id / client_secret OAuth Google.
         </div>
       )}
-      <div className="grid grid-cols-3 gap-4">
-        {(["google", "dropbox", "onedrive"] as const).map((p) => (
-          <button
-            key={p}
-            onClick={() => setDrive({ provider: p })}
-            className={`card p-4 text-left transition-colors ${
-              drive.provider === p ? "!border-accent2 bg-panel2" : "hover:bg-panel2"
-            }`}
-          >
-            <div className="text-[13px] font-medium capitalize">
-              {p === "google" ? "Google Drive" : p === "dropbox" ? "Dropbox" : "OneDrive"}
+
+      {/* Section credentials */}
+      <div className="rounded-lg border border-border p-4 mb-4">
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-[12px] font-medium">Credentials OAuth Google</div>
+          {state.hasCredentials && !editing && (
+            <span className="badge ok">
+              <Lock size={11} /> Enregistrés
+            </span>
+          )}
+        </div>
+
+        {state.hasCredentials && !editing ? (
+          <div className="flex items-center justify-between">
+            <div className="text-[11px] text-muted">
+              client_id + client_secret en place. Tu peux relancer l'OAuth quand tu veux.
             </div>
-            <div className="text-[11px] text-muted mt-1">
-              {drive.provider === p ? "Sélectionné" : "Cliquer pour sélectionner"}
+            <button onClick={() => setEditing(true)} className="btn !py-1.5">
+              <Pencil size={12} /> Modifier
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <div>
+              <label className="text-[11px] text-muted block mb-1">Client ID</label>
+              <input
+                value={clientId}
+                onChange={(e) => setClientId(e.target.value)}
+                placeholder="xxx.apps.googleusercontent.com"
+                className="input font-mono text-[12px]"
+              />
             </div>
-          </button>
-        ))}
+            <div>
+              <label className="text-[11px] text-muted block mb-1">Client Secret</label>
+              <input
+                type="password"
+                value={clientSecret}
+                onChange={(e) => setClientSecret(e.target.value)}
+                placeholder="GOCSPX-…"
+                className="input font-mono text-[12px]"
+              />
+            </div>
+            <div className="text-[10px] text-muted leading-relaxed pt-1">
+              Dans Google Cloud Console, autorise l'URI de redirection :{" "}
+              <code className="font-mono text-text">
+                {typeof window !== "undefined" ? window.location.origin : ""}/api/auth/drive/callback
+              </code>
+            </div>
+            {error && <div className="text-[11px] text-err">{error}</div>}
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                onClick={saveCreds}
+                disabled={saving}
+                className="btn btn-primary !py-1.5 disabled:opacity-50"
+              >
+                <Save size={12} /> {saving ? "Sauvegarde…" : "Enregistrer"}
+              </button>
+              {editing && (
+                <button
+                  onClick={() => {
+                    setEditing(false);
+                    setClientId("");
+                    setClientSecret("");
+                    setError(null);
+                  }}
+                  className="btn !py-1.5"
+                >
+                  Annuler
+                </button>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
-      <div className="mt-5 grid grid-cols-[1fr_auto] gap-3">
-        <div>
-          <label className="text-[11px] text-muted block mb-1">Dossier racine</label>
-          <input
-            value={drive.rootPath ?? ""}
-            onChange={(e) => setDrive({ rootPath: e.target.value })}
-            placeholder="/Comptabilité/{YYYY}/{MM}/{code} - {libellé}"
-            className="input font-mono"
-          />
-          <div className="text-[11px] text-muted mt-1">
-            Variables disponibles : <code>{"{YYYY}"}</code>, <code>{"{MM}"}</code>,{" "}
-            <code>{"{code}"}</code>, <code>{"{libellé}"}</code>, <code>{"{créditeur}"}</code>.
-          </div>
+      {/* Bouton Connect / Disconnect */}
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-[11px] text-muted">
+          {state.connected ? (
+            <>Dossier racine : <span className="font-mono text-text">{state.rootFolderName}</span></>
+          ) : (
+            <>Scope : <code>drive.file</code> — accès uniquement aux fichiers créés par l'app.</>
+          )}
         </div>
-        <div className="flex items-end">
-          <button
-            onClick={() => setDrive({ connected: !drive.connected })}
-            className={`btn ${drive.connected ? "" : "btn-primary"}`}
-          >
-            {drive.connected ? (
-              <>
-                <Unlink size={12} /> Déconnecter
-              </>
-            ) : (
-              <>
-                <Link2 size={12} /> Connecter
-              </>
-            )}
+        {state.connected ? (
+          <button onClick={disconnect} className="btn">
+            <Unlink size={12} /> Déconnecter
           </button>
-        </div>
+        ) : (
+          <a
+            href="/api/auth/drive/start"
+            className={`btn btn-primary ${
+              state.hasCredentials ? "" : "pointer-events-none opacity-50"
+            }`}
+          >
+            <Link2 size={12} /> Connecter Google Drive
+          </a>
+        )}
       </div>
     </div>
   );

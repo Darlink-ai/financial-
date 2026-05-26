@@ -18,6 +18,14 @@ export const GMAIL_SCOPES = [
   "email",
 ];
 
+// Scopes pour le compte Drive global (séparé des mailboxes Gmail).
+// `drive.file` ne donne accès qu'aux fichiers créés par notre app.
+export const DRIVE_SCOPES = [
+  "https://www.googleapis.com/auth/drive.file",
+  "openid",
+  "email",
+];
+
 export async function getGoogleCredentialsForMailbox(
   mailboxId: string,
 ): Promise<{ clientId: string; clientSecret: string } | null> {
@@ -31,17 +39,25 @@ export function getRedirectUri(request: Request): string {
   return `${url.origin}/api/auth/google/callback`;
 }
 
+export function getDriveRedirectUri(request: Request): string {
+  const explicit = process.env.GOOGLE_DRIVE_OAUTH_REDIRECT_URI;
+  if (explicit) return explicit;
+  const url = new URL(request.url);
+  return `${url.origin}/api/auth/drive/callback`;
+}
+
 export function buildAuthorizeUrl(opts: {
   clientId: string;
   redirectUri: string;
   state: string;
   loginHint?: string;
+  scopes?: string[];
 }): string {
   const u = new URL(GOOGLE_AUTHORIZE_URL);
   u.searchParams.set("client_id", opts.clientId);
   u.searchParams.set("redirect_uri", opts.redirectUri);
   u.searchParams.set("response_type", "code");
-  u.searchParams.set("scope", GMAIL_SCOPES.join(" "));
+  u.searchParams.set("scope", (opts.scopes ?? GMAIL_SCOPES).join(" "));
   u.searchParams.set("access_type", "offline"); // pour avoir le refresh_token
   u.searchParams.set("prompt", "consent"); // force le refresh_token à être renvoyé
   u.searchParams.set("include_granted_scopes", "true");

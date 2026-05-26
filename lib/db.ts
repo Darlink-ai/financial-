@@ -759,6 +759,162 @@ export async function deleteBusiness(id: string) {
 }
 
 // ---- Drive ----
+
+export type DriveCredentials = { clientId: string; clientSecret: string };
+export type DriveOAuthTokens = {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: string;
+  userEmail: string;
+  scope: string;
+};
+
+export async function setDriveCredentials(c: DriveCredentials) {
+  const sql = client();
+  await sql`
+    UPDATE drive_config SET
+      oauth_client_id = ${c.clientId},
+      oauth_client_secret = ${c.clientSecret}
+    WHERE id = 1
+  `;
+}
+
+export async function getDriveCredentials(): Promise<DriveCredentials | null> {
+  const sql = client();
+  const rows = await sql<{ oauth_client_id: string | null; oauth_client_secret: string | null }[]>`
+    SELECT oauth_client_id, oauth_client_secret FROM drive_config WHERE id = 1
+  `;
+  if (!rows[0]?.oauth_client_id || !rows[0]?.oauth_client_secret) return null;
+  return {
+    clientId: rows[0].oauth_client_id,
+    clientSecret: rows[0].oauth_client_secret,
+  };
+}
+
+export async function saveDriveOAuth(t: DriveOAuthTokens) {
+  const sql = client();
+  await sql`
+    UPDATE drive_config SET
+      oauth_access_token  = ${t.accessToken},
+      oauth_refresh_token = ${t.refreshToken},
+      oauth_expires_at    = ${t.expiresAt},
+      oauth_user_email    = ${t.userEmail},
+      oauth_scope         = ${t.scope},
+      provider            = 'google',
+      connected           = TRUE
+    WHERE id = 1
+  `;
+}
+
+export async function clearDriveOAuth() {
+  const sql = client();
+  await sql`
+    UPDATE drive_config SET
+      oauth_access_token = NULL,
+      oauth_refresh_token = NULL,
+      oauth_expires_at = NULL,
+      oauth_user_email = NULL,
+      oauth_scope = NULL,
+      connected = FALSE,
+      root_folder_id = NULL
+    WHERE id = 1
+  `;
+}
+
+export type DriveOAuthState = {
+  connected: boolean;
+  hasCredentials: boolean;
+  userEmail: string | null;
+  rootFolderId: string | null;
+  rootFolderName: string;
+  expiresAt: string | null;
+  scope: string | null;
+};
+
+export async function getDriveOAuthState(): Promise<DriveOAuthState> {
+  const sql = client();
+  const rows = await sql<{
+    connected: boolean;
+    oauth_client_id: string | null;
+    oauth_client_secret: string | null;
+    oauth_user_email: string | null;
+    oauth_expires_at: Date | null;
+    oauth_scope: string | null;
+    root_folder_id: string | null;
+    root_folder_name: string | null;
+  }[]>`
+    SELECT connected, oauth_client_id, oauth_client_secret, oauth_user_email,
+           oauth_expires_at, oauth_scope, root_folder_id, root_folder_name
+    FROM drive_config WHERE id = 1
+  `;
+  const r = rows[0];
+  return {
+    connected: !!r?.connected,
+    hasCredentials: !!(r?.oauth_client_id && r?.oauth_client_secret),
+    userEmail: r?.oauth_user_email ?? null,
+    rootFolderId: r?.root_folder_id ?? null,
+    rootFolderName: r?.root_folder_name ?? "Comptabilité",
+    expiresAt: r?.oauth_expires_at ? r.oauth_expires_at.toISOString() : null,
+    scope: r?.oauth_scope ?? null,
+  };
+}
+
+export async function getDriveWithTokens(): Promise<{
+  clientId: string;
+  clientSecret: string;
+  refreshToken: string;
+  accessToken: string | null;
+  expiresAt: Date | null;
+  rootFolderId: string | null;
+  rootFolderName: string;
+} | null> {
+  const sql = client();
+  const rows = await sql<{
+    oauth_client_id: string | null;
+    oauth_client_secret: string | null;
+    oauth_refresh_token: string | null;
+    oauth_access_token: string | null;
+    oauth_expires_at: Date | null;
+    root_folder_id: string | null;
+    root_folder_name: string | null;
+  }[]>`
+    SELECT oauth_client_id, oauth_client_secret, oauth_refresh_token,
+           oauth_access_token, oauth_expires_at, root_folder_id, root_folder_name
+    FROM drive_config WHERE id = 1
+  `;
+  const r = rows[0];
+  if (!r?.oauth_client_id || !r?.oauth_client_secret || !r?.oauth_refresh_token) {
+    return null;
+  }
+  return {
+    clientId: r.oauth_client_id,
+    clientSecret: r.oauth_client_secret,
+    refreshToken: r.oauth_refresh_token,
+    accessToken: r.oauth_access_token,
+    expiresAt: r.oauth_expires_at,
+    rootFolderId: r.root_folder_id,
+    rootFolderName: r.root_folder_name ?? "Comptabilité",
+  };
+}
+
+export async function updateDriveAccessToken(
+  accessToken: string,
+  expiresAt: string,
+) {
+  const sql = client();
+  await sql`
+    UPDATE drive_config SET
+      oauth_access_token = ${accessToken},
+      oauth_expires_at = ${expiresAt}
+    WHERE id = 1
+  `;
+}
+
+export async function setDriveRootFolderId(rootFolderId: string) {
+  const sql = client();
+  await sql`UPDATE drive_config SET root_folder_id = ${rootFolderId} WHERE id = 1`;
+}
+
 export async function updateDrive(patch: Partial<DriveConfig>): Promise<DriveConfig> {
   const sql = client();
   const [cur] = await sql<{ provider: string | null; connected: boolean; root_path: string | null }[]>`
