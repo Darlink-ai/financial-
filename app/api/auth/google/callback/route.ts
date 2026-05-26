@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import {
   exchangeCodeForTokens,
   fetchUserEmail,
-  getGoogleCredentials,
+  getGoogleCredentialsForMailbox,
   getRedirectUri,
 } from "@/lib/google-oauth";
 import { saveMailboxOAuth } from "@/lib/db";
@@ -31,7 +31,7 @@ export async function GET(req: Request) {
 
   const mailboxId = decodeURIComponent(state);
 
-  const creds = await getGoogleCredentials();
+  const creds = await getGoogleCredentialsForMailbox(mailboxId);
   if (!creds) {
     return NextResponse.redirect(
       new URL("/connectors?error=missing_google_credentials", req.url),

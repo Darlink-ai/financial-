@@ -109,6 +109,8 @@ export const mockRevenues: Revenue[] = [
 ];
 
 const EMPTY_MAILBOX_OAUTH = {
+  oauthClientId: null,
+  hasOauthSecret: false,
   oauthUserEmail: null,
   oauthExpiresAt: null,
   oauthScope: null,

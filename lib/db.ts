@@ -127,6 +127,8 @@ type RawMailbox = {
   connected: boolean;
   invoices_found: number;
   last_sync: Date | null;
+  oauth_client_id: string | null;
+  oauth_client_secret: string | null;
   oauth_refresh_token: string | null;
   oauth_access_token: string | null;
   oauth_expires_at: Date | null;
@@ -140,6 +142,8 @@ const mapMailbox = (r: RawMailbox): Mailbox => ({
   connected: r.connected,
   invoicesFound: r.invoices_found,
   lastSync: r.last_sync ? r.last_sync.toISOString() : null,
+  oauthClientId: r.oauth_client_id,
+  hasOauthSecret: !!r.oauth_client_secret,
   oauthUserEmail: r.oauth_user_email,
   oauthExpiresAt: r.oauth_expires_at ? r.oauth_expires_at.toISOString() : null,
   oauthScope: r.oauth_scope,
@@ -405,6 +409,47 @@ export async function getMailboxWithTokens(id: string): Promise<{
     refreshToken: row.oauth_refresh_token,
     accessToken: row.oauth_access_token,
     expiresAt: row.oauth_expires_at,
+  };
+}
+
+// ---- OAuth credentials par mailbox (server-only) ----
+export async function setMailboxOAuthCredentials(
+  id: string,
+  clientId: string | null,
+  clientSecret: string | null,
+) {
+  const sql = client();
+  if (clientSecret !== null) {
+    await sql`
+      UPDATE mailboxes
+      SET oauth_client_id = ${clientId}, oauth_client_secret = ${clientSecret}
+      WHERE id = ${id}
+    `;
+  } else {
+    // Met à jour seulement l'id (préserve le secret existant).
+    await sql`
+      UPDATE mailboxes
+      SET oauth_client_id = ${clientId}
+      WHERE id = ${id}
+    `;
+  }
+}
+
+export async function getMailboxOAuthCredentials(
+  id: string,
+): Promise<{ clientId: string; clientSecret: string } | null> {
+  const sql = client();
+  const [row] = await sql<{
+    oauth_client_id: string | null;
+    oauth_client_secret: string | null;
+  }[]>`
+    SELECT oauth_client_id, oauth_client_secret
+    FROM mailboxes WHERE id = ${id}
+  `;
+  if (!row?.oauth_client_id || !row?.oauth_client_secret) return null;
+  return {
+    clientId: row.oauth_client_id.trim(),
+    clientSecret: row.oauth_client_secret.trim(),
   };
 }
 

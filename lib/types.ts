@@ -33,7 +33,9 @@ export type Mailbox = {
   connected: boolean;
   invoicesFound: number;
   lastSync: string | null;
-  // OAuth (Google pour l'instant)
+  // OAuth (Google pour l'instant) — credentials et tokens stockés par boîte.
+  oauthClientId: string | null;      // visible côté client (OK)
+  hasOauthSecret: boolean;           // jamais le secret lui-même côté client
   oauthUserEmail: string | null;     // email tel que renvoyé par Google après consent
   oauthExpiresAt: string | null;     // ISO de l'expiration du access_token
   oauthScope: string | null;

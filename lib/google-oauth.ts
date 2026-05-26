@@ -4,7 +4,7 @@
  * app_settings (renseignés par l'utilisateur dans la page Connexions).
  */
 
-import { getSetting } from "./db";
+import { getMailboxOAuthCredentials } from "./db";
 
 const GOOGLE_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -18,16 +18,10 @@ export const GMAIL_SCOPES = [
   "email",
 ];
 
-export async function getGoogleCredentials(): Promise<{
-  clientId: string;
-  clientSecret: string;
-} | null> {
-  const [clientId, clientSecret] = await Promise.all([
-    getSetting("google_client_id"),
-    getSetting("google_client_secret"),
-  ]);
-  if (!clientId || !clientSecret) return null;
-  return { clientId: clientId.trim(), clientSecret: clientSecret.trim() };
+export async function getGoogleCredentialsForMailbox(
+  mailboxId: string,
+): Promise<{ clientId: string; clientSecret: string } | null> {
+  return await getMailboxOAuthCredentials(mailboxId);
 }
 
 export function getRedirectUri(request: Request): string {

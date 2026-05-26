@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   buildAuthorizeUrl,
-  getGoogleCredentials,
+  getGoogleCredentialsForMailbox,
   getRedirectUri,
 } from "@/lib/google-oauth";
 
@@ -15,7 +15,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "missing_mailboxId" }, { status: 400 });
   }
 
-  const creds = await getGoogleCredentials();
+  const creds = await getGoogleCredentialsForMailbox(mailboxId);
   if (!creds) {
     return NextResponse.redirect(
       new URL("/connectors?error=missing_google_credentials", req.url),
@@ -24,8 +24,6 @@ export async function GET(req: Request) {
   }
 
   const redirectUri = getRedirectUri(req);
-  // State = mailboxId (le callback en aura besoin). Pas critique pour CSRF
-  // dans une app à 1-2 users, mais on pourrait HMAC-signer plus tard.
   const state = encodeURIComponent(mailboxId);
 
   const authorize = buildAuthorizeUrl({
