@@ -18,6 +18,7 @@ import {
   Wallet,
   Receipt,
   Settings,
+  UploadCloud,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -70,6 +71,7 @@ const ENTRIES: NavEntry[] = [
       items: [
         { href: "/invoices", label: "Factures", icon: FileText },
         { href: "/manual", label: "À traiter manuellement", icon: AlertCircle, badge: "manual" },
+        { href: "/import", label: "Ajout manuel", icon: UploadCloud },
         { href: "/excel", label: "Rapprochement Excel", icon: FileSpreadsheet },
       ],
     },

@@ -1,12 +1,37 @@
 /**
  * Orchestrateur d'upload de facture vers Google Drive.
  *
- * Crée à la volée l'arborescence :
- *   {rootFolderName}/{YYYY}/{MM}/{CODE - Libellé}/{finalName}.pdf
+ * Arborescence cible : {rootFolderName}/{MM mois}/{finalName}.pdf
+ *   ex : Comptabilité/01 janvier/22.01.26 - Hetzner - TECH.pdf
+ *
+ * On classe uniquement par mois (12 dossiers fixes), pas par année
+ * ni par catégorie comptable — le code comptable est dans le nom du
+ * fichier ce qui suffit. Le nom commence par la date pour que le tri
+ * Drive donne un ordre chronologique au sein d'un mois.
  *
  * Met en cache les IDs de dossiers entre les appels (utile dans un
- * sync où plusieurs factures peuvent partager la même catégorie).
+ * sync où plusieurs factures partagent le même mois).
  */
+
+const MONTHS_FR = [
+  "01 janvier",
+  "02 février",
+  "03 mars",
+  "04 avril",
+  "05 mai",
+  "06 juin",
+  "07 juillet",
+  "08 août",
+  "09 septembre",
+  "10 octobre",
+  "11 novembre",
+  "12 décembre",
+];
+
+function monthFolderName(invoiceDateIso: string): string {
+  const m = parseInt(invoiceDateIso.slice(5, 7), 10);
+  return MONTHS_FR[m - 1] ?? "00 inconnu";
+}
 
 import {
   getDriveWithTokens,
@@ -107,26 +132,24 @@ export async function uploadInvoiceToDrive(
     cfg.rootFolderId,
   );
 
-  const [year, month] = input.invoiceDateIso.split("-");
-  const categoryFolderName = `${input.folderCode} - ${input.folderLabel}`;
-
-  const yearId = await cachedFindOrCreate(accessToken, rootId, year, cache);
-  const monthId = await cachedFindOrCreate(accessToken, yearId, month, cache);
-  const catId = await cachedFindOrCreate(
+  // Une seule profondeur : root → MM mois. Pas d'année, pas de
+  // sous-dossier par catégorie.
+  const monthFolder = monthFolderName(input.invoiceDateIso);
+  const monthId = await cachedFindOrCreate(
     accessToken,
-    monthId,
-    categoryFolderName,
+    rootId,
+    monthFolder,
     cache,
   );
 
   const file: DriveFile = await uploadPdf({
     accessToken,
-    parentId: catId,
+    parentId: monthId,
     name: input.finalName,
     pdfBuffer: input.pdfBuffer,
   });
 
-  const drivePath = `/${cfg.rootFolderName}/${year}/${month}/${categoryFolderName}/${input.finalName}.pdf`;
+  const drivePath = `/${cfg.rootFolderName}/${monthFolder}/${input.finalName}.pdf`;
   return {
     driveFileId: file.id,
     drivePath,

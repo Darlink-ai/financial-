@@ -37,7 +37,8 @@ export function buildFinalName(
   folderCode: string | null,
 ): string | null {
   if (!invoiceDate || !creditor || !folderCode) return null;
-  // Format : "Créditeur - JJ.MM.AA - CODE"
-  // (créditeur en tête pour faciliter la recherche alphabétique dans Drive)
-  return `${creditor} - ${formatSwissDate(invoiceDate)} - ${folderCode}`;
+  // Format : "JJ.MM.AA - Créditeur - CODE"
+  // (date en tête pour que le tri alphabétique dans Drive donne un ordre
+  //  chronologique au sein d'un même mois)
+  return `${formatSwissDate(invoiceDate)} - ${creditor} - ${folderCode}`;
 }
