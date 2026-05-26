@@ -20,8 +20,8 @@ import {
   Repeat,
   LineChart,
   ChevronDown,
-  PanelLeftClose,
-  PanelLeftOpen,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { SidebarMonthSelector } from "./SidebarMonthSelector";
@@ -156,32 +156,25 @@ export function Sidebar({
         collapsed ? "w-[64px]" : "w-64",
       )}
     >
-      {/* En-tête : titre + bouton collapse */}
-      <div
-        className={cn(
-          "flex items-center gap-2 px-3 pt-4 pb-3 border-b border-border",
-          collapsed && "justify-center",
-        )}
+      {/* Bouton flottant de repli, à cheval sur la frontière sidebar / contenu */}
+      <button
+        type="button"
+        onClick={() => setCollapsed((v) => !v)}
+        className="absolute top-1/2 -translate-y-1/2 right-0 translate-x-1/2 z-40 w-6 h-10 rounded-md bg-panel2 border border-border hover:border-borderHover text-muted hover:text-text flex items-center justify-center transition-colors shadow-[0_4px_12px_-4px_rgba(0,0,0,0.6)]"
+        title={collapsed ? "Déplier la sidebar" : "Replier la sidebar"}
       >
-        {!collapsed && (
-          <div className="flex-1 min-w-0">
-            <div className="text-[13px] font-semibold tracking-tight">Factura</div>
-            <div className="text-[10px] text-muted -mt-0.5">Famelink Finance</div>
-          </div>
-        )}
-        <button
-          onClick={() => setCollapsed((v) => !v)}
-          className="btn !px-1.5 !py-1.5"
-          title={collapsed ? "Déplier la sidebar" : "Replier la sidebar"}
-        >
-          {collapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
-        </button>
-      </div>
+        {collapsed ? <ChevronRight size={13} /> : <ChevronLeft size={13} />}
+      </button>
 
       {/* Sélecteur de période (caché en mode collapsed) */}
       {!collapsed && <SidebarMonthSelector disabled={onAnalysePage} />}
 
-      <nav className="flex-1 px-2 py-3 space-y-1 overflow-y-auto">
+      <nav
+        className={cn(
+          "flex-1 px-2 space-y-1 overflow-y-auto pb-3",
+          collapsed ? "pt-4" : "pt-3",
+        )}
+      >
         {/* Tableau de bord — top-level */}
         <NavItem
           leaf={TOP_LEAF}

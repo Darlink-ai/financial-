@@ -9,6 +9,14 @@ import {
   formatMonthLabel,
 } from "@/lib/store";
 import { parseCountryFile } from "@/lib/parse-country-file";
+import { Select } from "@/components/ui/Select";
+
+// Processeurs de paiement gérés par la plateforme. À étendre quand on
+// branchera d'autres providers.
+const PROCESSOR_OPTIONS = [
+  { value: "EMP", label: "EMP" },
+  { value: "Centrobill", label: "Centrobill" },
+];
 import {
   Plus,
   Trash2,
@@ -1022,7 +1030,7 @@ function NewRevenueForm({
   const [draft, setDraft] = useState<Omit<Revenue, "id">>({
     businessId: defaultBusinessId ?? businesses[0]?.id ?? "",
     month,
-    processor: "Stripe",
+    processor: "EMP",
     // Tous nos revenus sont en USD — plus de sélecteur dans le formulaire.
     currency: "USD",
     capturedAmount: 0,
@@ -1054,23 +1062,17 @@ function NewRevenueForm({
       </div>
       <div className="grid grid-cols-3 gap-3">
         <Field label="Business">
-          <select
-            className="input"
+          <Select
             value={draft.businessId}
-            onChange={(e) => setDraft({ ...draft, businessId: e.target.value })}
-          >
-            {businesses.map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.name}
-              </option>
-            ))}
-          </select>
+            onChange={(v) => setDraft({ ...draft, businessId: v })}
+            options={businesses.map((b) => ({ value: b.id, label: b.name }))}
+          />
         </Field>
         <Field label="Processeur">
-          <input
-            className="input"
+          <Select
             value={draft.processor}
-            onChange={(e) => setDraft({ ...draft, processor: e.target.value })}
+            onChange={(v) => setDraft({ ...draft, processor: v })}
+            options={PROCESSOR_OPTIONS}
           />
         </Field>
         <Field label="Mois" hint="Devise toujours USD">

@@ -1,44 +1,29 @@
 "use client";
 
+import { useState } from "react";
 import { useStore } from "@/lib/store";
-import { ChevronLeft, ChevronRight, Calendar } from "lucide-react";
+import { Calendar, ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
+import { Popover } from "./ui/Popover";
 
-const MONTHS_FR = [
-  "Janvier",
-  "Février",
-  "Mars",
-  "Avril",
-  "Mai",
-  "Juin",
-  "Juillet",
-  "Août",
-  "Septembre",
-  "Octobre",
-  "Novembre",
-  "Décembre",
+const MONTHS_FR_LONG = [
+  "Janvier", "Février", "Mars", "Avril", "Mai", "Juin",
+  "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre",
 ];
 
-function parse(ym: string): [number, number] {
-  const [y, m] = ym.split("-").map(Number);
-  return [y, m];
-}
+const MONTHS_FR_SHORT = [
+  "Janv.", "Févr.", "Mars", "Avril", "Mai", "Juin",
+  "Juil.", "Août", "Sept.", "Oct.", "Nov.", "Déc.",
+];
 
 function compose(y: number, m: number): string {
   return `${y}-${String(m).padStart(2, "0")}`;
 }
 
-function shiftMonth(ym: string, delta: number): string {
-  const [y, m] = parse(ym);
-  const d = new Date(y, m - 1 + delta, 1);
-  return compose(d.getFullYear(), d.getMonth() + 1);
-}
-
 export function SidebarMonthSelector({ disabled = false }: { disabled?: boolean }) {
   const { selectedMonth, setSelectedMonth } = useStore();
-  const [year, month] = parse(selectedMonth);
-
-  const years: number[] = [];
-  for (let y = 2024; y <= new Date().getFullYear() + 1; y++) years.push(y);
+  const [yearStr, monthStr] = selectedMonth.split("-");
+  const currentYear = parseInt(yearStr, 10);
+  const currentMonth = parseInt(monthStr, 10);
 
   return (
     <div className="px-3 pt-4 pb-3 border-b border-border">
@@ -47,60 +32,103 @@ export function SidebarMonthSelector({ disabled = false }: { disabled?: boolean 
         Période
       </div>
 
-      <div className={`flex items-center gap-1 ${disabled ? "opacity-50" : ""}`}>
-        <button
-          onClick={() => setSelectedMonth(shiftMonth(selectedMonth, -1))}
-          className="btn !px-1.5 !py-1"
-          title="Mois précédent"
-          disabled={disabled}
-        >
-          <ChevronLeft size={12} />
-        </button>
-
-        <div className="flex-1 grid grid-cols-[1fr_auto] gap-1">
-          <select
-            value={month}
-            onChange={(e) => setSelectedMonth(compose(year, parseInt(e.target.value, 10)))}
-            className="input !py-1 !px-2 text-[12px] cursor-pointer"
-            title="Mois"
+      <Popover
+        sameWidth
+        trigger={(open, toggle) => (
+          <button
+            type="button"
+            onClick={disabled ? undefined : toggle}
             disabled={disabled}
+            className={`btn w-full justify-between !py-2 ${
+              disabled ? "opacity-50 cursor-not-allowed" : ""
+            }`}
           >
-            {MONTHS_FR.map((label, i) => (
-              <option key={i} value={i + 1}>
-                {label}
-              </option>
-            ))}
-          </select>
-          <select
-            value={year}
-            onChange={(e) => setSelectedMonth(compose(parseInt(e.target.value, 10), month))}
-            className="input !py-1 !px-2 text-[12px] cursor-pointer tabular-nums w-[68px]"
-            title="Année"
-            disabled={disabled}
-          >
-            {years.map((y) => (
-              <option key={y} value={y}>
-                {y}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <button
-          onClick={() => setSelectedMonth(shiftMonth(selectedMonth, 1))}
-          className="btn !px-1.5 !py-1"
-          title="Mois suivant"
-          disabled={disabled}
-        >
-          <ChevronRight size={12} />
-        </button>
-      </div>
+            <span className="text-[13px] font-medium">
+              {MONTHS_FR_LONG[currentMonth - 1]} {currentYear}
+            </span>
+            <ChevronDown
+              size={12}
+              className={`text-muted transition-transform duration-150 ${
+                open ? "rotate-180" : ""
+              }`}
+            />
+          </button>
+        )}
+      >
+        {(close) => (
+          <MonthPicker
+            year={currentYear}
+            month={currentMonth}
+            onPick={(y, m) => {
+              setSelectedMonth(compose(y, m));
+              close();
+            }}
+          />
+        )}
+      </Popover>
 
       {disabled && (
         <div className="text-[10px] text-muted px-1 pt-2 leading-tight">
           Période gérée dans la page d'analyse.
         </div>
       )}
+    </div>
+  );
+}
+
+function MonthPicker({
+  year,
+  month,
+  onPick,
+}: {
+  year: number;
+  month: number;
+  onPick: (y: number, m: number) => void;
+}) {
+  // Année navigable dans le popover sans changer la sélection courante.
+  const [browsingYear, setBrowsingYear] = useState(year);
+
+  return (
+    <div className="w-full p-0.5">
+      <div className="flex items-center justify-between px-1 py-1">
+        <button
+          type="button"
+          onClick={() => setBrowsingYear((y) => y - 1)}
+          className="btn !px-1.5 !py-1"
+          title="Année précédente"
+        >
+          <ChevronLeft size={12} />
+        </button>
+        <div className="text-[13px] font-semibold tabular-nums">{browsingYear}</div>
+        <button
+          type="button"
+          onClick={() => setBrowsingYear((y) => y + 1)}
+          className="btn !px-1.5 !py-1"
+          title="Année suivante"
+        >
+          <ChevronRight size={12} />
+        </button>
+      </div>
+      <div className="grid grid-cols-3 gap-1 p-1">
+        {MONTHS_FR_SHORT.map((label, i) => {
+          const m = i + 1;
+          const isActive = browsingYear === year && m === month;
+          return (
+            <button
+              key={m}
+              type="button"
+              onClick={() => onPick(browsingYear, m)}
+              className={`px-2 py-2 rounded-md text-[12px] font-medium transition-colors ${
+                isActive
+                  ? "bg-accent2 text-white border border-accent2 shadow-[0_4px_12px_-4px_rgba(59,130,246,0.5)]"
+                  : "text-muted hover:text-text hover:bg-panel2 border border-transparent"
+              }`}
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
