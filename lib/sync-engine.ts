@@ -7,10 +7,12 @@
 import {
   finishSyncRun,
   createSyncRun,
+  getAllMappings,
   getMailboxesForSync,
   incrementMailboxInvoicesFound,
   insertIncomingInvoice,
   invoiceExistsForMessage,
+  updateInvoice,
   updateMailboxAccessToken,
   updateMailboxLastSync,
 } from "./db";
@@ -22,7 +24,10 @@ import {
   header,
   listMessages,
 } from "./gmail-api";
-import type { SyncRunResult } from "./types";
+import { extractInvoiceFromPdf } from "./pdf-extract";
+import { classifyAgainstMappings, deriveBankAccount } from "./auto-classify";
+import { buildFinalName } from "./format";
+import type { Invoice, SyncRunResult } from "./types";
 
 type SyncOptions = {
   /** Filtre : ne syncer que ces boîtes. Par défaut : toutes celles avec sync_enabled. */
@@ -100,6 +105,10 @@ export async function runSync(
   let runError: string | null = null;
 
   try {
+    // On charge les mappings comptables une fois pour l'ensemble du run,
+    // ils servent à toute la classification auto downstream.
+    const mappings = await getAllMappings();
+
     const mailboxes = await getMailboxesForSync(opts.mailboxIds);
 
     for (const mb of mailboxes) {
@@ -137,13 +146,14 @@ export async function runSync(
 
           // On stocke une row par PJ PDF (un mail peut en avoir plusieurs).
           for (const att of attachments) {
+            const invoiceId = `inv-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
             const b64 = await getAttachmentBase64(
               accessToken,
               messageId,
               att.attachmentId,
             );
             await insertIncomingInvoice({
-              id: `inv-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              id: invoiceId,
               mailboxId: mb.id,
               sourceMessageId: messageId,
               subject,
@@ -154,6 +164,59 @@ export async function runSync(
               attachmentBytes: att.size,
               attachmentB64: b64,
             });
+
+            // ---- Auto-extraction + classification ----
+            // On retombe pas tout dans `analyzing` : on essaie tout de suite
+            // d'extraire créancier / montant / devise / date depuis le PDF,
+            // de classer contre les folder_mappings, et de basculer le status
+            // soit en `classified` (tout extrait + match) soit en `manual`.
+            try {
+              const pdfBuffer = Buffer.from(b64, "base64");
+              const extracted = await extractInvoiceFromPdf({
+                pdfBuffer,
+                fromEmail,
+              });
+              const mapping = classifyAgainstMappings({
+                mappings,
+                creditor: extracted.creditor,
+                subject,
+                fromEmail,
+              });
+              const accountCurrency = deriveBankAccount(extracted.currency);
+              const finalName =
+                mapping && extracted.creditor && extracted.invoiceDate
+                  ? buildFinalName(
+                      extracted.invoiceDate,
+                      extracted.creditor,
+                      mapping.folderCode,
+                    )
+                  : null;
+              const allClassified =
+                !!(mapping && extracted.creditor && extracted.amount && extracted.invoiceDate);
+
+              const patch: Partial<Invoice> = {
+                creditor: extracted.creditor,
+                amount: extracted.amount,
+                currency: extracted.currency,
+                invoiceDate: extracted.invoiceDate,
+                accountCurrency,
+                folderCode: mapping?.folderCode ?? null,
+                folderLabel: mapping?.folderLabel ?? null,
+                finalName,
+                status: allClassified ? "classified" : "manual",
+              };
+              await updateInvoice(invoiceId, patch);
+            } catch (extractErr) {
+              // L'extraction a planté (PDF illisible, etc.) — on retombe
+              // simplement en `manual` pour que l'utilisateur s'en occupe.
+              console.error("auto-extract failed", invoiceId, extractErr);
+              try {
+                await updateInvoice(invoiceId, { status: "manual" });
+              } catch {
+                /* ignore */
+              }
+            }
+
             r.added++;
             totalAdded++;
           }

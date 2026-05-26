@@ -670,6 +670,13 @@ export async function setSetting(key: string, value: string) {
 }
 
 // ---- Mappings ----
+export async function getAllMappings(): Promise<FolderMapping[]> {
+  await ensureSeeded();
+  const sql = client();
+  const rows = await sql<RawMapping[]>`SELECT * FROM folder_mappings`;
+  return rows.map(mapMapping);
+}
+
 export async function createMapping(m: FolderMapping): Promise<FolderMapping> {
   await client()`
     INSERT INTO folder_mappings (id, creditor_pattern, folder_code, folder_label, notes)
