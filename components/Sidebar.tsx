@@ -25,7 +25,6 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { SidebarMonthSelector } from "./SidebarMonthSelector";
-import { SidebarAccountSelector } from "./SidebarAccountSelector";
 
 type NavLeaf = {
   href: string;
@@ -166,13 +165,8 @@ export function Sidebar({
         </button>
       </div>
 
-      {/* Sélecteurs (cachés en mode collapsed) */}
-      {!collapsed && (
-        <>
-          <SidebarMonthSelector disabled={onAnalysePage} />
-          <SidebarAccountSelector />
-        </>
-      )}
+      {/* Sélecteur de période (caché en mode collapsed) */}
+      {!collapsed && <SidebarMonthSelector disabled={onAnalysePage} />}
 
       <nav className="flex-1 px-2 py-3 space-y-1 overflow-y-auto">
         {/* Tableau de bord — top-level */}

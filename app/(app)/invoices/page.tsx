@@ -82,7 +82,19 @@ export default function InvoicesPage() {
               Aucune facture ne correspond.
             </div>
           ) : (
-            filtered.map((inv) => <InvoiceRow key={inv.id} invoice={inv} />)
+            <>
+              {/* En-tête de tableau */}
+              <div className="px-5 py-2 border-b border-border flex items-center gap-4 text-[10px] uppercase tracking-wider text-muted">
+                <span className="w-3.5 shrink-0" />
+                <span className="w-4 shrink-0" />
+                <span className="flex-1">Sujet / Créditeur</span>
+                <span className="w-16 text-center">Compte</span>
+                <span className="w-28 text-right">Montant</span>
+                <span className="w-32 text-right">Statut</span>
+                <span className="w-24 text-right">Reçue</span>
+              </div>
+              {filtered.map((inv) => <InvoiceRow key={inv.id} invoice={inv} />)}
+            </>
           )}
         </div>
       </div>

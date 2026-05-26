@@ -14,12 +14,16 @@ import {
   type MatchResult,
   type ParsedSheet,
 } from "@/lib/excel-match";
-import type { Invoice } from "@/lib/types";
+import type { Invoice, AccountCurrency } from "@/lib/types";
+import { ACCOUNT_CURRENCIES } from "@/lib/types";
 
 export default function ExcelPage() {
-  const { updateInvoice, selectedMonth, selectedAccountCurrency } = useStore();
-  const invoices = useInvoicesForCurrentMonth();
+  const { updateInvoice, selectedMonth } = useStore();
+  const allMonthInvoices = useInvoicesForCurrentMonth();
   const fileRef = useRef<HTMLInputElement>(null);
+  // Devise locale à la page — pas de sélecteur global. L'utilisateur
+  // choisit ici dans quel "bucket" (CHF / EUR / USD) il dépose son fichier.
+  const [currency, setCurrency] = useState<AccountCurrency>("USD");
   const [fileName, setFileName] = useState<string | null>(null);
   const [sheet, setSheet] = useState<ParsedSheet | null>(null);
   const [sheetNames, setSheetNames] = useState<string[]>([]);
@@ -29,7 +33,7 @@ export default function ExcelPage() {
   const [persistedAt, setPersistedAt] = useState<string | null>(null);
   const [persistError, setPersistError] = useState<string | null>(null);
 
-  // Recharge depuis la DB quand le mois ou le compte sélectionné change.
+  // Recharge depuis la DB quand le mois ou la devise sélectionnée change.
   useEffect(() => {
     let cancelled = false;
     setSheet(null);
@@ -42,7 +46,7 @@ export default function ExcelPage() {
     (async () => {
       try {
         const r = await fetch(
-          `/api/excel-sheets/${selectedMonth}?currency=${selectedAccountCurrency}`,
+          `/api/excel-sheets/${selectedMonth}?currency=${currency}`,
           { cache: "no-store" },
         );
         if (cancelled) return;
@@ -67,7 +71,14 @@ export default function ExcelPage() {
     return () => {
       cancelled = true;
     };
-  }, [selectedMonth, selectedAccountCurrency]);
+  }, [selectedMonth, currency]);
+
+  // On ne tente de rapprocher que les factures déclarées sur ce compte.
+  const invoices = useMemo<Invoice[]>(
+    () =>
+      allMonthInvoices.filter((i) => (i.accountCurrency ?? "USD") === currency),
+    [allMonthInvoices, currency],
+  );
 
   const matches = useMemo<MatchResult[]>(() => {
     if (!sheet) return [];
@@ -120,7 +131,7 @@ export default function ExcelPage() {
     setPersistError(null);
     try {
       const r = await fetch(
-        `/api/excel-sheets/${selectedMonth}?currency=${selectedAccountCurrency}`,
+        `/api/excel-sheets/${selectedMonth}?currency=${currency}`,
         {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -172,12 +183,12 @@ export default function ExcelPage() {
   const removePersisted = async () => {
     if (
       !confirm(
-        `Supprimer le fichier Excel ${selectedAccountCurrency} pour ${formatMonthLabel(selectedMonth)} ?`,
+        `Supprimer le fichier Excel ${currency} pour ${formatMonthLabel(selectedMonth)} ?`,
       )
     )
       return;
     await fetch(
-      `/api/excel-sheets/${selectedMonth}?currency=${selectedAccountCurrency}`,
+      `/api/excel-sheets/${selectedMonth}?currency=${currency}`,
       { method: "DELETE" },
     );
     setSheet(null);
@@ -191,6 +202,7 @@ export default function ExcelPage() {
       updateInvoice(m.invoice.id, {
         excelRowMatched: m.rowIndex + 2, // +1 for header, +1 for 1-based
         status: "matched",
+        accountCurrency: currency, // assure que la facture est bien rattachée à ce compte
       });
     });
     unmatchedInvoices.forEach((i) => {
@@ -218,8 +230,8 @@ export default function ExcelPage() {
   return (
     <>
       <PageHeader
-        title={`Rapprochement Excel — Compte ${selectedAccountCurrency}`}
-        subtitle={`Fichier comptable du mois ${formatMonthLabel(selectedMonth)} pour le compte ${selectedAccountCurrency}. Change de compte dans la sidebar pour gérer l'autre devise.`}
+        title="Rapprochement Excel"
+        subtitle={`Choisis d'abord la devise du fichier, puis dépose-le. Chaque devise (CHF / EUR / USD) a son propre fichier mensuel — sélectionne celui que tu veux gérer.`}
         actions={
           sheet && (
             <>
@@ -235,12 +247,32 @@ export default function ExcelPage() {
       />
 
       <div className="p-8 space-y-6">
+        {/* Picker de devise — 3 onglets visuels CHF / EUR / USD */}
+        <div className="card p-1.5 flex items-center gap-1 w-fit">
+          {ACCOUNT_CURRENCIES.map((c) => (
+            <button
+              key={c}
+              onClick={() => setCurrency(c)}
+              className={`px-5 py-2 rounded-md text-[13px] font-medium font-mono transition-colors ${
+                currency === c
+                  ? "bg-panel2 text-text border border-border shadow-[inset_0_0_0_1px_rgba(96,165,250,0.2)]"
+                  : "text-muted hover:text-text border border-transparent"
+              }`}
+            >
+              {c}
+            </button>
+          ))}
+          <div className="text-[11px] text-muted px-3">
+            Mois : <span className="text-text">{formatMonthLabel(selectedMonth)}</span>
+          </div>
+        </div>
+
         {loadingPersisted ? (
           <div className="card p-12 text-center text-muted text-[13px]">
-            Chargement du fichier sauvegardé pour {formatMonthLabel(selectedMonth)}…
+            Chargement du fichier {currency} sauvegardé pour {formatMonthLabel(selectedMonth)}…
           </div>
         ) : !sheet ? (
-          <Dropzone onFile={onFile} onPick={() => fileRef.current?.click()} />
+          <Dropzone currency={currency} onFile={onFile} onPick={() => fileRef.current?.click()} />
         ) : (
           <>
             <div className="card p-4 flex items-center gap-4">
@@ -349,7 +381,15 @@ export default function ExcelPage() {
   );
 }
 
-function Dropzone({ onFile, onPick }: { onFile: (f: File) => void; onPick: () => void }) {
+function Dropzone({
+  currency,
+  onFile,
+  onPick,
+}: {
+  currency: AccountCurrency;
+  onFile: (f: File) => void;
+  onPick: () => void;
+}) {
   const [drag, setDrag] = useState(false);
   return (
     <>
@@ -373,7 +413,9 @@ function Dropzone({ onFile, onPick }: { onFile: (f: File) => void; onPick: () =>
         <div className="w-14 h-14 rounded-full bg-panel2 border border-border mx-auto mb-4 flex items-center justify-center">
           <Upload size={22} className="text-accent" />
         </div>
-        <div className="text-[15px] font-medium">Glisse ton fichier Excel ici</div>
+        <div className="text-[15px] font-medium">
+          Dépose ici le fichier comptable <span className="font-mono text-accent">{currency}</span>
+        </div>
         <div className="text-[12px] text-muted mt-1">
           .xlsx, .xls ou .csv — la première ligne doit contenir les en-têtes.
         </div>

@@ -71,7 +71,7 @@ export default function RevenuesPage() {
   const net = totals.captured - totals.fees - totals.reserve;
   // Devise d'affichage des totaux : on prend celle du 1er revenu visible
   // (ils ont normalement tous la même par business).
-  const displayCurrency = revenues[0]?.currency ?? "CHF";
+  const displayCurrency = revenues[0]?.currency ?? "USD";
 
   return (
     <>
@@ -267,7 +267,7 @@ function GroupedRevenueList({
               <div className="ml-auto text-right">
                 <div className="text-[11px] text-muted">Sous-total net</div>
                 <div className="text-[13px] font-medium tabular-nums">
-                  {formatAmount(totalNet, items[0]?.currency ?? "CHF")}
+                  {formatAmount(totalNet, items[0]?.currency ?? "USD")}
                 </div>
               </div>
             </div>
@@ -295,7 +295,7 @@ function GroupedRevenueList({
               </button>
             )}
             <div className="text-[10px] text-muted mt-1 px-1 tabular-nums">
-              Capturé {formatAmount(totalCaptured, items[0]?.currency ?? "CHF")}
+              Capturé {formatAmount(totalCaptured, items[0]?.currency ?? "USD")}
             </div>
           </div>
         );
@@ -1023,7 +1023,8 @@ function NewRevenueForm({
     businessId: defaultBusinessId ?? businesses[0]?.id ?? "",
     month,
     processor: "Stripe",
-    currency: "CHF",
+    // Tous nos revenus sont en USD — plus de sélecteur dans le formulaire.
+    currency: "USD",
     capturedAmount: 0,
     fees: 0,
     rollingReservePercent: 0,
@@ -1051,7 +1052,7 @@ function NewRevenueForm({
         Capturé, frais et rolling reserve se renseignent après création (après l'upload du fichier
         pays).
       </div>
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-3 gap-3">
         <Field label="Business">
           <select
             className="input"
@@ -1072,19 +1073,7 @@ function NewRevenueForm({
             onChange={(e) => setDraft({ ...draft, processor: e.target.value })}
           />
         </Field>
-        <Field label="Devise">
-          <select
-            className="input"
-            value={draft.currency}
-            onChange={(e) => setDraft({ ...draft, currency: e.target.value })}
-          >
-            <option>CHF</option>
-            <option>EUR</option>
-            <option>USD</option>
-            <option>GBP</option>
-          </select>
-        </Field>
-        <Field label="Mois">
+        <Field label="Mois" hint="Devise toujours USD">
           <input className="input" value={draft.month} disabled />
         </Field>
       </div>

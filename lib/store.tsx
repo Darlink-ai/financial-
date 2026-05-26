@@ -16,9 +16,7 @@ import type {
   DriveConfig,
   Business,
   Revenue,
-  AccountCurrency,
 } from "./types";
-import { DEFAULT_ACCOUNT_CURRENCY } from "./types";
 
 function defaultMonth(): string {
   const d = new Date();
@@ -51,10 +49,8 @@ type Store = {
   revenues: Revenue[];
   selectedMonth: string;
   selectedBusinessId: string | "all";
-  selectedAccountCurrency: AccountCurrency;
   setSelectedMonth: (m: string) => void;
   setSelectedBusinessId: (id: string | "all") => void;
-  setSelectedAccountCurrency: (c: AccountCurrency) => void;
   updateInvoice: (id: string, patch: Partial<Invoice>) => void;
   addMailbox: (m: Mailbox) => void;
   removeMailbox: (id: string) => void;
@@ -113,9 +109,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [revenues, setRevenues] = useState<Revenue[]>([]);
   const [selectedMonth, setSelectedMonth] = useState<string>(defaultMonth());
   const [selectedBusinessId, setSelectedBusinessId] = useState<string | "all">("all");
-  const [selectedAccountCurrency, setSelectedAccountCurrency] = useState<AccountCurrency>(
-    DEFAULT_ACCOUNT_CURRENCY,
-  );
 
   const reloadFromDb = useCallback(async () => {
     try {
@@ -266,10 +259,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       revenues,
       selectedMonth,
       selectedBusinessId,
-      selectedAccountCurrency,
       setSelectedMonth,
       setSelectedBusinessId,
-      setSelectedAccountCurrency,
       updateInvoice,
       addMailbox,
       removeMailbox,
@@ -299,7 +290,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       revenues,
       selectedMonth,
       selectedBusinessId,
-      selectedAccountCurrency,
       updateInvoice,
       addMailbox,
       removeMailbox,
@@ -329,18 +319,14 @@ export function useStore(): Store {
 }
 
 export function useInvoicesForCurrentMonth(): Invoice[] {
-  const { invoices, selectedMonth, selectedAccountCurrency } = useStore();
+  const { invoices, selectedMonth } = useStore();
   return useMemo(
     () =>
       invoices.filter((i) => {
         const ref = i.invoiceDate ?? i.receivedAt;
-        if (monthOf(ref) !== selectedMonth) return false;
-        // Si l'invoice n'a pas de account_currency (legacy), on la traite
-        // comme USD (le default DB).
-        const acc = i.accountCurrency ?? "USD";
-        return acc === selectedAccountCurrency;
+        return monthOf(ref) === selectedMonth;
       }),
-    [invoices, selectedMonth, selectedAccountCurrency],
+    [invoices, selectedMonth],
   );
 }
 

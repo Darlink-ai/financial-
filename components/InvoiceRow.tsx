@@ -8,6 +8,7 @@ import { formatAmount, formatRelative, formatBytes, formatSwissDate } from "@/li
 
 export function InvoiceRow({ invoice }: { invoice: Invoice }) {
   const [open, setOpen] = useState(false);
+  const account = invoice.accountCurrency ?? "USD";
 
   return (
     <div id={invoice.id} className="border-b border-border last:border-b-0">
@@ -25,6 +26,30 @@ export function InvoiceRow({ invoice }: { invoice: Invoice }) {
             {invoice.creditor ?? "Créditeur inconnu"} ·{" "}
             {invoice.folderCode ? `${invoice.folderCode} — ${invoice.folderLabel}` : "Non classé"}
           </div>
+        </div>
+        <div className="w-16 text-center">
+          <span
+            className="inline-block font-mono text-[11px] font-medium px-2 py-0.5 rounded-md border"
+            style={{
+              color:
+                account === "USD" ? "#60a5fa" : account === "EUR" ? "#22d3ee" : "#a78bfa",
+              borderColor:
+                account === "USD"
+                  ? "rgba(96,165,250,0.35)"
+                  : account === "EUR"
+                  ? "rgba(34,211,238,0.35)"
+                  : "rgba(167,139,250,0.35)",
+              background:
+                account === "USD"
+                  ? "rgba(96,165,250,0.10)"
+                  : account === "EUR"
+                  ? "rgba(34,211,238,0.10)"
+                  : "rgba(167,139,250,0.10)",
+            }}
+            title={`Compte bancaire ${account}`}
+          >
+            {account}
+          </span>
         </div>
         <div className="text-[12px] text-muted w-28 text-right tabular-nums">
           {formatAmount(invoice.amount, invoice.currency)}
