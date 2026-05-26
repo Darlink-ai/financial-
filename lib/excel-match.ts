@@ -64,7 +64,7 @@ function parseDate(v: unknown): string | null {
  * Tout ce qui est avant cette ligne est considéré comme préambule
  * et ignoré lors du matching.
  */
-function detectColumns(sheet: ParsedSheet): {
+export function detectColumns(sheet: ParsedSheet): {
   idxCreditor: number;
   idxAmount: number;
   idxDate: number;

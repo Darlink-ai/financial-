@@ -10,6 +10,7 @@ import {
 import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, Download, Trash2 } from "lucide-react";
 import * as XLSX from "xlsx";
 import {
+  detectColumns,
   matchInvoicesAgainstSheet,
   type MatchResult,
   type ParsedSheet,
@@ -347,6 +348,8 @@ export default function ExcelPage() {
               <StatTile label="Factures sans match" value={unmatchedInvoices.length} tone={unmatchedInvoices.length > 0 ? "warn" : "neutral"} />
             </div>
 
+            <DetectedColumns sheet={sheet} />
+
             <SheetTable sheet={sheet} matchedRows={matchedRows} />
 
             {unmatchedInvoices.length > 0 && (
@@ -543,4 +546,46 @@ function formatCell(v: string | number | Date | null): string {
   if (v instanceof Date) return v.toLocaleDateString("fr-CH");
   if (typeof v === "number") return new Intl.NumberFormat("fr-CH").format(v);
   return String(v);
+}
+
+/**
+ * Affiche les colonnes que le matcher a détectées dans le fichier
+ * (Date, Description/créditeur, Montant, Code) + à partir de quelle
+ * ligne il commence vraiment les transactions.
+ */
+function DetectedColumns({ sheet }: { sheet: ParsedSheet }) {
+  const cols = detectColumns(sheet);
+  const fmt = (i: number) =>
+    i < 0 ? <span className="text-err">non trouvée</span> : (
+      <span className="text-text font-mono">col {i + 1}</span>
+    );
+  return (
+    <div className="card p-3 text-[11px] space-y-1">
+      <div className="text-[10px] uppercase tracking-wider text-muted">
+        Colonnes détectées par le matcher
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-1">
+        <div>
+          <span className="text-muted">Date : </span>
+          {fmt(cols.idxDate)}
+        </div>
+        <div>
+          <span className="text-muted">Description / créditeur : </span>
+          {fmt(cols.idxCreditor)}
+        </div>
+        <div>
+          <span className="text-muted">Débit / montant : </span>
+          {fmt(cols.idxAmount)}
+        </div>
+        <div>
+          <span className="text-muted">Code : </span>
+          {fmt(cols.idxCode)}
+        </div>
+      </div>
+      <div className="text-[10px] text-muted pt-1">
+        Données réelles à partir de la ligne {cols.dataStartRow + 2} (les{" "}
+        {cols.dataStartRow} ligne(s) avant = préambule ignoré).
+      </div>
+    </div>
+  );
 }
