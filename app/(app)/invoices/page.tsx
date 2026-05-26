@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { PageHeader } from "@/components/PageHeader";
 import { InvoiceRow } from "@/components/InvoiceRow";
 import { useInvoicesForCurrentMonth, formatMonthLabel, useStore } from "@/lib/store";
-import { RefreshCw, Search } from "lucide-react";
+import { RefreshCw, Search, Trash2 } from "lucide-react";
 import type { InvoiceStatus } from "@/lib/types";
 
 const filters: { id: "all" | InvoiceStatus; label: string }[] = [
@@ -19,9 +19,36 @@ const filters: { id: "all" | InvoiceStatus; label: string }[] = [
 
 export default function InvoicesPage() {
   const invoices = useInvoicesForCurrentMonth();
-  const { selectedMonth } = useStore();
+  const { selectedMonth, invoices: allInvoices, reloadFromDb } = useStore();
   const [filter, setFilter] = useState<(typeof filters)[number]["id"]>("all");
   const [q, setQ] = useState("");
+  const [wiping, setWiping] = useState(false);
+
+  const wipeAll = async () => {
+    const total = allInvoices.length;
+    if (total === 0) {
+      alert("Aucune facture à supprimer.");
+      return;
+    }
+    if (
+      !confirm(
+        `Supprimer définitivement les ${total} facture(s) (tous mois, tous statuts) ?\n\nCette action ne touche pas aux mailboxes Gmail, mappings comptables, Drive ni revenus.`,
+      )
+    )
+      return;
+    setWiping(true);
+    try {
+      const r = await fetch("/api/invoices", { method: "DELETE" });
+      if (!r.ok) {
+        const txt = await r.text();
+        alert(`Échec : HTTP ${r.status}\n${txt.slice(0, 200)}`);
+        return;
+      }
+      await reloadFromDb();
+    } finally {
+      setWiping(false);
+    }
+  };
 
   const filtered = useMemo(() => {
     return invoices
@@ -42,9 +69,20 @@ export default function InvoicesPage() {
         title="Factures"
         subtitle={`Factures détectées pour ${formatMonthLabel(selectedMonth)}, à chaque étape du pipeline.`}
         actions={
-          <button className="btn btn-primary">
-            <RefreshCw size={14} /> Synchroniser maintenant
-          </button>
+          <>
+            <button
+              onClick={wipeAll}
+              disabled={wiping || allInvoices.length === 0}
+              className="btn disabled:opacity-50"
+              title="Supprimer toutes les factures (tous mois, tous statuts)"
+            >
+              <Trash2 size={14} />
+              {wiping ? "Suppression…" : `Tout supprimer (${allInvoices.length})`}
+            </button>
+            <button className="btn btn-primary">
+              <RefreshCw size={14} /> Synchroniser maintenant
+            </button>
+          </>
         }
       />
 

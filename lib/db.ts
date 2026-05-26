@@ -704,6 +704,16 @@ export async function deleteMapping(id: string) {
 }
 
 // ---- Invoices ----
+/**
+ * Supprime toutes les factures (toutes statuts, tous mois confondus).
+ * Ne touche pas aux mailboxes, mappings, businesses, revenues, Drive, etc.
+ */
+export async function deleteAllInvoices(): Promise<number> {
+  const sql = client();
+  const result = await sql`DELETE FROM invoices`;
+  return result.count ?? 0;
+}
+
 export async function updateInvoice(id: string, patch: Partial<Invoice>): Promise<Invoice | null> {
   const sql = client();
   const [current] = await sql<RawInvoice[]>`SELECT * FROM invoices WHERE id = ${id}`;
