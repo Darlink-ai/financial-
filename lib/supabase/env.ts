@@ -1,15 +1,18 @@
 /**
- * Restriction d'accès : seuls les emails dont la partie domaine appartient à
- * cette liste sont autorisés à se connecter.
+ * Restriction d'accès : seuls ces emails exacts sont autorisés à se connecter.
+ * Toute autre adresse — même @famelink.ai — est refusée.
  */
-export const ALLOWED_EMAIL_DOMAINS = ["famelink.ai"];
+export const ALLOWED_EMAILS = [
+  "contact@famelink.ai",
+  "gauthier.koller@famelink.ai",
+  "robin.koller@famelink.ai",
+  "investisseurs@famelink.ai",
+];
 
 export function isAllowedEmail(email: string | null | undefined): boolean {
   if (!email) return false;
-  const at = email.lastIndexOf("@");
-  if (at < 0) return false;
-  const domain = email.slice(at + 1).toLowerCase().trim();
-  return ALLOWED_EMAIL_DOMAINS.includes(domain);
+  const normalized = email.toLowerCase().trim();
+  return ALLOWED_EMAILS.includes(normalized);
 }
 
 /**
