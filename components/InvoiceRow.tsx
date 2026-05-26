@@ -1,17 +1,61 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, ChevronRight, FileText, ExternalLink, Mail } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  FileText,
+  ExternalLink,
+  Mail,
+  RefreshCw,
+} from "lucide-react";
 import type { Invoice } from "@/lib/types";
 import { StatusBadge } from "./StatusBadge";
 import { formatAmount, formatRelative, formatBytes, formatSwissDate } from "@/lib/format";
+import { useStore } from "@/lib/store";
 
 export function InvoiceRow({ invoice }: { invoice: Invoice }) {
   const [open, setOpen] = useState(false);
+  const [reprocessing, setReprocessing] = useState(false);
+  const { reloadFromDb } = useStore();
   const account = invoice.accountCurrency ?? "USD";
   // Facture déjà rapprochée Excel → fond vert subtil + barre verte
   // à gauche, pour repérer en un coup d'œil ce qui est "fait".
   const isMatched = invoice.status === "matched";
+
+  const reprocess = async () => {
+    setReprocessing(true);
+    try {
+      const r = await fetch(`/api/invoices/${invoice.id}/reprocess`, {
+        method: "POST",
+      });
+      if (!r.ok) {
+        const data = (await r.json().catch(() => null)) as
+          | { message?: string }
+          | null;
+        alert(`Échec : ${data?.message ?? `HTTP ${r.status}`}`);
+        return;
+      }
+      const data = (await r.json()) as {
+        outcome: {
+          status: string;
+          uploadedToDrive: boolean;
+          matchedExcelRow: number | null;
+          errors: string[];
+        };
+      };
+      await reloadFromDb();
+      if (data.outcome.errors.length > 0) {
+        alert(
+          `Re-traitement terminé avec des avertissements :\n• ${data.outcome.errors.join("\n• ")}`,
+        );
+      }
+    } catch (e) {
+      alert(`Erreur : ${(e as Error).message}`);
+    } finally {
+      setReprocessing(false);
+    }
+  };
 
   return (
     <div
@@ -123,10 +167,30 @@ export function InvoiceRow({ invoice }: { invoice: Invoice }) {
               />
             </FieldGroup>
             <div className="flex gap-2 mt-4">
-              <button className="btn text-[12px]">
+              <a
+                href={`/api/invoices/${invoice.id}/pdf`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn text-[12px]"
+              >
                 Aperçu PDF <ExternalLink size={12} />
+              </a>
+              <button
+                onClick={reprocess}
+                disabled={reprocessing}
+                className="btn text-[12px] disabled:opacity-50"
+                title="Relance extraction + classification + Drive + match Excel"
+              >
+                {reprocessing ? (
+                  <>
+                    <RefreshCw size={12} className="animate-spin" /> Re-traitement…
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw size={12} /> Re-traiter
+                  </>
+                )}
               </button>
-              <button className="btn text-[12px]">Re-traiter</button>
             </div>
           </div>
         </div>

@@ -705,6 +705,30 @@ export async function deleteMapping(id: string) {
 
 // ---- Invoices ----
 /**
+ * Récupère une facture avec sa pièce jointe (base64) pour aperçu PDF
+ * ou re-traitement. Retourne null si l'id n'existe pas.
+ */
+export async function getInvoiceWithAttachment(id: string): Promise<{
+  invoice: Invoice;
+  attachmentB64: string | null;
+  fromEmail: string;
+  subject: string;
+} | null> {
+  const sql = client();
+  const rows = await sql<(RawInvoice & {
+    attachment_b64: string | null;
+  })[]>`SELECT * FROM invoices WHERE id = ${id} LIMIT 1`;
+  if (rows.length === 0) return null;
+  const r = rows[0];
+  return {
+    invoice: mapInvoice(r),
+    attachmentB64: r.attachment_b64,
+    fromEmail: r.from_email,
+    subject: r.subject,
+  };
+}
+
+/**
  * Supprime toutes les factures (toutes statuts, tous mois confondus).
  * Ne touche pas aux mailboxes, mappings, businesses, revenues, Drive, etc.
  */
