@@ -829,6 +829,35 @@ export async function getStuckAnalyzingInvoiceIds(): Promise<string[]> {
   return rows.map((r) => r.id);
 }
 
+/**
+ * Trouve les autres factures matchées à la même ligne Excel (mois + compte).
+ * Utilisé pour détecter les doublons facture/reçu qui pointent vers une
+ * même opération bancaire.
+ */
+export async function findInvoicesMatchingRow(opts: {
+  excludeId: string;
+  accountCurrency: string;
+  rowIndex: number;
+}): Promise<{ id: string; receivedAt: string; finalName: string | null }[]> {
+  const sql = client();
+  const rows = await sql<{
+    id: string;
+    received_at: Date;
+    final_name: string | null;
+  }[]>`
+    SELECT id, received_at, final_name FROM invoices
+    WHERE excel_row_matched = ${opts.rowIndex}
+      AND account_currency = ${opts.accountCurrency}
+      AND id != ${opts.excludeId}
+      AND status = 'matched'
+  `;
+  return rows.map((r) => ({
+    id: r.id,
+    receivedAt: r.received_at.toISOString(),
+    finalName: r.final_name,
+  }));
+}
+
 /** Liste les IDs de toutes les factures actuellement en status="manual". */
 export async function getManualInvoiceIds(): Promise<string[]> {
   const sql = client();

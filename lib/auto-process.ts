@@ -21,6 +21,8 @@ import {
   getDriveAccessToken,
 } from "./upload-to-drive";
 import {
+  deleteInvoice,
+  findInvoicesMatchingRow,
   getAllState,
   getExcelSheet,
   getInvoiceRetryCount,
@@ -46,7 +48,7 @@ import type {
 export async function rematchInvoicesForBucket(opts: {
   month: string;
   accountCurrency: string;
-}): Promise<{ matched: number; cleared: number }> {
+}): Promise<{ matched: number; cleared: number; dedupedDuplicates: number }> {
   const sheet = await getExcelSheet(opts.month, opts.accountCurrency);
   const state = await getAllState();
 
@@ -62,21 +64,58 @@ export async function rematchInvoicesForBucket(opts: {
 
   // Si pas de sheet : on ne touche rien (la sheet pourrait être en cours
   // d'upload, on n'a pas envie de casser le state existant).
-  if (!sheet) return { matched: 0, cleared: 0 };
+  if (!sheet) return { matched: 0, cleared: 0, dedupedDuplicates: 0 };
 
   let matched = 0;
   let cleared = 0;
+  let dedupedDuplicates = 0;
   const matches = matchInvoicesAgainstSheet(
     { headers: sheet.headers, rows: sheet.rows },
     candidates,
   );
-  const matchedByInvoice = new Map(matches.map((m) => [m.invoice.id, m]));
+
+  // ---- Dédoublonnage : on groupe par rowIndex et on garde le plus ancien ----
+  // Plusieurs invoices matchant la même ligne Excel = doublons (facture + reçu).
+  // L'ID survivant est celui de la facture la plus ancienne par receivedAt.
+  const byRow = new Map<number, typeof matches>();
+  for (const m of matches) {
+    const arr = byRow.get(m.rowIndex) ?? [];
+    arr.push(m);
+    byRow.set(m.rowIndex, arr);
+  }
+  const idsToDelete = new Set<string>();
+  for (const [, group] of byRow) {
+    if (group.length <= 1) continue;
+    // Trier par receivedAt asc, le premier est le keeper
+    const sorted = [...group].sort(
+      (a, b) =>
+        new Date(a.invoice.receivedAt).getTime() -
+        new Date(b.invoice.receivedAt).getTime(),
+    );
+    for (const loser of sorted.slice(1)) {
+      idsToDelete.add(loser.invoice.id);
+    }
+  }
+  for (const id of idsToDelete) {
+    try {
+      await deleteInvoice(id);
+      dedupedDuplicates++;
+    } catch (e) {
+      console.error("rematch dedup delete failed for", id, e);
+    }
+  }
+
+  const matchedByInvoice = new Map(
+    matches
+      .filter((m) => !idsToDelete.has(m.invoice.id))
+      .map((m) => [m.invoice.id, m]),
+  );
 
   for (const inv of candidates) {
+    if (idsToDelete.has(inv.id)) continue; // déjà supprimée, on skip
     const m = matchedByInvoice.get(inv.id);
     if (m) {
       const rowExcel = m.rowIndex + 2;
-      // Excel = source de vérité — on récupère son montant.
       const authoritativeAmount =
         m.excelAmount != null && Number.isFinite(m.excelAmount)
           ? Math.abs(m.excelAmount)
@@ -97,7 +136,6 @@ export async function rematchInvoicesForBucket(opts: {
         matched++;
       }
     } else if (inv.status === "matched") {
-      // Avant matchée mais plus dans la nouvelle sheet → on rétrograde.
       await updateInvoice(inv.id, {
         excelRowMatched: null,
         status: inv.drivePath ? "uploaded" : "classified",
@@ -105,7 +143,7 @@ export async function rematchInvoicesForBucket(opts: {
       cleared++;
     }
   }
-  return { matched, cleared };
+  return { matched, cleared, dedupedDuplicates };
 }
 
 export type AutoProcessInput = {
@@ -124,6 +162,10 @@ export type AutoProcessOutcome = {
   uploadedToDrive: boolean;
   matchedExcelRow: number | null;
   errors: string[];
+  /** Si la facture a été supprimée comme doublon d'une autre invoice. */
+  deletedAsDuplicateOf?: string | null;
+  /** Autres invoices supprimées en tant que doublons (cas où celle-ci a "gagné"). */
+  deletedOtherIds?: string[];
 };
 
 export async function autoProcessInvoice(
@@ -345,6 +387,57 @@ async function autoProcessInvoiceInner(
     errors.push(`excel: ${(e as Error).message}`);
   }
 
+  // ---- 4b. Dédoublonnage facture / reçu ----
+  // Quand un fournisseur envoie un invoice ET un receipt pour la même
+  // opération bancaire, on a 2 invoices en DB qui ciblent la même ligne
+  // Excel. On garde la plus ancienne (typiquement la facture, arrivée
+  // avant le reçu) et on supprime les autres.
+  let deletedAsDuplicateOf: string | null = null;
+  const deletedOtherIds: string[] = [];
+  if (matchedRow !== null) {
+    try {
+      const others = await findInvoicesMatchingRow({
+        excludeId: input.invoiceId,
+        accountCurrency,
+        rowIndex: matchedRow,
+      });
+      if (others.length > 0) {
+        const currentTime = new Date(input.receivedAt).getTime();
+        // Existant plus ancien que la facture courante → on est le doublon.
+        const olderExisting = others.find(
+          (o) => new Date(o.receivedAt).getTime() <= currentTime,
+        );
+        if (olderExisting) {
+          // Self est le doublon : on se supprime et on sort proprement.
+          await deleteInvoice(input.invoiceId);
+          return {
+            status: "matched", // statut conceptuel ; la row n'existe plus
+            classified: true,
+            uploadedToDrive: uploaded,
+            matchedExcelRow: matchedRow,
+            errors: [
+              ...errors,
+              `Doublon supprimé : la ligne Excel #${matchedRow} est déjà couverte par ${olderExisting.finalName ?? olderExisting.id}.`,
+            ],
+            deletedAsDuplicateOf: olderExisting.id,
+          };
+        } else {
+          // Self est le plus ancien : on garde + on supprime les newer.
+          for (const o of others) {
+            try {
+              await deleteInvoice(o.id);
+              deletedOtherIds.push(o.id);
+            } catch (e) {
+              console.error("dedup delete failed for", o.id, e);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.error("dedup check failed", e);
+    }
+  }
+
   // ---- Status final ----
   // - matched  → ligne Excel trouvée (top du happy path)
   // - uploaded → sur Drive mais Excel pas encore matchée
@@ -367,5 +460,7 @@ async function autoProcessInvoiceInner(
     uploadedToDrive: uploaded,
     matchedExcelRow: matchedRow,
     errors,
+    deletedAsDuplicateOf,
+    deletedOtherIds,
   };
 }
