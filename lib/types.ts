@@ -112,6 +112,14 @@ export type CountryRevenue = {
 /**
  * Comptage des transactions extraites du fichier upload (colonne 1 = statut).
  * Les noms suivent la nomenclature processeur (Adyen / Stripe…).
+ *
+ * Données financières supplémentaires (extraites du Billing Statement) :
+ * - refundAmount / chargebackAmount : montants débités (déduits du gross
+ *   pour le calcul du Net).
+ * - payoutAmountEur : montant exact que le processeur a viré sur le compte
+ *   bancaire en EUR. Quand > 0, c'est la source de vérité pour l'affichage
+ *   EUR (court-circuite le taux FX statique pour intégrer le markup FX du
+ *   processeur).
  */
 export type TxCounts = {
   authorized: number;       // pre-auths qui n'ont jamais été capturées
@@ -122,6 +130,9 @@ export type TxCounts = {
   retrievalRequest: number;
   preArbitration: number;
   wires: number;            // nb de virements bancaires sortants / mois
+  refundAmount: number;     // montant total remboursé sur la période
+  chargebackAmount: number; // montant total des chargebacks sur la période
+  payoutAmountEur: number;  // montant viré sur le compte bancaire EUR
 };
 
 export const EMPTY_TX_COUNTS: TxCounts = {
@@ -133,6 +144,9 @@ export const EMPTY_TX_COUNTS: TxCounts = {
   retrievalRequest: 0,
   preArbitration: 0,
   wires: 4,                 // 4 virements par défaut (modifiable)
+  refundAmount: 0,
+  chargebackAmount: 0,
+  payoutAmountEur: 0,       // 0 = pas renseigné, on retombe sur le FX statique
 };
 
 /**
@@ -166,10 +180,10 @@ export type FeeRates = {
 };
 
 export const DEFAULT_FEE_RATES: FeeRates = {
-  authFee: 0.15,
-  captureFee: 0.10,
-  declinedFee: 0.15,
-  refundFee: 0.50,
+  authFee: 0,            // EMP ne facture pas d'auth fee séparée pour ce compte
+  captureFee: 0.27,      // EMP "Sale Approved" rate vu sur statement réel
+  declinedFee: 0.16,     // EMP "Sale Declined"
+  refundFee: 0.55,       // EMP "Refund Approved"
   chargebackFee: 35.0,
   retrievalFee: 9.0,
   preArbitrationFee: 24.95,

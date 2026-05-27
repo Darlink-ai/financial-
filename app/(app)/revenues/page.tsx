@@ -62,12 +62,16 @@ export default function RevenuesPage() {
 
   const active = revenues.find((r) => r.id === activeId) ?? revenues[0] ?? null;
 
-  // Totals (across visible revenues). Les frais sont recalculés en live
-  // à partir des compteurs + rates pour éviter toute désync avec le
-  // détail affiché dans le panneau de droite.
+  // Totals (across visible revenues), tous en EUR.
   //
-  // Conversion en EUR via les taux mensuels (EMP reverse en EUR sur le
-  // compte bancaire — c'est donc la devise pertinente pour l'utilisateur).
+  // Net par revenu :
+  //   - Si payoutAmountEur > 0 → on prend cette valeur (montant effectif viré
+  //     par le processeur, intègre déjà le markup FX du processeur).
+  //   - Sinon → fallback FX statique : capturedAmount - fees - reserve
+  //     - refundAmount - chargebackAmount, convertis en EUR via taux du mois.
+  //
+  // Capturé / Frais / Reserve sont toujours FX-convertis (on n'a pas la
+  // décomposition en EUR via le statement, juste le total).
   const totals = useMemo(() => {
     return revenues.reduce(
       (acc, r) => {
@@ -77,6 +81,10 @@ export default function RevenuesPage() {
           r.capturedAmount,
         );
         const reserveLocal = (r.capturedAmount * r.rollingReservePercent) / 100;
+        const refundAmt = r.txCounts.refundAmount ?? 0;
+        const chargebackAmt = r.txCounts.chargebackAmount ?? 0;
+        const payoutEur = r.txCounts.payoutAmountEur ?? 0;
+
         acc.captured += convertAmount(
           r.capturedAmount,
           r.currency,
@@ -95,13 +103,32 @@ export default function RevenuesPage() {
           DISPLAY_CURRENCY,
           selectedMonth,
         );
+        acc.debits += convertAmount(
+          refundAmt + chargebackAmt,
+          r.currency,
+          DISPLAY_CURRENCY,
+          selectedMonth,
+        );
+        // Net par revenu (en EUR) : prend payoutEur si renseigné.
+        if (payoutEur > 0) {
+          acc.net += payoutEur;
+        } else {
+          const netLocal =
+            r.capturedAmount - liveFees - reserveLocal - refundAmt - chargebackAmt;
+          acc.net += convertAmount(
+            netLocal,
+            r.currency,
+            DISPLAY_CURRENCY,
+            selectedMonth,
+          );
+        }
         return acc;
       },
-      { captured: 0, fees: 0, reserve: 0 },
+      { captured: 0, fees: 0, reserve: 0, debits: 0, net: 0 },
     );
   }, [revenues, selectedMonth]);
 
-  const net = totals.captured - totals.fees - totals.reserve;
+  const net = totals.net;
   const displayCurrency = DISPLAY_CURRENCY;
 
   return (
@@ -329,9 +356,15 @@ function GroupedRevenueList({
           0,
         );
         const totalNetEur = items.reduce((s, r) => {
+          // Si payoutAmountEur est fourni → source de vérité directe.
+          const payoutEur = r.txCounts.payoutAmountEur ?? 0;
+          if (payoutEur > 0) return s + payoutEur;
           const fees = computeTotalFees(r.txCounts, r.feeRates, r.capturedAmount);
           const reserve = (r.capturedAmount * r.rollingReservePercent) / 100;
-          const netLocal = r.capturedAmount - fees - reserve;
+          const refundAmt = r.txCounts.refundAmount ?? 0;
+          const chargebackAmt = r.txCounts.chargebackAmount ?? 0;
+          const netLocal =
+            r.capturedAmount - fees - reserve - refundAmt - chargebackAmt;
           return s + convertAmount(netLocal, r.currency, DISPLAY_CURRENCY, month);
         }, 0);
         return (
@@ -402,9 +435,18 @@ function RevenueListItem({
     revenue.feeRates,
     revenue.capturedAmount,
   );
-  const netLocal = revenue.capturedAmount - computedFees - reserveAmount;
-  // Conversion vers la devise d'affichage (EUR).
-  const netEur = convertAmount(netLocal, revenue.currency, DISPLAY_CURRENCY, month);
+  // Refund + chargeback : montants débités du gross (écart 5).
+  const refundAmt = revenue.txCounts.refundAmount ?? 0;
+  const chargebackAmt = revenue.txCounts.chargebackAmount ?? 0;
+  const netLocal =
+    revenue.capturedAmount - computedFees - reserveAmount - refundAmt - chargebackAmt;
+  // Net en EUR : payoutAmountEur si renseigné (écart 3, FX EMP effectif),
+  // sinon fallback FX statique.
+  const payoutEur = revenue.txCounts.payoutAmountEur ?? 0;
+  const netEur =
+    payoutEur > 0
+      ? payoutEur
+      : convertAmount(netLocal, revenue.currency, DISPLAY_CURRENCY, month);
   const capturedEur = convertAmount(
     revenue.capturedAmount,
     revenue.currency,
@@ -475,7 +517,10 @@ function RevenueDetail({
     revenue.feeRates,
     revenue.capturedAmount,
   );
-  const net = revenue.capturedAmount - computedFees - reserveAmount;
+  const refundAmt = revenue.txCounts.refundAmount ?? 0;
+  const chargebackAmt = revenue.txCounts.chargebackAmount ?? 0;
+  const net =
+    revenue.capturedAmount - computedFees - reserveAmount - refundAmt - chargebackAmt;
   const feesPct =
     revenue.capturedAmount > 0
       ? (computedFees / revenue.capturedAmount) * 100
@@ -631,6 +676,54 @@ function RevenueDetail({
             <span className="text-[12px] text-muted">mois</span>
           </div>
         </Field>
+
+        {/* Détails issus du billing statement EMP : montants débits + payout EUR
+            effectif (intègre le markup FX du processeur). */}
+        <Field
+          label="Refunds — montant"
+          hint="Total des remboursements de la période (déduit du Net)"
+        >
+          <AmountInput
+            value={refundAmt}
+            currency={revenue.currency}
+            onChange={(v) =>
+              onUpdate({
+                txCounts: { ...revenue.txCounts, refundAmount: v },
+              })
+            }
+            disabled={locked}
+          />
+        </Field>
+        <Field
+          label="Chargebacks — montant"
+          hint="Total des chargebacks de la période (déduit du Net)"
+        >
+          <AmountInput
+            value={chargebackAmt}
+            currency={revenue.currency}
+            onChange={(v) =>
+              onUpdate({
+                txCounts: { ...revenue.txCounts, chargebackAmount: v },
+              })
+            }
+            disabled={locked}
+          />
+        </Field>
+        <Field
+          label="Payment Amount (EUR)"
+          hint="Montant exact viré par le processeur sur ton compte bancaire. Si renseigné, écrase le calcul FX statique pour le Net en EUR (intègre le markup FX d'EMP)."
+        >
+          <AmountInput
+            value={revenue.txCounts.payoutAmountEur ?? 0}
+            currency="EUR"
+            onChange={(v) =>
+              onUpdate({
+                txCounts: { ...revenue.txCounts, payoutAmountEur: v },
+              })
+            }
+            disabled={locked}
+          />
+        </Field>
       </div>
 
       <div className="px-5 pb-5">
@@ -650,6 +743,15 @@ function RevenueDetail({
               {formatAmount(reserveAmount, revenue.currency)}
             </span>{" "}
             <span className="text-muted">({revenue.rollingReservePercent}%)</span>
+            {(refundAmt > 0 || chargebackAmt > 0) && (
+              <>
+                {" "}
+                − refunds{" "}
+                <span className="font-mono">{formatAmount(refundAmt, revenue.currency)}</span>{" "}
+                − chargebacks{" "}
+                <span className="font-mono">{formatAmount(chargebackAmt, revenue.currency)}</span>
+              </>
+            )}
           </div>
         </div>
       </div>
