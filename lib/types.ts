@@ -116,6 +116,10 @@ export type CountryRevenue = {
  * Données financières supplémentaires (extraites du Billing Statement) :
  * - refundAmount / chargebackAmount : montants débités (déduits du gross
  *   pour le calcul du Net).
+ * - interchangeAmount / schemeAmount : frais pass-through facturés à
+ *   Visa/MC et aux banques émettrices, qu'EMP nous répercute. Variables
+ *   par période selon les cartes utilisées, donc on copie depuis le
+ *   statement plutôt qu'un %.
  * - payoutAmountEur : montant exact que le processeur a viré sur le compte
  *   bancaire en EUR. Quand > 0, c'est la source de vérité pour l'affichage
  *   EUR (court-circuite le taux FX statique pour intégrer le markup FX du
@@ -132,6 +136,8 @@ export type TxCounts = {
   wires: number;            // nb de virements bancaires sortants / mois
   refundAmount: number;     // montant total remboursé sur la période
   chargebackAmount: number; // montant total des chargebacks sur la période
+  interchangeAmount: number; // pass-through Interchange Fees (statement)
+  schemeAmount: number;      // pass-through Scheme Fees (Visa/MC, statement)
   payoutAmountEur: number;  // montant viré sur le compte bancaire EUR
 };
 
@@ -146,6 +152,8 @@ export const EMPTY_TX_COUNTS: TxCounts = {
   wires: 4,                 // 4 virements par défaut (modifiable)
   refundAmount: 0,
   chargebackAmount: 0,
+  interchangeAmount: 0,
+  schemeAmount: 0,
   payoutAmountEur: 0,       // 0 = pas renseigné, on retombe sur le FX statique
 };
 
@@ -195,6 +203,12 @@ export const DEFAULT_FEE_RATES: FeeRates = {
 
 /**
  * Calcule le total des frais à partir des compteurs + rates + capturé.
+ *
+ * Le total inclut :
+ * - frais par transaction (auth, capture, declined, refund, etc.)
+ * - markup IC++ du processeur (% sur le capturé)
+ * - pass-through Interchange + Scheme (montants exacts du statement)
+ * - frais fixes mensuels (service, secure code, wires)
  */
 export function computeTotalFees(
   counts: TxCounts,
@@ -210,6 +224,11 @@ export function computeTotalFees(
       counts.retrievalRequest * rates.retrievalFee +
       counts.preArbitration * rates.preArbitrationFee +
       (capturedAmount * rates.percentRate) / 100 +
+      // Pass-through Interchange + Scheme fees du statement (écart 1).
+      // Variables selon les cartes utilisées par les clients, donc copiés
+      // tels quels depuis le billing statement, pas en %.
+      (counts.interchangeAmount ?? 0) +
+      (counts.schemeAmount ?? 0) +
       rates.monthlyServiceFee +
       rates.monthlySecureCodeFee +
       counts.wires * rates.wireTransferFee, // 4 wires × tarif par défaut

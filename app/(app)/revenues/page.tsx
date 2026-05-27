@@ -677,8 +677,8 @@ function RevenueDetail({
           </div>
         </Field>
 
-        {/* Détails issus du billing statement EMP : montants débits + payout EUR
-            effectif (intègre le markup FX du processeur). */}
+        {/* Détails issus du billing statement EMP : montants débits + frais
+            pass-through + payout EUR effectif (intègre le markup FX). */}
         <Field
           label="Refunds — montant"
           hint="Total des remboursements de la période (déduit du Net)"
@@ -704,6 +704,36 @@ function RevenueDetail({
             onChange={(v) =>
               onUpdate({
                 txCounts: { ...revenue.txCounts, chargebackAmount: v },
+              })
+            }
+            disabled={locked}
+          />
+        </Field>
+        <Field
+          label="Interchange Fees (pass-through)"
+          hint="Ligne « Interchange Fees » du statement EMP. Frais payés aux banques émettrices, ~1,5% du gross, variable selon les cartes."
+        >
+          <AmountInput
+            value={revenue.txCounts.interchangeAmount ?? 0}
+            currency={revenue.currency}
+            onChange={(v) =>
+              onUpdate({
+                txCounts: { ...revenue.txCounts, interchangeAmount: v },
+              })
+            }
+            disabled={locked}
+          />
+        </Field>
+        <Field
+          label="Scheme Fees (pass-through)"
+          hint="Ligne « Scheme Fees » du statement EMP. Frais payés à Visa/MC, ~1,5% du gross, variable selon les volumes."
+        >
+          <AmountInput
+            value={revenue.txCounts.schemeAmount ?? 0}
+            currency={revenue.currency}
+            onChange={(v) =>
+              onUpdate({
+                txCounts: { ...revenue.txCounts, schemeAmount: v },
               })
             }
             disabled={locked}
