@@ -32,7 +32,7 @@ import {
   Pencil,
   Save,
 } from "lucide-react";
-import type { Revenue, Business, FeeRates, TxCounts } from "@/lib/types";
+import type { Revenue, Business, FeeRates, TxCounts, AccountCurrency } from "@/lib/types";
 import {
   DEFAULT_FEE_RATES,
   EMPTY_TX_COUNTS,
@@ -40,6 +40,12 @@ import {
   computeTotalFees,
 } from "@/lib/types";
 import { formatAmount } from "@/lib/format";
+import { convertAmount, getFxRate, hasMonthlyOverride } from "@/lib/fx";
+import { ArrowRightLeft } from "lucide-react";
+
+// Devise d'affichage : EUR, car EMP reverse en EUR sur le compte bancaire.
+// Les montants stockés sont convertis vers EUR via les taux mensuels.
+const DISPLAY_CURRENCY: AccountCurrency = "EUR";
 
 export default function RevenuesPage() {
   const {
@@ -59,6 +65,9 @@ export default function RevenuesPage() {
   // Totals (across visible revenues). Les frais sont recalculés en live
   // à partir des compteurs + rates pour éviter toute désync avec le
   // détail affiché dans le panneau de droite.
+  //
+  // Conversion en EUR via les taux mensuels (EMP reverse en EUR sur le
+  // compte bancaire — c'est donc la devise pertinente pour l'utilisateur).
   const totals = useMemo(() => {
     return revenues.reduce(
       (acc, r) => {
@@ -67,19 +76,33 @@ export default function RevenuesPage() {
           r.feeRates,
           r.capturedAmount,
         );
-        acc.captured += r.capturedAmount;
-        acc.fees += liveFees;
-        acc.reserve += (r.capturedAmount * r.rollingReservePercent) / 100;
+        const reserveLocal = (r.capturedAmount * r.rollingReservePercent) / 100;
+        acc.captured += convertAmount(
+          r.capturedAmount,
+          r.currency,
+          DISPLAY_CURRENCY,
+          selectedMonth,
+        );
+        acc.fees += convertAmount(
+          liveFees,
+          r.currency,
+          DISPLAY_CURRENCY,
+          selectedMonth,
+        );
+        acc.reserve += convertAmount(
+          reserveLocal,
+          r.currency,
+          DISPLAY_CURRENCY,
+          selectedMonth,
+        );
         return acc;
       },
       { captured: 0, fees: 0, reserve: 0 },
     );
-  }, [revenues]);
+  }, [revenues, selectedMonth]);
 
   const net = totals.captured - totals.fees - totals.reserve;
-  // Devise d'affichage des totaux : on prend celle du 1er revenu visible
-  // (ils ont normalement tous la même par business).
-  const displayCurrency = revenues[0]?.currency ?? "USD";
+  const displayCurrency = DISPLAY_CURRENCY;
 
   return (
     <>
@@ -97,6 +120,9 @@ export default function RevenuesPage() {
       />
 
       <div className="p-8 space-y-6">
+        {/* Bandeau FX : indique les taux du mois utilisés pour la conversion en EUR. */}
+        <FxBanner month={selectedMonth} />
+
         {/* Totals */}
         <section className="grid grid-cols-4 gap-4">
           <TotalTile
@@ -166,6 +192,7 @@ export default function RevenuesPage() {
                 businesses={businesses}
                 activeId={active?.id ?? null}
                 onSelect={setActiveId}
+                month={selectedMonth}
                 onAddForBusiness={(businessId) => {
                   setCreating(true);
                   // Pre-fill the business in the form via a state hint — handled by selectedBusinessId
@@ -194,6 +221,43 @@ export default function RevenuesPage() {
         )}
       </div>
     </>
+  );
+}
+
+/** Bandeau qui rappelle les taux FX utilisés pour la conversion vers EUR.
+ *  Aide l'utilisateur à comprendre comment les chiffres affichés ont été
+ *  obtenus, et à repérer s'il faut éditer les taux pour ce mois. */
+function FxBanner({ month }: { month: string }) {
+  const usdToEur = getFxRate(month, "USD", "EUR");
+  const chfToEur = getFxRate(month, "CHF", "EUR");
+  const exact = hasMonthlyOverride(month);
+  return (
+    <div className="card px-5 py-3 flex items-center gap-4 flex-wrap text-[12px]">
+      <div className="flex items-center gap-2 text-text">
+        <ArrowRightLeft size={14} className="text-accent" />
+        <span className="font-medium">
+          Devise d&apos;affichage : EUR — taux moyens du mois
+        </span>
+      </div>
+      <div className="flex items-center gap-4 text-muted">
+        <span>
+          1 USD ={" "}
+          <span className="font-mono text-text">{usdToEur.toFixed(4)} EUR</span>
+        </span>
+        <span>
+          1 CHF ={" "}
+          <span className="font-mono text-text">{chfToEur.toFixed(4)} EUR</span>
+        </span>
+        <span>
+          1 EUR = <span className="font-mono text-text">1.0000 EUR</span>
+        </span>
+      </div>
+      <div className="text-[11px] text-muted ml-auto">
+        {exact
+          ? "Taux exacts du mois"
+          : "Approximations stables (à brancher sur un feed FX réel)"}
+      </div>
+    </div>
   );
 }
 
@@ -237,6 +301,7 @@ function GroupedRevenueList({
   activeId,
   onSelect,
   showAddPerBusiness,
+  month,
 }: {
   revenues: Revenue[];
   businesses: Business[];
@@ -244,6 +309,8 @@ function GroupedRevenueList({
   onSelect: (id: string) => void;
   onAddForBusiness: (businessId: string) => void;
   showAddPerBusiness: boolean;
+  /** Mois sélectionné — utilisé pour les taux FX de conversion en EUR. */
+  month: string;
 }) {
   const { setSelectedBusinessId } = useStore();
   // Group by businessId, only show businesses that have at least one revenue.
@@ -254,15 +321,19 @@ function GroupedRevenueList({
   return (
     <>
       {groups.map(({ business, items }) => {
-        const totalCaptured = items.reduce((s, r) => s + r.capturedAmount, 0);
-        const totalNet = items.reduce(
+        // Sous-totaux convertis dans la devise d'affichage (EUR), en
+        // itérant chaque revenu pour respecter sa propre devise source.
+        const totalCapturedEur = items.reduce(
           (s, r) =>
-            s +
-            (r.capturedAmount -
-              computeTotalFees(r.txCounts, r.feeRates, r.capturedAmount) -
-              (r.capturedAmount * r.rollingReservePercent) / 100),
+            s + convertAmount(r.capturedAmount, r.currency, DISPLAY_CURRENCY, month),
           0,
         );
+        const totalNetEur = items.reduce((s, r) => {
+          const fees = computeTotalFees(r.txCounts, r.feeRates, r.capturedAmount);
+          const reserve = (r.capturedAmount * r.rollingReservePercent) / 100;
+          const netLocal = r.capturedAmount - fees - reserve;
+          return s + convertAmount(netLocal, r.currency, DISPLAY_CURRENCY, month);
+        }, 0);
         return (
           <div key={business.id}>
             <div className="flex items-center gap-2 px-1 mb-2">
@@ -275,7 +346,7 @@ function GroupedRevenueList({
               <div className="ml-auto text-right">
                 <div className="text-[11px] text-muted">Sous-total net</div>
                 <div className="text-[13px] font-medium tabular-nums">
-                  {formatAmount(totalNet, items[0]?.currency ?? "USD")}
+                  {formatAmount(totalNetEur, DISPLAY_CURRENCY)}
                 </div>
               </div>
             </div>
@@ -286,6 +357,7 @@ function GroupedRevenueList({
                   revenue={r}
                   active={activeId === r.id}
                   onClick={() => onSelect(r.id)}
+                  month={month}
                 />
               ))}
             </div>
@@ -303,7 +375,7 @@ function GroupedRevenueList({
               </button>
             )}
             <div className="text-[10px] text-muted mt-1 px-1 tabular-nums">
-              Capturé {formatAmount(totalCaptured, items[0]?.currency ?? "USD")}
+              Capturé {formatAmount(totalCapturedEur, DISPLAY_CURRENCY)}
             </div>
           </div>
         );
@@ -316,10 +388,13 @@ function RevenueListItem({
   revenue,
   active,
   onClick,
+  month,
 }: {
   revenue: Revenue;
   active: boolean;
   onClick: () => void;
+  /** Mois sélectionné — utilisé pour les taux FX. */
+  month: string;
 }) {
   const reserveAmount = (revenue.capturedAmount * revenue.rollingReservePercent) / 100;
   const computedFees = computeTotalFees(
@@ -327,7 +402,15 @@ function RevenueListItem({
     revenue.feeRates,
     revenue.capturedAmount,
   );
-  const net = revenue.capturedAmount - computedFees - reserveAmount;
+  const netLocal = revenue.capturedAmount - computedFees - reserveAmount;
+  // Conversion vers la devise d'affichage (EUR).
+  const netEur = convertAmount(netLocal, revenue.currency, DISPLAY_CURRENCY, month);
+  const capturedEur = convertAmount(
+    revenue.capturedAmount,
+    revenue.currency,
+    DISPLAY_CURRENCY,
+    month,
+  );
   const validated = !!revenue.validatedAt;
   return (
     <button
@@ -350,13 +433,19 @@ function RevenueListItem({
         )}
       </div>
       <div className="text-[16px] font-semibold leading-none tabular-nums">
-        {formatAmount(net, revenue.currency)}
+        {formatAmount(netEur, DISPLAY_CURRENCY)}
       </div>
       <div className="text-[11px] text-muted mt-1.5 flex items-center gap-2">
-        <span>{formatAmount(revenue.capturedAmount, revenue.currency)} capturé</span>
+        <span>{formatAmount(capturedEur, DISPLAY_CURRENCY)} capturé</span>
         <ChevronRight size={10} />
-        <span>{formatAmount(net, revenue.currency)} net</span>
+        <span>{formatAmount(netEur, DISPLAY_CURRENCY)} net</span>
       </div>
+      {revenue.currency !== DISPLAY_CURRENCY && (
+        <div className="text-[10px] text-muted mt-1 tabular-nums">
+          source : {formatAmount(revenue.capturedAmount, revenue.currency)} →{" "}
+          {formatAmount(capturedEur, DISPLAY_CURRENCY)}
+        </div>
+      )}
     </button>
   );
 }

@@ -25,40 +25,11 @@ import {
 import type { Period } from "@/components/AnalysePeriodPicker";
 import { useStore } from "@/lib/store";
 import type { AccountCurrency, Business, Revenue } from "@/lib/types";
-
-/**
- * Taux de change par défaut (1 unité de la devise = X CHF).
- * Moyennes approximatives 2024-2026. À surcharger par mois via
- * MONTHLY_FX_TO_CHF pour plus de précision.
- *
- * TODO : intégrer un vrai feed FX (exchangerate.host, ECB, BNS…) pour
- * obtenir les taux moyens du mois en réel et virer ces constantes.
- */
-const DEFAULT_FX_TO_CHF: Record<AccountCurrency, number> = {
-  CHF: 1,
-  USD: 0.88,
-  EUR: 0.94,
-};
-
-/**
- * Overrides par mois — quand on connaît le taux moyen exact pour un
- * mois donné. Format : "YYYY-MM" → { USD?, EUR? } (CHF est toujours 1).
- */
-const MONTHLY_FX_TO_CHF: Record<
-  string,
-  Partial<Record<AccountCurrency, number>>
-> = {
-  // Exemples (à remplir avec des valeurs BNS quand on les intègre) :
-  // "2026-01": { USD: 0.87, EUR: 0.93 },
-};
-
-/** Récupère le taux de change pour 1 unité de `currency` → CHF, pour le
- *  mois donné. Tombe sur DEFAULT_FX_TO_CHF si pas d'override. */
-function getRateToChf(month: string, currency: AccountCurrency): number {
-  if (currency === "CHF") return 1;
-  const override = MONTHLY_FX_TO_CHF[month]?.[currency];
-  return override ?? DEFAULT_FX_TO_CHF[currency];
-}
+import {
+  DEFAULT_FX_TO_CHF,
+  getRateToChf,
+  hasMonthlyOverride,
+} from "@/lib/fx";
 
 export const DISPLAY_CURRENCY: AccountCurrency = "CHF";
 
@@ -309,7 +280,7 @@ export function useAnalyseAggregates(period: Period): AnalyseAggregates {
       perMonth.length
         ? perMonth.reduce((s, p) => s + p[key], 0) / perMonth.length
         : DEFAULT_FX_TO_CHF[key];
-    const hasOverrides = months.some((m) => MONTHLY_FX_TO_CHF[m] != null);
+    const hasOverrides = months.some((m) => hasMonthlyOverride(m));
     return {
       averages: { USD: avg("USD"), EUR: avg("EUR") },
       perMonth,
