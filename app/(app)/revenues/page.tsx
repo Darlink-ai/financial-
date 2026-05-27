@@ -80,7 +80,11 @@ export default function RevenuesPage() {
           r.feeRates,
           r.capturedAmount,
         );
-        const reserveLocal = (r.capturedAmount * r.rollingReservePercent) / 100;
+        const withheldLocal =
+          (r.capturedAmount * r.rollingReservePercent) / 100;
+        const releasedLocal = r.txCounts.releasedReserveAmount ?? 0;
+        // Net reserve impact = retenue (cash out) − libération (cash in).
+        const netReserveLocal = withheldLocal - releasedLocal;
         const refundAmt = r.txCounts.refundAmount ?? 0;
         const chargebackAmt = r.txCounts.chargebackAmount ?? 0;
         const payoutEur = r.txCounts.payoutAmountEur ?? 0;
@@ -98,7 +102,7 @@ export default function RevenuesPage() {
           selectedMonth,
         );
         acc.reserve += convertAmount(
-          reserveLocal,
+          netReserveLocal,
           r.currency,
           DISPLAY_CURRENCY,
           selectedMonth,
@@ -114,7 +118,11 @@ export default function RevenuesPage() {
           acc.net += payoutEur;
         } else {
           const netLocal =
-            r.capturedAmount - liveFees - reserveLocal - refundAmt - chargebackAmt;
+            r.capturedAmount -
+            liveFees -
+            netReserveLocal -
+            refundAmt -
+            chargebackAmt;
           acc.net += convertAmount(
             netLocal,
             r.currency,
@@ -135,7 +143,7 @@ export default function RevenuesPage() {
     <>
       <PageHeader
         title="Revenus"
-        subtitle={`Revenus par business pour ${formatMonthLabel(selectedMonth)} — montants capturés, frais du processeur, rolling reserve.`}
+        subtitle={`Revenus par business pour ${formatMonthLabel(selectedMonth)}. Cadence EMP : virements hebdomadaires, 10 % retenu en rolling reserve, libéré 6 mois plus tard.`}
         actions={
           <>
             <BusinessSelector />
@@ -166,7 +174,7 @@ export default function RevenuesPage() {
             tone="warn"
           />
           <TotalTile
-            label="Rolling reserve"
+            label="Rolling reserve (net)"
             value={totals.reserve}
             currency={displayCurrency}
             icon={Clock}
@@ -360,11 +368,16 @@ function GroupedRevenueList({
           const payoutEur = r.txCounts.payoutAmountEur ?? 0;
           if (payoutEur > 0) return s + payoutEur;
           const fees = computeTotalFees(r.txCounts, r.feeRates, r.capturedAmount);
-          const reserve = (r.capturedAmount * r.rollingReservePercent) / 100;
+          const withheld = (r.capturedAmount * r.rollingReservePercent) / 100;
+          const released = r.txCounts.releasedReserveAmount ?? 0;
           const refundAmt = r.txCounts.refundAmount ?? 0;
           const chargebackAmt = r.txCounts.chargebackAmount ?? 0;
           const netLocal =
-            r.capturedAmount - fees - reserve - refundAmt - chargebackAmt;
+            r.capturedAmount -
+            fees -
+            (withheld - released) -
+            refundAmt -
+            chargebackAmt;
           return s + convertAmount(netLocal, r.currency, DISPLAY_CURRENCY, month);
         }, 0);
         return (
@@ -429,7 +442,9 @@ function RevenueListItem({
   /** Mois sélectionné — utilisé pour les taux FX. */
   month: string;
 }) {
-  const reserveAmount = (revenue.capturedAmount * revenue.rollingReservePercent) / 100;
+  const withheldAmount =
+    (revenue.capturedAmount * revenue.rollingReservePercent) / 100;
+  const releasedAmount = revenue.txCounts.releasedReserveAmount ?? 0;
   const computedFees = computeTotalFees(
     revenue.txCounts,
     revenue.feeRates,
@@ -439,7 +454,11 @@ function RevenueListItem({
   const refundAmt = revenue.txCounts.refundAmount ?? 0;
   const chargebackAmt = revenue.txCounts.chargebackAmount ?? 0;
   const netLocal =
-    revenue.capturedAmount - computedFees - reserveAmount - refundAmt - chargebackAmt;
+    revenue.capturedAmount -
+    computedFees -
+    (withheldAmount - releasedAmount) -
+    refundAmt -
+    chargebackAmt;
   // Net en EUR : payoutAmountEur si renseigné (écart 3, FX EMP effectif),
   // sinon fallback FX statique.
   const payoutEur = revenue.txCounts.payoutAmountEur ?? 0;
@@ -507,8 +526,11 @@ function RevenueDetail({
   const [warnings, setWarnings] = useState<string[]>([]);
 
   const locked = !!revenue.validatedAt;
-  const reserveAmount =
+  const withheldAmount =
     (revenue.capturedAmount * revenue.rollingReservePercent) / 100;
+  const releasedAmount = revenue.txCounts.releasedReserveAmount ?? 0;
+  // Net reserve impact pour ce period = retenue − libération.
+  const netReserveImpact = withheldAmount - releasedAmount;
   // Frais calculés en live à partir des compteurs + tarifs + capturé.
   // Le champ revenue.fees stocké peut être obsolète tant que rien n'a
   // été ré-édité ; on l'ignore pour l'affichage.
@@ -520,7 +542,11 @@ function RevenueDetail({
   const refundAmt = revenue.txCounts.refundAmount ?? 0;
   const chargebackAmt = revenue.txCounts.chargebackAmount ?? 0;
   const net =
-    revenue.capturedAmount - computedFees - reserveAmount - refundAmt - chargebackAmt;
+    revenue.capturedAmount -
+    computedFees -
+    netReserveImpact -
+    refundAmt -
+    chargebackAmt;
   const feesPct =
     revenue.capturedAmount > 0
       ? (computedFees / revenue.capturedAmount) * 100
@@ -649,7 +675,7 @@ function RevenueDetail({
           label="Rolling reserve (% du CA)"
           hint={
             revenue.capturedAmount > 0
-              ? `≈ ${formatAmount(reserveAmount, revenue.currency)} retenu sur ${formatAmount(revenue.capturedAmount, revenue.currency)}`
+              ? `≈ ${formatAmount(withheldAmount, revenue.currency)} retenu sur ${formatAmount(revenue.capturedAmount, revenue.currency)}`
               : "Sera calculé une fois le capturé renseigné"
           }
         >
@@ -740,6 +766,21 @@ function RevenueDetail({
           />
         </Field>
         <Field
+          label="Rolling reserve libérée"
+          hint="Ligne « Released Rolling Reserve » du statement — montant qui revient sur ton compte d'une période d'il y a ~6 mois (10% retenu il y a 26 semaines)."
+        >
+          <AmountInput
+            value={revenue.txCounts.releasedReserveAmount ?? 0}
+            currency={revenue.currency}
+            onChange={(v) =>
+              onUpdate({
+                txCounts: { ...revenue.txCounts, releasedReserveAmount: v },
+              })
+            }
+            disabled={locked}
+          />
+        </Field>
+        <Field
           label="Payment Amount (EUR)"
           hint="Montant exact viré par le processeur sur ton compte bancaire. Si renseigné, écrase le calcul FX statique pour le Net en EUR (intègre le markup FX d'EMP)."
         >
@@ -768,11 +809,20 @@ function RevenueDetail({
             = capturé{" "}
             <span className="font-mono">{formatAmount(revenue.capturedAmount, revenue.currency)}</span>{" "}
             − frais{" "}
-            <span className="font-mono">{formatAmount(computedFees, revenue.currency)}</span> − reserve{" "}
+            <span className="font-mono">{formatAmount(computedFees, revenue.currency)}</span> − reserve retenue{" "}
             <span className="font-mono">
-              {formatAmount(reserveAmount, revenue.currency)}
+              {formatAmount(withheldAmount, revenue.currency)}
             </span>{" "}
             <span className="text-muted">({revenue.rollingReservePercent}%)</span>
+            {releasedAmount > 0 && (
+              <>
+                {" "}
+                + reserve libérée{" "}
+                <span className="font-mono text-ok">
+                  {formatAmount(releasedAmount, revenue.currency)}
+                </span>
+              </>
+            )}
             {(refundAmt > 0 || chargebackAmt > 0) && (
               <>
                 {" "}

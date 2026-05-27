@@ -113,17 +113,21 @@ export type CountryRevenue = {
  * Comptage des transactions extraites du fichier upload (colonne 1 = statut).
  * Les noms suivent la nomenclature processeur (Adyen / Stripe…).
  *
+ * Cadence EMP : virements hebdomadaires. Chaque statement = 1 semaine.
+ * EMP retient 10 % du gross en "Rolling Reserve", reversé 6 mois plus
+ * tard. Donc pour chaque période on a à la fois :
+ *  - une retenue (rollingReservePercent × capturedAmount)
+ *  - une libération d'une période d'il y a ~26 semaines (releasedReserveAmount)
+ *
  * Données financières supplémentaires (extraites du Billing Statement) :
- * - refundAmount / chargebackAmount : montants débités (déduits du gross
- *   pour le calcul du Net).
- * - interchangeAmount / schemeAmount : frais pass-through facturés à
- *   Visa/MC et aux banques émettrices, qu'EMP nous répercute. Variables
- *   par période selon les cartes utilisées, donc on copie depuis le
- *   statement plutôt qu'un %.
- * - payoutAmountEur : montant exact que le processeur a viré sur le compte
- *   bancaire en EUR. Quand > 0, c'est la source de vérité pour l'affichage
- *   EUR (court-circuite le taux FX statique pour intégrer le markup FX du
- *   processeur).
+ * - refundAmount / chargebackAmount : montants débités (déduits du gross).
+ * - interchangeAmount / schemeAmount : frais pass-through Visa/MC, copiés
+ *   depuis le statement (variables par période, pas un %).
+ * - releasedReserveAmount : reserves libérées de la période ~6 mois en
+ *   arrière (ajoutées au Net car argent qui revient sur le compte).
+ * - payoutAmountEur : montant exact viré par EMP sur le compte bancaire EUR.
+ *   Quand > 0, c'est la source de vérité pour l'affichage EUR (court-circuite
+ *   le FX statique pour intégrer le markup FX du processeur).
  */
 export type TxCounts = {
   authorized: number;       // pre-auths qui n'ont jamais été capturées
@@ -138,6 +142,7 @@ export type TxCounts = {
   chargebackAmount: number; // montant total des chargebacks sur la période
   interchangeAmount: number; // pass-through Interchange Fees (statement)
   schemeAmount: number;      // pass-through Scheme Fees (Visa/MC, statement)
+  releasedReserveAmount: number; // reserves libérées d'une période d'il y a 6 mois
   payoutAmountEur: number;  // montant viré sur le compte bancaire EUR
 };
 
@@ -154,6 +159,7 @@ export const EMPTY_TX_COUNTS: TxCounts = {
   chargebackAmount: 0,
   interchangeAmount: 0,
   schemeAmount: 0,
+  releasedReserveAmount: 0,
   payoutAmountEur: 0,       // 0 = pas renseigné, on retombe sur le FX statique
 };
 
