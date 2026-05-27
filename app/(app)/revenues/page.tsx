@@ -31,6 +31,7 @@ import {
   Lock,
   Pencil,
   Save,
+  RefreshCw,
 } from "lucide-react";
 import type { Revenue, Business, FeeRates, TxCounts, AccountCurrency } from "@/lib/types";
 import {
@@ -990,6 +991,9 @@ function FeeBreakdownSection({
   const rates = revenue.feeRates;
   const captured = revenue.capturedAmount;
   const total = computeTotalFees(counts, rates, captured);
+  // Devise affichée dans les tarifs (unitSuffix) — la même que le revenu,
+  // sinon on affichait "€/tx" pour un revenu en CHF (confus).
+  const currCode = revenue.currency || "USD";
 
   const setRate = (key: keyof FeeRates, value: number) => {
     const newRates: FeeRates = { ...rates, [key]: value };
@@ -999,16 +1003,49 @@ function FeeBreakdownSection({
     });
   };
 
+  const setCount = (key: keyof TxCounts, value: number) => {
+    const newCounts: TxCounts = { ...counts, [key]: value };
+    onUpdate({
+      txCounts: newCounts,
+      fees: computeTotalFees(newCounts, rates, captured),
+    });
+  };
+
+  const resetRatesToDefaults = () => {
+    if (
+      !confirm(
+        "Remplacer les tarifs actuels par les tarifs par défaut (alignés EMP statement réel : auth 0, capture 0.27, declined 0.16, refund 0.55…) ?",
+      )
+    )
+      return;
+    onUpdate({
+      feeRates: { ...DEFAULT_FEE_RATES },
+      fees: computeTotalFees(counts, DEFAULT_FEE_RATES, captured),
+    });
+  };
+
   const percentFee = (captured * rates.percentRate) / 100;
+  const interchangeAmt = counts.interchangeAmount ?? 0;
+  const schemeAmt = counts.schemeAmount ?? 0;
+  const releasedAmt = counts.releasedReserveAmount ?? 0;
 
   return (
     <div className="border-t border-border">
-      <div className="px-5 py-4 flex items-center gap-3">
+      <div className="px-5 py-4 flex items-center gap-3 flex-wrap">
         <Percent size={14} className="text-muted" />
         <div className="text-[13px] font-medium">Détail des frais processeur</div>
         <span className="text-[11px] text-muted">
           Tu modifies les tarifs ; les compteurs viennent du fichier.
         </span>
+        {!locked && (
+          <button
+            onClick={resetRatesToDefaults}
+            className="btn text-[11px] !px-2 !py-1"
+            title="Remplace les tarifs par les valeurs par défaut actuelles (auth=0, capture=0.27, etc.)"
+          >
+            <RefreshCw size={11} /> Reset tarifs
+          </button>
+        )}
         <span className="ml-auto text-[12px] font-semibold tabular-nums">
           Total : {formatAmount(total, revenue.currency)}
         </span>
@@ -1035,7 +1072,7 @@ function FeeBreakdownSection({
               <td className="py-2 text-right">
                 <RateInput
                   value={rates.authFee}
-                  unitSuffix="€/tx"
+                  unitSuffix={`${currCode}/tx`}
                   onChange={(v) => setRate("authFee", v)}
                   disabled={locked}
                 />
@@ -1073,7 +1110,7 @@ function FeeBreakdownSection({
                   <td className="py-2 text-right">
                     <RateInput
                       value={r}
-                      unitSuffix={`€/${row.unit}`}
+                      unitSuffix={`${currCode}/${row.unit}`}
                       onChange={(v) => setRate(row.rateKey, v)}
                       disabled={locked}
                     />
@@ -1105,13 +1142,55 @@ function FeeBreakdownSection({
               </td>
             </tr>
 
+            {/* Interchange Fees : pass-through, montant exact du statement */}
+            <tr className="border-t border-border">
+              <td className="py-2">
+                Interchange Fees
+                <span className="text-[10px] text-muted ml-2">
+                  (pass-through, copié du statement)
+                </span>
+              </td>
+              <td className="py-2 text-right" colSpan={2}>
+                <AmountInput
+                  value={interchangeAmt}
+                  currency={currCode}
+                  onChange={(v) => setCount("interchangeAmount", v)}
+                  disabled={locked}
+                />
+              </td>
+              <td className="py-2 text-right tabular-nums">
+                {formatAmount(interchangeAmt, revenue.currency)}
+              </td>
+            </tr>
+
+            {/* Scheme Fees : pass-through Visa/MC */}
+            <tr className="border-t border-border">
+              <td className="py-2">
+                Scheme Fees
+                <span className="text-[10px] text-muted ml-2">
+                  (pass-through Visa/MC)
+                </span>
+              </td>
+              <td className="py-2 text-right" colSpan={2}>
+                <AmountInput
+                  value={schemeAmt}
+                  currency={currCode}
+                  onChange={(v) => setCount("schemeAmount", v)}
+                  disabled={locked}
+                />
+              </td>
+              <td className="py-2 text-right tabular-nums">
+                {formatAmount(schemeAmt, revenue.currency)}
+              </td>
+            </tr>
+
             {/* Frais fixes */}
             <tr className="border-t border-border">
               <td className="py-2">Monthly service fee</td>
               <td className="py-2 text-right">
                 <RateInput
                   value={rates.monthlyServiceFee}
-                  unitSuffix="€/mois"
+                  unitSuffix={`${currCode}/mois`}
                   onChange={(v) => setRate("monthlyServiceFee", v)}
                   disabled={locked}
                 />
@@ -1126,7 +1205,7 @@ function FeeBreakdownSection({
               <td className="py-2 text-right">
                 <RateInput
                   value={rates.monthlySecureCodeFee}
-                  unitSuffix="€/mois"
+                  unitSuffix={`${currCode}/mois`}
                   onChange={(v) => setRate("monthlySecureCodeFee", v)}
                   disabled={locked}
                 />
@@ -1141,7 +1220,7 @@ function FeeBreakdownSection({
               <td className="py-2 text-right">
                 <RateInput
                   value={rates.wireTransferFee}
-                  unitSuffix="€/wire"
+                  unitSuffix={`${currCode}/wire`}
                   onChange={(v) => setRate("wireTransferFee", v)}
                   disabled={locked}
                 />
@@ -1173,6 +1252,29 @@ function FeeBreakdownSection({
                   roundCents(counts.wires * rates.wireTransferFee),
                   revenue.currency,
                 )}
+              </td>
+            </tr>
+
+            {/* Reserve libérée d'une période d'il y a 6 mois — pas un frais
+                à proprement parler, c'est un cash-in. Affiché en vert et
+                non sommé dans le Total des frais ci-dessous. */}
+            <tr className="border-t border-border">
+              <td className="py-2">
+                Rolling reserve libérée
+                <span className="text-[10px] text-muted ml-2">
+                  (cash-in d&apos;il y a ~6 mois, pas un frais)
+                </span>
+              </td>
+              <td className="py-2 text-right" colSpan={2}>
+                <AmountInput
+                  value={releasedAmt}
+                  currency={currCode}
+                  onChange={(v) => setCount("releasedReserveAmount", v)}
+                  disabled={locked}
+                />
+              </td>
+              <td className="py-2 text-right tabular-nums text-ok">
+                + {formatAmount(releasedAmt, revenue.currency)}
               </td>
             </tr>
 
