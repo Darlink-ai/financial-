@@ -601,12 +601,19 @@ function RevenueDetail({
       countryBreakdown: rows,
       countryFileName: f.name,
       txCounts: mergedCounts,
+      // Le fichier transactions du processeur (EMP, etc.) est toujours
+      // exporté en USD. On force la devise source à USD pour que le
+      // capturedAmount ne soit pas converti à tort.
+      currency: "USD",
     };
-    const captured =
-      revenue.capturedAmount > 0 ? revenue.capturedAmount : totalCaptured;
-    if (revenue.capturedAmount <= 0 && totalCaptured > 0) {
+    // Si on a précédemment stocké un capturedAmount avec currency=EUR,
+    // on l'écrase avec le total du fichier (USD natif). Sinon on garde
+    // la valeur existante.
+    const fileHasAmounts = totalCaptured > 0;
+    if (fileHasAmounts) {
       patch.capturedAmount = totalCaptured;
     }
+    const captured = patch.capturedAmount ?? revenue.capturedAmount;
     patch.fees = computeTotalFees(mergedCounts, revenue.feeRates, captured);
     onUpdate(patch);
   };
