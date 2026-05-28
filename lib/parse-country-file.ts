@@ -46,6 +46,15 @@ export type ParseResult = {
   rows: CountryRevenue[];
   txCounts: TxCounts;
   totalCaptured: number;
+  /** Somme des montants par bucket, calculée pendant le parsing.
+   *  Sert à pré-remplir refundAmount / chargebackAmount sans que
+   *  l'utilisateur ait à les saisir depuis un PDF externe. */
+  totalsByBucket: {
+    capturedAmount: number;
+    refundAmount: number;
+    chargebackAmount: number;
+    declinedAmount: number;
+  };
   warnings: string[];
 };
 
@@ -73,9 +82,16 @@ export async function parseCountryFile(file: File): Promise<ParseResult> {
   // à 0 ici, l'appelant le merge avec la valeur stockée du revenu.
   const txCounts: TxCounts = { ...EMPTY_TX_COUNTS, wires: 0 };
 
+  const totalsByBucket = {
+    capturedAmount: 0,
+    refundAmount: 0,
+    chargebackAmount: 0,
+    declinedAmount: 0,
+  };
+
   if (rows.length === 0) {
     warnings.push("Fichier vide.");
-    return { rows: [], txCounts, totalCaptured: 0, warnings };
+    return { rows: [], txCounts, totalCaptured: 0, totalsByBucket, warnings };
   }
 
   // Détecte présence d'un header sur la 1ʳᵉ ligne.
@@ -88,7 +104,7 @@ export async function parseCountryFile(file: File): Promise<ParseResult> {
   const data = isHeader ? rows.slice(1) : rows;
   if (data.length === 0) {
     warnings.push("Aucune donnée après l'en-tête.");
-    return { rows: [], txCounts, totalCaptured: 0, warnings };
+    return { rows: [], txCounts, totalCaptured: 0, totalsByBucket, warnings };
   }
 
   // Combien de colonnes utiles (max 3) ?
@@ -158,9 +174,19 @@ export async function parseCountryFile(file: File): Promise<ParseResult> {
     if (bucket === "captured") {
       byCountry.set(code, (byCountry.get(code) ?? 0) + amount);
       totalCaptured += amount;
-    } else if (bucket === "refund" || bucket === "chargeback") {
+      totalsByBucket.capturedAmount += amount;
+    } else if (bucket === "refund") {
       byCountry.set(code, (byCountry.get(code) ?? 0) - amount);
       totalCaptured -= amount;
+      totalsByBucket.refundAmount += amount;
+    } else if (bucket === "chargeback") {
+      byCountry.set(code, (byCountry.get(code) ?? 0) - amount);
+      totalCaptured -= amount;
+      totalsByBucket.chargebackAmount += amount;
+    } else if (bucket === "declined") {
+      // Declined : pas d'impact sur le capturé mais on track le volume
+      // pour info (souvent utile : volume tenté vs volume passé).
+      totalsByBucket.declinedAmount += amount;
     }
   });
 
@@ -175,10 +201,18 @@ export async function parseCountryFile(file: File): Promise<ParseResult> {
     warnings.push("Aucune ligne pays/montant exploitable détectée.");
   }
 
+  // Arrondi 2 décimales pour tous les totaux.
+  const round2 = (n: number) => Math.round(n * 100) / 100;
   return {
     rows: out,
     txCounts,
-    totalCaptured: Math.round(totalCaptured * 100) / 100,
+    totalCaptured: round2(totalCaptured),
+    totalsByBucket: {
+      capturedAmount: round2(totalsByBucket.capturedAmount),
+      refundAmount: round2(totalsByBucket.refundAmount),
+      chargebackAmount: round2(totalsByBucket.chargebackAmount),
+      declinedAmount: round2(totalsByBucket.declinedAmount),
+    },
     warnings,
   };
 }

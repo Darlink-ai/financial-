@@ -525,199 +525,14 @@ function RevenueDetail({
   const { businesses } = useStore();
   const biz = businesses.find((b) => b.id === revenue.businessId);
   const fileRef = useRef<HTMLInputElement>(null);
-  const empStatementRef = useRef<HTMLInputElement>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
-  const [importing, setImporting] = useState(false);
-  const [importingExcel, setImportingExcel] = useState(false);
 
-  /**
-   * Importe le Payment Amount EUR depuis l'Excel de rapprochement bancaire
-   * EUR du mois du revenu. Identifie les lignes crédit dont la description
-   * contient le nom du processeur (EMP / emerchantpay) et somme.
-   *
-   * Beaucoup plus pratique que de uploader le PDF du billing chaque
-   * semaine : l'utilisateur a déjà son Excel à jour pour le matching
-   * des factures.
-   */
-  const importFromExcel = async () => {
-    setImportingExcel(true);
-    try {
-      // Construction des patterns de recherche depuis le nom du processeur.
-      // On accepte aussi des variantes communes ("emerchantpay" pour EMP).
-      const proc = revenue.processor.toLowerCase().trim();
-      const patterns: string[] = [proc];
-      if (proc === "emp") patterns.push("emerchantpay", "emerchant pay");
-      if (proc === "centrobill") patterns.push("centro bill", "centrobill");
-
-      const r = await fetch(
-        `/api/excel-sheets/${revenue.month}?currency=EUR`,
-        { cache: "no-store" },
-      );
-      if (!r.ok) {
-        alert(
-          `Impossible de récupérer l'Excel EUR pour ${revenue.month}. Va sur /excel pour uploader le fichier d'abord.`,
-        );
-        return;
-      }
-      const data = (await r.json()) as {
-        sheet: {
-          headers: string[];
-          rows: (string | number | null)[][];
-          fileName: string;
-        } | null;
-      };
-      if (!data.sheet) {
-        alert(
-          `Pas de fichier Excel EUR uploadé pour ${revenue.month}. Va sur /excel pour l'uploader.`,
-        );
-        return;
-      }
-      const { sumCreditsMatching } = await import("@/lib/excel-match");
-      const parsedSheet = {
-        headers: data.sheet.headers,
-        rows: data.sheet.rows,
-      };
-      let result = sumCreditsMatching(parsedSheet, patterns);
-
-      // Fallback : pas de match → montre les top crédits + demande un
-      // pattern custom à l'utilisateur.
-      if (result.matches.length === 0) {
-        const sortedCredits = [...result.allCredits]
-          .sort((a, b) => b.amount - a.amount)
-          .slice(0, 10);
-        if (sortedCredits.length === 0) {
-          alert(
-            `Aucune ligne crédit détectée dans ${data.sheet.fileName}. Vérifie que le fichier contient bien des entrées d'argent.`,
-          );
-          return;
-        }
-        const top = sortedCredits
-          .map(
-            (c, i) =>
-              `${i + 1}. ${c.amount.toFixed(2)} — ${c.description.slice(0, 80)}`,
-          )
-          .join("\n");
-        const custom = prompt(
-          `Aucune ligne « ${revenue.processor} » trouvée dans ${data.sheet.fileName}.\n\nTop crédits du fichier :\n${top}\n\nTape un mot/extrait qu'on doit chercher (ex. "merchant", "famelink", "intern...") :`,
-          "",
-        );
-        if (!custom || !custom.trim()) return;
-        result = sumCreditsMatching(parsedSheet, [custom.trim()]);
-        if (result.matches.length === 0) {
-          alert(
-            `Toujours aucune ligne ne contient « ${custom} ». Réessaie avec un autre mot.`,
-          );
-          return;
-        }
-      }
-
-      onUpdate({
-        txCounts: {
-          ...revenue.txCounts,
-          payoutAmountEur: result.total,
-        },
-      });
-      const lines = result.matches
-        .map((m) => {
-          const d = m.date ? `${m.date} · ` : "";
-          return `${d}${m.amount.toFixed(2)} EUR · ${m.description.slice(0, 80)}`;
-        })
-        .join("\n• ");
-      alert(
-        `Payment Amount (EUR) = ${result.total.toFixed(2)} EUR\n\n${result.matches.length} ligne(s) trouvée(s) :\n• ${lines}`,
-      );
-    } catch (e) {
-      alert(`Erreur : ${(e as Error).message}`);
-    } finally {
-      setImportingExcel(false);
-    }
-  };
-
-  /**
-   * Import d'un billing statement EMP (PDF). Auto-remplit les counts +
-   * amounts (refunds, chargebacks, interchange, scheme, released, payout EUR,
-   * capturedAmount) + les tarifs (captureFee, declinedFee, refundFee,
-   * percentRate). L'utilisateur peut éditer après.
-   */
-  const importEmpStatement = async (file: File) => {
-    setImporting(true);
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const r = await fetch("/api/revenues/parse-emp-statement", {
-        method: "POST",
-        body: fd,
-      });
-      const data = (await r.json().catch(() => null)) as
-        | {
-            ok?: boolean;
-            parsed?: import("@/lib/parse-emp-statement").ParsedEmpStatement;
-            message?: string;
-          }
-        | null;
-      if (!r.ok || !data?.ok || !data.parsed) {
-        alert(`Échec import : ${data?.message ?? `HTTP ${r.status}`}`);
-        return;
-      }
-      const p = data.parsed;
-      // Construit le patch : on n'écrase que ce qui est non-null.
-      const newTxCounts: TxCounts = { ...revenue.txCounts };
-      const newFeeRates: FeeRates = { ...revenue.feeRates };
-      if (p.salesCount != null) newTxCounts.captured = p.salesCount;
-      if (p.refundsCount != null) newTxCounts.refund = p.refundsCount;
-      if (p.chargebacksCount != null) newTxCounts.chargeback = p.chargebacksCount;
-      if (p.saleDeclinedCount != null) newTxCounts.declined = p.saleDeclinedCount;
-      if (p.refundAmount != null) newTxCounts.refundAmount = p.refundAmount;
-      if (p.chargebackAmount != null) newTxCounts.chargebackAmount = p.chargebackAmount;
-      if (p.interchangeAmount != null) newTxCounts.interchangeAmount = p.interchangeAmount;
-      if (p.schemeAmount != null) newTxCounts.schemeAmount = p.schemeAmount;
-      if (p.releasedReserveAmount != null) newTxCounts.releasedReserveAmount = p.releasedReserveAmount;
-      if (p.payoutAmountEur != null) newTxCounts.payoutAmountEur = p.payoutAmountEur;
-      if (p.saleApprovedRate != null) newFeeRates.captureFee = p.saleApprovedRate;
-      if (p.saleDeclinedRate != null) newFeeRates.declinedFee = p.saleDeclinedRate;
-      if (p.refundFeeRate != null) newFeeRates.refundFee = p.refundFeeRate;
-      if (p.interchangePlusRate != null) newFeeRates.percentRate = p.interchangePlusRate;
-      // Chargeback fee moyen = total chargeback fees / count
-      if (
-        p.chargebackFeeAmount != null &&
-        p.chargebacksCount != null &&
-        p.chargebacksCount > 0
-      ) {
-        newFeeRates.chargebackFee = p.chargebackFeeAmount / p.chargebacksCount;
-      }
-      const patch: Partial<Revenue> = {
-        txCounts: newTxCounts,
-        feeRates: newFeeRates,
-      };
-      if (p.grossVolume != null) patch.capturedAmount = p.grossVolume;
-      patch.fees = computeTotalFees(
-        newTxCounts,
-        newFeeRates,
-        patch.capturedAmount ?? revenue.capturedAmount,
-      );
-      onUpdate(patch);
-      // Récap des champs reconnus pour rassurer l'utilisateur.
-      const recognized: string[] = [];
-      if (p.grossVolume != null) recognized.push(`Gross ${p.grossVolume}`);
-      if (p.refundAmount != null) recognized.push(`Refunds ${p.refundAmount}`);
-      if (p.chargebackAmount != null)
-        recognized.push(`Chargebacks ${p.chargebackAmount}`);
-      if (p.interchangeAmount != null)
-        recognized.push(`Interchange ${p.interchangeAmount}`);
-      if (p.schemeAmount != null) recognized.push(`Scheme ${p.schemeAmount}`);
-      if (p.releasedReserveAmount != null)
-        recognized.push(`Released ${p.releasedReserveAmount}`);
-      if (p.payoutAmountEur != null)
-        recognized.push(`Payout ${p.payoutAmountEur} EUR`);
-      alert(
-        `Billing statement importé.\n\nReconnu :\n• ${recognized.join("\n• ") || "(rien)"}`,
-      );
-    } catch (e) {
-      alert(`Erreur : ${(e as Error).message}`);
-    } finally {
-      setImporting(false);
-    }
-  };
+  // Note : les anciens boutons "Importer PDF EMP" et "Importer depuis
+  // Excel banque" ont été retirés — le seul fichier que l'utilisateur
+  // fournit est le fichier transactions (statut/pays/montant). Tout ce
+  // qu'on peut auto-remplir vient de là (counts + amounts par bucket).
+  // Le reste (Interchange, Scheme, Released, Payout EUR) est saisi à la
+  // main, optionnel.
 
   const locked = !!revenue.validatedAt;
   const withheldAmount =
@@ -756,13 +571,29 @@ function RevenueDetail({
   const ready = missing.length === 0;
 
   const onCountryFile = async (f: File) => {
-    const { rows, txCounts: parsedCounts, totalCaptured, warnings: w } =
-      await parseCountryFile(f);
+    const {
+      rows,
+      txCounts: parsedCounts,
+      totalCaptured,
+      totalsByBucket,
+      warnings: w,
+    } = await parseCountryFile(f);
     setWarnings(w);
     // On préserve `wires` (config user, pas dans le fichier).
+    // On préserve aussi interchangeAmount / schemeAmount / releasedReserveAmount
+    // / payoutAmountEur qui ne sont jamais dans le fichier (saisis à la main).
     const mergedCounts: TxCounts = {
       ...parsedCounts,
       wires: revenue.txCounts.wires || 4,
+      // Auto-remplis depuis le fichier : montants refund/chargeback dérivés
+      // des lignes ayant ce statut.
+      refundAmount: totalsByBucket.refundAmount,
+      chargebackAmount: totalsByBucket.chargebackAmount,
+      // Préservation des champs qui ne sont pas dans le fichier.
+      interchangeAmount: revenue.txCounts.interchangeAmount ?? 0,
+      schemeAmount: revenue.txCounts.schemeAmount ?? 0,
+      releasedReserveAmount: revenue.txCounts.releasedReserveAmount ?? 0,
+      payoutAmountEur: revenue.txCounts.payoutAmountEur ?? 0,
     };
     const patch: Partial<Revenue> = {
       countryBreakdown: rows,
@@ -794,55 +625,8 @@ function RevenueDetail({
           </span>
         )}
         <button
-          onClick={importFromExcel}
-          className="btn text-[11px] ml-auto disabled:opacity-50"
-          title={`Auto-remplir Payment Amount EUR depuis les crédits "${revenue.processor}" dans l'Excel de rapprochement EUR du mois`}
-          disabled={locked || importingExcel}
-        >
-          {importingExcel ? (
-            <>
-              <RefreshCw size={11} className="animate-spin" />
-              Lecture Excel…
-            </>
-          ) : (
-            <>
-              <FileSpreadsheet size={11} />
-              Importer depuis Excel
-            </>
-          )}
-        </button>
-        <button
-          onClick={() => empStatementRef.current?.click()}
-          className="btn text-[11px] disabled:opacity-50"
-          title="Auto-remplir depuis un billing statement EMP (PDF)"
-          disabled={locked || importing}
-        >
-          {importing ? (
-            <>
-              <RefreshCw size={11} className="animate-spin" />
-              Import PDF…
-            </>
-          ) : (
-            <>
-              <Upload size={11} />
-              Importer PDF EMP
-            </>
-          )}
-        </button>
-        <input
-          ref={empStatementRef}
-          type="file"
-          accept=".pdf,application/pdf"
-          className="hidden"
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) void importEmpStatement(f);
-            e.target.value = "";
-          }}
-        />
-        <button
           onClick={onDelete}
-          className="btn !px-2 text-[11px]"
+          className="btn !px-2 text-[11px] ml-auto"
           title="Supprimer"
           disabled={locked}
         >
