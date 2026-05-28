@@ -285,6 +285,91 @@ export function computeExpenseTotal(sheet: ParsedSheet): {
   return { totalDebit, totalCredit, debitRowCount, creditRowCount, rowDebits };
 }
 
+/**
+ * Trouve toutes les lignes CRÉDIT (entrée d'argent) dont la description
+ * contient l'un des patterns donnés (case-insensitive, normalisé).
+ *
+ * Sert à identifier les virements reçus d'un processeur de paiement (EMP,
+ * Centrobill…) dans un Excel de rapprochement bancaire. Retourne la somme
+ * + le détail des lignes matchées pour affichage côté UI.
+ */
+export function sumCreditsMatching(
+  sheet: ParsedSheet,
+  patterns: string[],
+): {
+  total: number;
+  matches: Array<{
+    rowIndex: number;
+    amount: number;
+    description: string;
+    date: string | null;
+  }>;
+} {
+  const { idxCredit, idxAmount, idxCreditor, idxDate, dataStartRow } =
+    detectColumns(sheet);
+  const normPatterns = patterns
+    .map((p) => norm(p))
+    .filter((p) => p.length > 0);
+  if (normPatterns.length === 0) {
+    return { total: 0, matches: [] };
+  }
+
+  const matches: Array<{
+    rowIndex: number;
+    amount: number;
+    description: string;
+    date: string | null;
+  }> = [];
+  let total = 0;
+
+  // Helper : concatène toutes les cellules string d'une row pour chercher
+  // le pattern même si le créditeur dédié n'est pas trouvé.
+  const rowAsText = (row: (string | number | null)[]) =>
+    row
+      .map((c) => (typeof c === "string" ? c : ""))
+      .filter(Boolean)
+      .join(" ");
+
+  for (let i = dataStartRow; i < sheet.rows.length; i++) {
+    const row = sheet.rows[i];
+    // Cherche le pattern dans la colonne description si détectée, sinon
+    // dans toute la row.
+    const description =
+      idxCreditor >= 0
+        ? String(row[idxCreditor] ?? "")
+        : rowAsText(row);
+    const descNorm = norm(description);
+    if (!normPatterns.some((p) => descNorm.includes(p))) continue;
+
+    // Récupère le montant crédit. Priorité à la colonne Crédit dédiée
+    // (cas UBS). Sinon colonne Montant signée (positif = crédit).
+    let amount = 0;
+    if (idxCredit >= 0) {
+      const v = parseAmount(row[idxCredit]);
+      if (v != null && v !== 0) amount = Math.abs(v);
+    } else if (idxAmount >= 0) {
+      const v = parseAmount(row[idxAmount]);
+      if (v != null && v > 0) amount = v;
+    }
+
+    if (amount > 0) {
+      total += amount;
+      const date =
+        idxDate >= 0
+          ? parseDate(row[idxDate]) ?? String(row[idxDate] ?? "")
+          : null;
+      matches.push({
+        rowIndex: i,
+        amount,
+        description: description.trim(),
+        date: date || null,
+      });
+    }
+  }
+
+  return { total: Math.round(total * 100) / 100, matches };
+}
+
 export function matchInvoicesAgainstSheet(
   sheet: ParsedSheet,
   invoices: Invoice[],

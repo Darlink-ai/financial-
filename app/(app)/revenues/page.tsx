@@ -32,6 +32,7 @@ import {
   Pencil,
   Save,
   RefreshCw,
+  FileSpreadsheet,
 } from "lucide-react";
 import type { Revenue, Business, FeeRates, TxCounts, AccountCurrency } from "@/lib/types";
 import {
@@ -527,6 +528,82 @@ function RevenueDetail({
   const empStatementRef = useRef<HTMLInputElement>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [importing, setImporting] = useState(false);
+  const [importingExcel, setImportingExcel] = useState(false);
+
+  /**
+   * Importe le Payment Amount EUR depuis l'Excel de rapprochement bancaire
+   * EUR du mois du revenu. Identifie les lignes crédit dont la description
+   * contient le nom du processeur (EMP / emerchantpay) et somme.
+   *
+   * Beaucoup plus pratique que de uploader le PDF du billing chaque
+   * semaine : l'utilisateur a déjà son Excel à jour pour le matching
+   * des factures.
+   */
+  const importFromExcel = async () => {
+    setImportingExcel(true);
+    try {
+      // Construction des patterns de recherche depuis le nom du processeur.
+      // On accepte aussi des variantes communes ("emerchantpay" pour EMP).
+      const proc = revenue.processor.toLowerCase().trim();
+      const patterns: string[] = [proc];
+      if (proc === "emp") patterns.push("emerchantpay", "emerchant pay");
+      if (proc === "centrobill") patterns.push("centro bill", "centrobill");
+
+      const r = await fetch(
+        `/api/excel-sheets/${revenue.month}?currency=EUR`,
+        { cache: "no-store" },
+      );
+      if (!r.ok) {
+        alert(
+          `Impossible de récupérer l'Excel EUR pour ${revenue.month}. Va sur /excel pour uploader le fichier d'abord.`,
+        );
+        return;
+      }
+      const data = (await r.json()) as {
+        sheet: {
+          headers: string[];
+          rows: (string | number | null)[][];
+          fileName: string;
+        } | null;
+      };
+      if (!data.sheet) {
+        alert(
+          `Pas de fichier Excel EUR uploadé pour ${revenue.month}. Va sur /excel pour l'uploader.`,
+        );
+        return;
+      }
+      const { sumCreditsMatching } = await import("@/lib/excel-match");
+      const result = sumCreditsMatching(
+        { headers: data.sheet.headers, rows: data.sheet.rows },
+        patterns,
+      );
+      if (result.matches.length === 0) {
+        alert(
+          `Aucune ligne crédit ne contient « ${revenue.processor} » dans ${data.sheet.fileName}. Vérifie le libellé sur ton relevé bancaire (ex. "emerchantpay" au lieu de "EMP").`,
+        );
+        return;
+      }
+      onUpdate({
+        txCounts: {
+          ...revenue.txCounts,
+          payoutAmountEur: result.total,
+        },
+      });
+      const lines = result.matches
+        .map((m) => {
+          const d = m.date ? `${m.date} · ` : "";
+          return `${d}${m.amount.toFixed(2)} EUR · ${m.description.slice(0, 50)}`;
+        })
+        .join("\n• ");
+      alert(
+        `Payment Amount (EUR) = ${result.total.toFixed(2)} EUR\n\n${result.matches.length} ligne(s) trouvée(s) :\n• ${lines}`,
+      );
+    } catch (e) {
+      alert(`Erreur : ${(e as Error).message}`);
+    } finally {
+      setImportingExcel(false);
+    }
+  };
 
   /**
    * Import d'un billing statement EMP (PDF). Auto-remplit les counts +
@@ -689,20 +766,38 @@ function RevenueDetail({
           </span>
         )}
         <button
-          onClick={() => empStatementRef.current?.click()}
+          onClick={importFromExcel}
           className="btn text-[11px] ml-auto disabled:opacity-50"
+          title={`Auto-remplir Payment Amount EUR depuis les crédits "${revenue.processor}" dans l'Excel de rapprochement EUR du mois`}
+          disabled={locked || importingExcel}
+        >
+          {importingExcel ? (
+            <>
+              <RefreshCw size={11} className="animate-spin" />
+              Lecture Excel…
+            </>
+          ) : (
+            <>
+              <FileSpreadsheet size={11} />
+              Importer depuis Excel
+            </>
+          )}
+        </button>
+        <button
+          onClick={() => empStatementRef.current?.click()}
+          className="btn text-[11px] disabled:opacity-50"
           title="Auto-remplir depuis un billing statement EMP (PDF)"
           disabled={locked || importing}
         >
           {importing ? (
             <>
               <RefreshCw size={11} className="animate-spin" />
-              Import…
+              Import PDF…
             </>
           ) : (
             <>
               <Upload size={11} />
-              Importer billing EMP
+              Importer PDF EMP
             </>
           )}
         </button>
