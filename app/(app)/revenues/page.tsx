@@ -771,7 +771,15 @@ function RevenueDetail({
         </Field>
         <Field
           label="Interchange Fees (pass-through)"
-          hint="Ligne « Interchange Fees » du statement EMP. Frais payés aux banques émettrices, ~1,5% du gross, variable selon les cartes."
+          hint={
+            (revenue.txCounts.interchangeAmount ?? 0) > 0
+              ? `Override manuel actif. Mettre 0 pour repasser au calcul auto (${revenue.feeRates.interchangeRate}% × capturé).`
+              : `Auto-calculé : ${formatAmount(
+                  (revenue.capturedAmount * revenue.feeRates.interchangeRate) /
+                    100,
+                  revenue.currency,
+                )} (${revenue.feeRates.interchangeRate}% × capturé). Saisis une valeur exacte du statement EMP pour override.`
+          }
         >
           <AmountInput
             value={revenue.txCounts.interchangeAmount ?? 0}
@@ -786,7 +794,14 @@ function RevenueDetail({
         </Field>
         <Field
           label="Scheme Fees (pass-through)"
-          hint="Ligne « Scheme Fees » du statement EMP. Frais payés à Visa/MC, ~1,5% du gross, variable selon les volumes."
+          hint={
+            (revenue.txCounts.schemeAmount ?? 0) > 0
+              ? `Override manuel actif. Mettre 0 pour repasser au calcul auto (${revenue.feeRates.schemeRate}% × capturé).`
+              : `Auto-calculé : ${formatAmount(
+                  (revenue.capturedAmount * revenue.feeRates.schemeRate) / 100,
+                  revenue.currency,
+                )} (${revenue.feeRates.schemeRate}% × capturé). Saisis une valeur exacte du statement EMP pour override.`
+          }
         >
           <AmountInput
             value={revenue.txCounts.schemeAmount ?? 0}
@@ -1058,8 +1073,17 @@ function FeeBreakdownSection({
   };
 
   const percentFee = (captured * rates.percentRate) / 100;
-  const interchangeAmt = counts.interchangeAmount ?? 0;
-  const schemeAmt = counts.schemeAmount ?? 0;
+  // Interchange + Scheme : montant effectif = override saisi par l'user,
+  // sinon fallback auto = % × captured.
+  const interchangeOverride = counts.interchangeAmount ?? 0;
+  const interchangeAuto = (captured * rates.interchangeRate) / 100;
+  const interchangeEff =
+    interchangeOverride > 0 ? interchangeOverride : interchangeAuto;
+  const interchangeIsAuto = interchangeOverride === 0;
+  const schemeOverride = counts.schemeAmount ?? 0;
+  const schemeAuto = (captured * rates.schemeRate) / 100;
+  const schemeEff = schemeOverride > 0 ? schemeOverride : schemeAuto;
+  const schemeIsAuto = schemeOverride === 0;
   const releasedAmt = counts.releasedReserveAmount ?? 0;
 
   return (
@@ -1175,45 +1199,67 @@ function FeeBreakdownSection({
               </td>
             </tr>
 
-            {/* Interchange Fees : pass-through, montant exact du statement */}
+            {/* Interchange Fees : pass-through.
+                Si override (counts.interchangeAmount > 0), on l'utilise.
+                Sinon fallback auto = interchangeRate × captured. */}
             <tr className="border-t border-border">
               <td className="py-2">
                 Interchange Fees
                 <span className="text-[10px] text-muted ml-2">
-                  (pass-through, copié du statement)
+                  {interchangeIsAuto
+                    ? `(auto : ${rates.interchangeRate}% × capturé)`
+                    : `(override statement)`}
                 </span>
               </td>
-              <td className="py-2 text-right" colSpan={2}>
+              <td className="py-2 text-right">
+                <RateInput
+                  value={rates.interchangeRate}
+                  unitSuffix="%"
+                  onChange={(v) => setRate("interchangeRate", v)}
+                  disabled={locked}
+                />
+              </td>
+              <td className="py-2 text-right">
                 <AmountInput
-                  value={interchangeAmt}
+                  value={interchangeOverride}
                   currency={currCode}
                   onChange={(v) => setCount("interchangeAmount", v)}
                   disabled={locked}
                 />
               </td>
               <td className="py-2 text-right tabular-nums">
-                {formatAmount(interchangeAmt, revenue.currency)}
+                {formatAmount(roundCents(interchangeEff), revenue.currency)}
               </td>
             </tr>
 
-            {/* Scheme Fees : pass-through Visa/MC */}
+            {/* Scheme Fees : pass-through Visa/MC, même logique. */}
             <tr className="border-t border-border">
               <td className="py-2">
                 Scheme Fees
                 <span className="text-[10px] text-muted ml-2">
-                  (pass-through Visa/MC)
+                  {schemeIsAuto
+                    ? `(auto : ${rates.schemeRate}% × capturé)`
+                    : `(override statement)`}
                 </span>
               </td>
-              <td className="py-2 text-right" colSpan={2}>
+              <td className="py-2 text-right">
+                <RateInput
+                  value={rates.schemeRate}
+                  unitSuffix="%"
+                  onChange={(v) => setRate("schemeRate", v)}
+                  disabled={locked}
+                />
+              </td>
+              <td className="py-2 text-right">
                 <AmountInput
-                  value={schemeAmt}
+                  value={schemeOverride}
                   currency={currCode}
                   onChange={(v) => setCount("schemeAmount", v)}
                   disabled={locked}
                 />
               </td>
               <td className="py-2 text-right tabular-nums">
-                {formatAmount(schemeAmt, revenue.currency)}
+                {formatAmount(roundCents(schemeEff), revenue.currency)}
               </td>
             </tr>
 

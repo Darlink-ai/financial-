@@ -188,6 +188,11 @@ export type FeeRates = {
   retrievalFee: number;
   preArbitrationFee: number;
   percentRate: number;
+  /** Taux Interchange (pass-through) — % du capturé. Variable selon les
+   *  cartes utilisées. Sert de fallback quand interchangeAmount = 0. */
+  interchangeRate: number;
+  /** Taux Scheme (Visa/MC, pass-through) — % du capturé. Fallback. */
+  schemeRate: number;
   monthlyServiceFee: number;
   monthlySecureCodeFee: number;
   wireTransferFee: number;
@@ -202,6 +207,8 @@ export const DEFAULT_FEE_RATES: FeeRates = {
   retrievalFee: 9.0,
   preArbitrationFee: 24.95,
   percentRate: 3.0,
+  interchangeRate: 1.5,  // ~1.5% du gross sur statements EMP réels
+  schemeRate: 1.5,       // ~1.5% du gross sur statements EMP réels
   monthlyServiceFee: 19.95,
   monthlySecureCodeFee: 19.95,
   wireTransferFee: 5.0,
@@ -221,6 +228,17 @@ export function computeTotalFees(
   rates: FeeRates,
   capturedAmount: number,
 ): number {
+  // Interchange + Scheme : si l'utilisateur a renseigné le montant exact
+  // depuis le statement, on l'utilise. Sinon fallback à % × captured.
+  const interchangeAuto = (capturedAmount * rates.interchangeRate) / 100;
+  const schemeAuto = (capturedAmount * rates.schemeRate) / 100;
+  const interchange =
+    (counts.interchangeAmount ?? 0) > 0
+      ? counts.interchangeAmount
+      : interchangeAuto;
+  const scheme =
+    (counts.schemeAmount ?? 0) > 0 ? counts.schemeAmount : schemeAuto;
+
   return round2(
     authCount(counts) * rates.authFee + // toutes les soumissions au réseau
       counts.captured * rates.captureFee +
@@ -230,15 +248,38 @@ export function computeTotalFees(
       counts.retrievalRequest * rates.retrievalFee +
       counts.preArbitration * rates.preArbitrationFee +
       (capturedAmount * rates.percentRate) / 100 +
-      // Pass-through Interchange + Scheme fees du statement (écart 1).
-      // Variables selon les cartes utilisées par les clients, donc copiés
-      // tels quels depuis le billing statement, pas en %.
-      (counts.interchangeAmount ?? 0) +
-      (counts.schemeAmount ?? 0) +
+      interchange +
+      scheme +
       rates.monthlyServiceFee +
       rates.monthlySecureCodeFee +
       counts.wires * rates.wireTransferFee, // 4 wires × tarif par défaut
   );
+}
+
+/**
+ * Renvoie les montants effectifs d'Interchange / Scheme — soit l'override
+ * utilisateur (counts), soit le calcul auto via % × captured.
+ * Utile côté UI pour afficher les valeurs réellement utilisées dans le
+ * Total des frais.
+ */
+export function effectiveInterchangeAmount(
+  counts: TxCounts,
+  rates: FeeRates,
+  capturedAmount: number,
+): number {
+  const ovr = counts.interchangeAmount ?? 0;
+  return ovr > 0
+    ? ovr
+    : round2((capturedAmount * rates.interchangeRate) / 100);
+}
+
+export function effectiveSchemeAmount(
+  counts: TxCounts,
+  rates: FeeRates,
+  capturedAmount: number,
+): number {
+  const ovr = counts.schemeAmount ?? 0;
+  return ovr > 0 ? ovr : round2((capturedAmount * rates.schemeRate) / 100);
 }
 
 function round2(n: number) {
