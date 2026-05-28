@@ -169,19 +169,23 @@ export async function parseCountryFile(file: File): Promise<ParseResult> {
     if (!country) return;
     const code = country.slice(0, 64);
 
-    // Pour la répartition par pays : on n'ajoute que les transactions captured.
-    // Refund / chargeback sont retirés du capturé.
+    // totalCaptured = somme PURE des lignes approved/captured. Pas de
+    // déduction des refunds/chargebacks ici, sinon double comptage :
+    // le calcul du Net déduit déjà refundAmount + chargebackAmount
+    // séparément via les champs txCounts.
+    //
+    // En revanche, pour le breakdown PAR PAYS, on enlève bien les
+    // refunds/chargebacks (ça donne le CA net par pays, plus utile pour
+    // l'analyse géographique).
     if (bucket === "captured") {
       byCountry.set(code, (byCountry.get(code) ?? 0) + amount);
       totalCaptured += amount;
       totalsByBucket.capturedAmount += amount;
     } else if (bucket === "refund") {
       byCountry.set(code, (byCountry.get(code) ?? 0) - amount);
-      totalCaptured -= amount;
       totalsByBucket.refundAmount += amount;
     } else if (bucket === "chargeback") {
       byCountry.set(code, (byCountry.get(code) ?? 0) - amount);
-      totalCaptured -= amount;
       totalsByBucket.chargebackAmount += amount;
     } else if (bucket === "declined") {
       // Declined : pas d'impact sur le capturé mais on track le volume
