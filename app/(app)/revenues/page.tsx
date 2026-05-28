@@ -45,9 +45,11 @@ import { formatAmount } from "@/lib/format";
 import { convertAmount, getFxRate, hasMonthlyOverride } from "@/lib/fx";
 import { ArrowRightLeft } from "lucide-react";
 
-// Devise d'affichage : EUR, car EMP reverse en EUR sur le compte bancaire.
-// Les montants stockés sont convertis vers EUR via les taux mensuels.
-const DISPLAY_CURRENCY: AccountCurrency = "EUR";
+// Devise d'affichage : USD. Les processeurs reportent en USD, donc on
+// affiche les totaux dans cette devise (taux moyens du mois pour les
+// conversions depuis EUR/CHF). Le Payment Amount EUR reste en EUR car
+// c'est ce qui arrive vraiment sur le compte bancaire EMP.
+const DISPLAY_CURRENCY: AccountCurrency = "USD";
 
 export default function RevenuesPage() {
   const {
@@ -261,32 +263,32 @@ export default function RevenuesPage() {
   );
 }
 
-/** Bandeau qui rappelle les taux FX utilisés pour la conversion vers EUR.
+/** Bandeau qui rappelle les taux FX utilisés pour la conversion vers USD.
  *  Aide l'utilisateur à comprendre comment les chiffres affichés ont été
  *  obtenus, et à repérer s'il faut éditer les taux pour ce mois. */
 function FxBanner({ month }: { month: string }) {
-  const usdToEur = getFxRate(month, "USD", "EUR");
-  const chfToEur = getFxRate(month, "CHF", "EUR");
+  const eurToUsd = getFxRate(month, "EUR", "USD");
+  const chfToUsd = getFxRate(month, "CHF", "USD");
   const exact = hasMonthlyOverride(month);
   return (
     <div className="card px-5 py-3 flex items-center gap-4 flex-wrap text-[12px]">
       <div className="flex items-center gap-2 text-text">
         <ArrowRightLeft size={14} className="text-accent" />
         <span className="font-medium">
-          Devise d&apos;affichage : EUR — taux moyens du mois
+          Devise d&apos;affichage : USD — taux moyens du mois
         </span>
       </div>
       <div className="flex items-center gap-4 text-muted">
         <span>
-          1 USD ={" "}
-          <span className="font-mono text-text">{usdToEur.toFixed(4)} EUR</span>
+          1 EUR ={" "}
+          <span className="font-mono text-text">{eurToUsd.toFixed(4)} USD</span>
         </span>
         <span>
           1 CHF ={" "}
-          <span className="font-mono text-text">{chfToEur.toFixed(4)} EUR</span>
+          <span className="font-mono text-text">{chfToUsd.toFixed(4)} USD</span>
         </span>
         <span>
-          1 EUR = <span className="font-mono text-text">1.0000 EUR</span>
+          1 USD = <span className="font-mono text-text">1.0000 USD</span>
         </span>
       </div>
       <div className="text-[11px] text-muted ml-auto">
