@@ -573,16 +573,44 @@ function RevenueDetail({
         return;
       }
       const { sumCreditsMatching } = await import("@/lib/excel-match");
-      const result = sumCreditsMatching(
-        { headers: data.sheet.headers, rows: data.sheet.rows },
-        patterns,
-      );
+      const parsedSheet = {
+        headers: data.sheet.headers,
+        rows: data.sheet.rows,
+      };
+      let result = sumCreditsMatching(parsedSheet, patterns);
+
+      // Fallback : pas de match → montre les top crédits + demande un
+      // pattern custom à l'utilisateur.
       if (result.matches.length === 0) {
-        alert(
-          `Aucune ligne crédit ne contient « ${revenue.processor} » dans ${data.sheet.fileName}. Vérifie le libellé sur ton relevé bancaire (ex. "emerchantpay" au lieu de "EMP").`,
+        const sortedCredits = [...result.allCredits]
+          .sort((a, b) => b.amount - a.amount)
+          .slice(0, 10);
+        if (sortedCredits.length === 0) {
+          alert(
+            `Aucune ligne crédit détectée dans ${data.sheet.fileName}. Vérifie que le fichier contient bien des entrées d'argent.`,
+          );
+          return;
+        }
+        const top = sortedCredits
+          .map(
+            (c, i) =>
+              `${i + 1}. ${c.amount.toFixed(2)} — ${c.description.slice(0, 80)}`,
+          )
+          .join("\n");
+        const custom = prompt(
+          `Aucune ligne « ${revenue.processor} » trouvée dans ${data.sheet.fileName}.\n\nTop crédits du fichier :\n${top}\n\nTape un mot/extrait qu'on doit chercher (ex. "merchant", "famelink", "intern...") :`,
+          "",
         );
-        return;
+        if (!custom || !custom.trim()) return;
+        result = sumCreditsMatching(parsedSheet, [custom.trim()]);
+        if (result.matches.length === 0) {
+          alert(
+            `Toujours aucune ligne ne contient « ${custom} ». Réessaie avec un autre mot.`,
+          );
+          return;
+        }
       }
+
       onUpdate({
         txCounts: {
           ...revenue.txCounts,
@@ -592,7 +620,7 @@ function RevenueDetail({
       const lines = result.matches
         .map((m) => {
           const d = m.date ? `${m.date} · ` : "";
-          return `${d}${m.amount.toFixed(2)} EUR · ${m.description.slice(0, 50)}`;
+          return `${d}${m.amount.toFixed(2)} EUR · ${m.description.slice(0, 80)}`;
         })
         .join("\n• ");
       alert(
