@@ -347,20 +347,38 @@ function LineChart({ data }: { data: MonthlyPoint[] }) {
           </g>
         ))}
 
-        {/* Annotation IFY acquisition (avril 2026 uniquement). */}
+        {/* Annotation IFY acquisition (avril 2026 uniquement).
+            Trajectoire alternative en pointillés : mois précédent →
+            point hors-IFY d'avril → mois suivant. Schématise ce qu'aurait
+            été la courbe Dépenses sans l'achat one-shot. */}
         {ifyIdx >= 0 && ifyPoint && (
           <g pointerEvents="none">
-            {/* Trait pointillé reliant le point dépenses au point "hors IFY" */}
-            <line
-              x1={xOf(ifyIdx)}
-              x2={xOf(ifyIdx)}
-              y1={yOf(ifyPoint.expenses)}
-              y2={yOf(ifyExpensesWithout)}
-              stroke={EXPENSES_COLOR}
-              strokeWidth={1.5}
-              strokeDasharray="3 3"
-              opacity={0.6}
-            />
+            {/* Segment précédent (Mars → avril hors-IFY) */}
+            {ifyIdx > 0 && (
+              <line
+                x1={xOf(ifyIdx - 1)}
+                x2={xOf(ifyIdx)}
+                y1={yOf(data[ifyIdx - 1].expenses)}
+                y2={yOf(ifyExpensesWithout)}
+                stroke={EXPENSES_COLOR}
+                strokeWidth={1.75}
+                strokeDasharray="4 3"
+                opacity={0.7}
+              />
+            )}
+            {/* Segment suivant (avril hors-IFY → Mai) */}
+            {ifyIdx < data.length - 1 && (
+              <line
+                x1={xOf(ifyIdx)}
+                x2={xOf(ifyIdx + 1)}
+                y1={yOf(ifyExpensesWithout)}
+                y2={yOf(data[ifyIdx + 1].expenses)}
+                stroke={EXPENSES_COLOR}
+                strokeWidth={1.75}
+                strokeDasharray="4 3"
+                opacity={0.7}
+              />
+            )}
             {/* Point creux pour distinguer du point principal */}
             <circle
               cx={xOf(ifyIdx)}
