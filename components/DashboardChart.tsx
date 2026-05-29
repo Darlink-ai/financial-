@@ -169,6 +169,8 @@ function LineChart({ data }: { data: MonthlyPoint[] }) {
   // d'un autre ratio.
   const containerRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(800);
+  // Index du point survolé (null = pas de hover).
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -200,6 +202,25 @@ function LineChart({ data }: { data: MonthlyPoint[] }) {
     padL + (data.length === 1 ? innerW / 2 : (i / (data.length - 1)) * innerW);
   const yOf = (v: number) => padT + innerH - ((v - minVal) / range) * innerH;
 
+  // Map mouse X → index du point le plus proche, pour le tooltip au hover.
+  const onMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * width;
+    // Recherche du point le plus proche par distance horizontale.
+    let best = 0;
+    let bestDist = Infinity;
+    for (let i = 0; i < data.length; i++) {
+      const d = Math.abs(xOf(i) - x);
+      if (d < bestDist) {
+        bestDist = d;
+        best = i;
+      }
+    }
+    setHoverIdx(best);
+  };
+  const hoverPoint = hoverIdx != null ? data[hoverIdx] : null;
+  const hoverMargin = hoverPoint ? hoverPoint.ca - hoverPoint.expenses : 0;
+
   const caPath = data
     .map((d, i) => `${i === 0 ? "M" : "L"} ${xOf(i)} ${yOf(d.ca)}`)
     .join(" ");
@@ -211,12 +232,14 @@ function LineChart({ data }: { data: MonthlyPoint[] }) {
   const yTicks = [0, 0.33, 0.66, 1].map((t) => minVal + range * t);
 
   return (
-    <div ref={containerRef} className="w-full">
+    <div ref={containerRef} className="w-full relative">
       <svg
         width={width}
         height={height}
         viewBox={`0 0 ${width} ${height}`}
         className="block"
+        onMouseMove={onMouseMove}
+        onMouseLeave={() => setHoverIdx(null)}
       >
         <defs>
           <linearGradient id="ca-area" x1="0" x2="0" y1="0" y2="1">
@@ -295,7 +318,82 @@ function LineChart({ data }: { data: MonthlyPoint[] }) {
             </text>
           </g>
         ))}
+
+        {/* Ligne verticale de guide + halo au point survolé */}
+        {hoverIdx != null && hoverPoint && (
+          <g pointerEvents="none">
+            <line
+              x1={xOf(hoverIdx)}
+              x2={xOf(hoverIdx)}
+              y1={padT}
+              y2={padT + innerH}
+              stroke="#475569"
+              strokeWidth={1}
+              strokeDasharray="3 3"
+            />
+            <circle
+              cx={xOf(hoverIdx)}
+              cy={yOf(hoverPoint.ca)}
+              r={6}
+              fill={CA_COLOR}
+              fillOpacity={0.25}
+            />
+            <circle
+              cx={xOf(hoverIdx)}
+              cy={yOf(hoverPoint.expenses)}
+              r={6}
+              fill={EXPENSES_COLOR}
+              fillOpacity={0.25}
+            />
+          </g>
+        )}
       </svg>
+
+      {/* Tooltip HTML positionné au-dessus du point survolé */}
+      {hoverIdx != null && hoverPoint && (
+        <div
+          className="absolute pointer-events-none bg-panel2 border border-border rounded-lg px-3 py-2 text-[11px] shadow-xl tabular-nums whitespace-nowrap"
+          style={{
+            // Centre le tooltip sur le point. Clamp pour pas déborder.
+            left: `${(xOf(hoverIdx) / width) * 100}%`,
+            top: `${(Math.min(yOf(hoverPoint.ca), yOf(hoverPoint.expenses)) / height) * 100}%`,
+            transform: "translate(-50%, calc(-100% - 12px))",
+          }}
+        >
+          <div className="font-semibold text-[12px] mb-1.5">
+            {formatMonthLabel(hoverPoint.month)}
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="inline-block w-2 h-2 rounded-full" style={{ background: CA_COLOR }} />
+            <span className="text-muted">CA</span>
+            <span className="ml-auto text-text font-medium">
+              {formatAmount(hoverPoint.ca, "USD")}
+            </span>
+          </div>
+          <div className="flex items-center gap-2 mt-0.5">
+            <span
+              className="inline-block w-2 h-2 rounded-full"
+              style={{ background: EXPENSES_COLOR }}
+            />
+            <span className="text-muted">Dépenses</span>
+            <span className="ml-auto text-text font-medium">
+              {formatAmount(hoverPoint.expenses, "USD")}
+            </span>
+          </div>
+          <div className="border-t border-border mt-1.5 pt-1.5 flex items-center gap-2">
+            <span className="text-muted">Marge brute</span>
+            <span className="text-[10px] text-muted">(avant impôts &amp; TVA)</span>
+            <span
+              className={`ml-auto font-semibold ${
+                hoverMargin >= 0 ? "text-ok" : "text-err"
+              }`}
+            >
+              {hoverMargin >= 0 ? "+" : ""}
+              {formatAmount(hoverMargin, "USD")}
+            </span>
+          </div>
+        </div>
+      )}
 
       <div className="flex items-center gap-4 text-[11px] text-muted pt-2 px-2">
         <Legend color={CA_COLOR} label="Chiffre d'affaires" />
