@@ -4,55 +4,109 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { TrendingUp } from "lucide-react";
 import { useStore, formatMonthLabel } from "@/lib/store";
 import { formatAmount } from "@/lib/format";
+import { computeExpenseTotal, type ParsedSheet } from "@/lib/excel-match";
+import { convertAmount } from "@/lib/fx";
+import type { AccountCurrency } from "@/lib/types";
 
 const CA_COLOR = "#3b82f6"; // blue-500
-const NET_COLOR = "#10b981"; // emerald-500 (vert distinct du bleu)
+const EXPENSES_COLOR = "#10b981"; // emerald-500
 
-type MonthlyPoint = { month: string; ca: number; net: number };
+type MonthlyPoint = { month: string; ca: number; expenses: number };
 
 const MONTHS_TO_SHOW = 6;
+const CURRENCIES: AccountCurrency[] = ["USD", "EUR", "CHF"];
+
+/** Récupère un sheet via l'API. Renvoie null si rien stocké. */
+async function fetchSheet(
+  month: string,
+  currency: AccountCurrency,
+  signal: AbortSignal,
+): Promise<ParsedSheet | null> {
+  try {
+    const r = await fetch(`/api/excel-sheets/${month}?currency=${currency}`, {
+      cache: "no-store",
+      signal,
+    });
+    if (!r.ok) return null;
+    const data = (await r.json()) as {
+      sheet: {
+        headers: string[];
+        rows: (string | number | null)[][];
+      } | null;
+    };
+    if (!data.sheet) return null;
+    return { headers: data.sheet.headers, rows: data.sheet.rows };
+  } catch {
+    return null;
+  }
+}
 
 /**
- * Construit les N derniers mois (incluant le mois courant) à partir de la
- * date du jour, et calcule CA + Bénéfice net depuis les revenues filtrées
- * par business (ou tous).
+ * Construit les N derniers mois et calcule pour chacun :
+ *  - CA : somme des revenues du mois (capturedAmount filtré par business)
+ *  - Dépenses : somme des débits des 3 rapprochements Excel (CHF/EUR/USD),
+ *    convertis en USD via taux moyens. Tous comptes confondus.
  */
-function buildSerie(
-  revenues: { month: string; businessId: string; capturedAmount: number; fees: number }[],
-  businessFilter: string,
-): MonthlyPoint[] {
+function buildMonths(): string[] {
   const now = new Date();
-  const points: MonthlyPoint[] = [];
-
+  const months: string[] = [];
   for (let i = MONTHS_TO_SHOW - 1; i >= 0; i--) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-
-    const filtered =
-      businessFilter === "all"
-        ? revenues.filter((r) => r.month === ym)
-        : revenues.filter(
-            (r) => r.month === ym && r.businessId === businessFilter,
-          );
-
-    const ca = filtered.reduce((s, r) => s + (r.capturedAmount ?? 0), 0);
-    const fees = filtered.reduce((s, r) => s + (r.fees ?? 0), 0);
-    // Approximation : net = CA − frais processeur. Pour un vrai bénéfice
-    // net il faudrait soustraire toutes les factures du mois — sera fait
-    // plus tard quand l'analyse financière sera branchée sur la DB.
-    points.push({ month: ym, ca, net: ca - fees });
+    months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
   }
-  return points;
+  return months;
 }
 
 export function DashboardChart() {
   const { revenues, businesses } = useStore();
   const [filter, setFilter] = useState<string>("all");
 
-  const data = useMemo(() => buildSerie(revenues, filter), [revenues, filter]);
+  const months = useMemo(() => buildMonths(), []);
+  // expensesByMonth[ym] = total dépenses USD, somme des 3 buckets convertis.
+  const [expensesByMonth, setExpensesByMonth] = useState<Record<string, number>>(
+    {},
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let cancelled = false;
+    (async () => {
+      const next: Record<string, number> = {};
+      await Promise.all(
+        months.flatMap((month) =>
+          CURRENCIES.map(async (currency) => {
+            const sheet = await fetchSheet(month, currency, controller.signal);
+            if (cancelled) return;
+            if (!sheet) return;
+            const { totalDebit } = computeExpenseTotal(sheet);
+            // Convertit le débit local en USD via le taux du mois.
+            const inUsd = convertAmount(totalDebit, currency, "USD", month);
+            next[month] = (next[month] ?? 0) + inUsd;
+          }),
+        ),
+      );
+      if (!cancelled) setExpensesByMonth(next);
+    })();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [months]);
+
+  const data: MonthlyPoint[] = useMemo(() => {
+    return months.map((ym) => {
+      const filtered =
+        filter === "all"
+          ? revenues.filter((r) => r.month === ym)
+          : revenues.filter((r) => r.month === ym && r.businessId === filter);
+      const ca = filtered.reduce((s, r) => s + (r.capturedAmount ?? 0), 0);
+      const expenses = expensesByMonth[ym] ?? 0;
+      return { month: ym, ca, expenses };
+    });
+  }, [months, revenues, filter, expensesByMonth]);
 
   // Si toutes les valeurs sont 0, on affiche un message au lieu d'un chart vide.
-  const hasData = data.some((p) => p.ca > 0 || p.net > 0);
+  const hasData = data.some((p) => p.ca > 0 || p.expenses > 0);
 
   const filterOptions = useMemo(
     () => [
@@ -75,7 +129,7 @@ export function DashboardChart() {
             Évolution sur 6 mois
           </div>
           <div className="text-[11px] text-muted">
-            Chiffre d'affaires et bénéfice net en USD
+            Chiffre d&apos;affaires et dépenses (3 comptes confondus) en USD
           </div>
         </div>
         <div className="card !rounded-lg p-1 flex items-center gap-0.5">
@@ -138,8 +192,8 @@ function LineChart({ data }: { data: MonthlyPoint[] }) {
   const innerH = height - padT - padB;
 
   const maxVal =
-    Math.max(...data.flatMap((d) => [d.ca, d.net]), 1) * 1.15;
-  const minVal = Math.min(0, ...data.map((d) => d.net));
+    Math.max(...data.flatMap((d) => [d.ca, d.expenses]), 1) * 1.15;
+  const minVal = 0;
   const range = maxVal - minVal || 1;
 
   const xOf = (i: number) =>
@@ -149,8 +203,8 @@ function LineChart({ data }: { data: MonthlyPoint[] }) {
   const caPath = data
     .map((d, i) => `${i === 0 ? "M" : "L"} ${xOf(i)} ${yOf(d.ca)}`)
     .join(" ");
-  const netPath = data
-    .map((d, i) => `${i === 0 ? "M" : "L"} ${xOf(i)} ${yOf(d.net)}`)
+  const expensesPath = data
+    .map((d, i) => `${i === 0 ? "M" : "L"} ${xOf(i)} ${yOf(d.expenses)}`)
     .join(" ");
 
   const caArea = `${caPath} L ${xOf(data.length - 1)} ${yOf(minVal)} L ${xOf(0)} ${yOf(minVal)} Z`;
@@ -203,14 +257,24 @@ function LineChart({ data }: { data: MonthlyPoint[] }) {
 
         {/* Ligne CA */}
         <path d={caPath} fill="none" stroke={CA_COLOR} strokeWidth={2.5} />
-        {/* Ligne Net */}
-        <path d={netPath} fill="none" stroke={NET_COLOR} strokeWidth={2.5} />
+        {/* Ligne Dépenses */}
+        <path
+          d={expensesPath}
+          fill="none"
+          stroke={EXPENSES_COLOR}
+          strokeWidth={2.5}
+        />
 
         {/* Points + labels mois */}
         {data.map((d, i) => (
           <g key={d.month}>
             <circle cx={xOf(i)} cy={yOf(d.ca)} r={3.5} fill={CA_COLOR} />
-            <circle cx={xOf(i)} cy={yOf(d.net)} r={3.5} fill={NET_COLOR} />
+            <circle
+              cx={xOf(i)}
+              cy={yOf(d.expenses)}
+              r={3.5}
+              fill={EXPENSES_COLOR}
+            />
             <text
               x={xOf(i)}
               y={height - 14}
@@ -235,10 +299,10 @@ function LineChart({ data }: { data: MonthlyPoint[] }) {
 
       <div className="flex items-center gap-4 text-[11px] text-muted pt-2 px-2">
         <Legend color={CA_COLOR} label="Chiffre d'affaires" />
-        <Legend color={NET_COLOR} label="Bénéfice net" />
+        <Legend color={EXPENSES_COLOR} label="Dépenses (3 comptes)" />
         <div className="ml-auto tabular-nums text-text">
           Dernier mois : {formatAmount(data[data.length - 1].ca, "USD")} CA ·{" "}
-          {formatAmount(data[data.length - 1].net, "USD")} net
+          {formatAmount(data[data.length - 1].expenses, "USD")} dépenses
         </div>
       </div>
     </div>
