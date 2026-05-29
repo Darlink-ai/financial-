@@ -33,12 +33,32 @@ export function InvoiceRow({ invoice }: { invoice: Invoice }) {
     }
     setAssigning(true);
     try {
-      updateInvoiceStore(invoice.id, {
-        excelRowMatched: n,
-        status: "matched",
+      // Match manuel → update DB + upload Drive (règle métier).
+      const r = await fetch(`/api/invoices/${invoice.id}/assign-row`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rowNumber: n,
+          accountCurrency: invoice.accountCurrency,
+        }),
       });
+      if (!r.ok) {
+        const data = (await r.json().catch(() => null)) as
+          | { message?: string }
+          | null;
+        alert(`Match impossible : ${data?.message ?? `HTTP ${r.status}`}`);
+        return;
+      }
+      const data = (await r.json()) as {
+        drive?: { uploaded?: boolean; reason?: string };
+      };
       await reloadFromDb();
       setManualRow("");
+      if (data.drive && !data.drive.uploaded) {
+        alert(
+          `Match enregistré, mais upload Drive non effectué (${data.drive.reason ?? "raison inconnue"}).`,
+        );
+      }
     } finally {
       setAssigning(false);
     }

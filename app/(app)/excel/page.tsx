@@ -392,12 +392,37 @@ export default function ExcelPage() {
                       key={i.id}
                       invoice={i}
                       onAssign={async (rowNumber) => {
-                        updateInvoice(i.id, {
-                          excelRowMatched: rowNumber,
-                          status: "matched",
-                          accountCurrency: currency,
-                        });
+                        // Match manuel → update DB + upload Drive
+                        // (règle : pas de match = pas de drive).
+                        const r = await fetch(
+                          `/api/invoices/${i.id}/assign-row`,
+                          {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                              rowNumber,
+                              accountCurrency: currency,
+                            }),
+                          },
+                        );
+                        if (!r.ok) {
+                          const data = (await r.json().catch(() => null)) as
+                            | { message?: string }
+                            | null;
+                          alert(
+                            `Match impossible : ${data?.message ?? `HTTP ${r.status}`}`,
+                          );
+                          return;
+                        }
+                        const data = (await r.json()) as {
+                          drive?: { uploaded?: boolean; reason?: string };
+                        };
                         await reloadFromDb();
+                        if (data.drive && !data.drive.uploaded) {
+                          alert(
+                            `Match enregistré, mais upload Drive non effectué (${data.drive.reason ?? "raison inconnue"}). La facture reste en DB.`,
+                          );
+                        }
                       }}
                       onDelete={async () => {
                         // Suppression définitive — l'utilisateur dit que

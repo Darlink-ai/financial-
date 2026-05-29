@@ -26,6 +26,7 @@ import {
   getAllState,
   getExcelSheet,
   getInvoiceRetryCount,
+  getInvoiceWithAttachment,
   recordInvoiceFailure,
   recordInvoiceProcessed,
   updateInvoice,
@@ -169,9 +170,19 @@ export async function rematchInvoicesForBucket(opts: {
           ...(authoritativeAmount != null ? { amount: authoritativeAmount } : {}),
         });
         matched++;
+        // Règle : un match juste trouvé déclenche l'upload Drive (si pas
+        // déjà fait + Drive configuré + classification OK).
+        if (!inv.drivePath) {
+          try {
+            await uploadMatchedInvoiceToDrive(inv.id);
+          } catch (e) {
+            console.error("rematch drive upload failed for", inv.id, e);
+          }
+        }
       }
     } else if (inv.status === "matched") {
       // Avant matchée mais plus dans aucun sheet → rétrograde.
+      // (Drive : on garde le fichier en place, on ne re-télécharge pas.)
       await updateInvoice(inv.id, {
         excelRowMatched: null,
         status: inv.drivePath ? "uploaded" : "renamed",
@@ -180,6 +191,65 @@ export async function rematchInvoicesForBucket(opts: {
     }
   }
   return { matched, cleared, dedupedDuplicates };
+}
+
+/**
+ * Upload Drive standalone d'une facture déjà rapprochée. Idempotent
+ * (uploadInvoiceToDrive skip si le fichier existe déjà sur Drive).
+ *
+ * Utilisé par :
+ *  - rematchInvoicesForBucket : quand une facture passe de "renamed" à
+ *    "matched" suite à l'upload Excel
+ *  - /api/invoices/[id]/assign-row : match manuel via /excel
+ *
+ * Met à jour drivePath et status (matched) en DB.
+ */
+export async function uploadMatchedInvoiceToDrive(
+  invoiceId: string,
+): Promise<{ uploaded: boolean; drivePath: string | null; reason?: string }> {
+  const data = await getInvoiceWithAttachment(invoiceId);
+  if (!data) return { uploaded: false, drivePath: null, reason: "not_found" };
+  const inv = data.invoice;
+  if (
+    !inv.finalName ||
+    !inv.folderCode ||
+    !inv.folderLabel ||
+    !inv.invoiceDate
+  ) {
+    return {
+      uploaded: false,
+      drivePath: inv.drivePath,
+      reason: "incomplete_classification",
+    };
+  }
+  if (!data.attachmentB64) {
+    return {
+      uploaded: false,
+      drivePath: inv.drivePath,
+      reason: "no_pdf",
+    };
+  }
+  const token = await getDriveAccessToken();
+  if (!token) {
+    return {
+      uploaded: false,
+      drivePath: inv.drivePath,
+      reason: "drive_not_configured",
+    };
+  }
+  const pdfBuffer = Buffer.from(data.attachmentB64, "base64");
+  const up = await uploadInvoiceToDrive({
+    pdfBuffer,
+    finalName: inv.finalName,
+    invoiceDateIso: inv.invoiceDate,
+    folderCode: inv.folderCode,
+    folderLabel: inv.folderLabel,
+  });
+  await updateInvoice(invoiceId, {
+    drivePath: up.drivePath,
+    status: "matched",
+  });
+  return { uploaded: true, drivePath: up.drivePath };
 }
 
 export type AutoProcessInput = {
@@ -349,32 +419,15 @@ async function autoProcessInvoiceInner(
     };
   }
 
-  // ---- 3. Upload Drive ----
+  // RÈGLE : on n'uploade sur Drive QUE si la facture est rapprochée à
+  // une ligne Excel. Les factures non rapprochées restent dans le sas
+  // (status "renamed") en attente d'un match manuel via /excel.
+  //
+  // L'upload Drive est donc déplacé APRÈS le match Excel ci-dessous.
   let drivePath: string | null = null;
   let uploaded = false;
-  try {
-    const token = await getDriveAccessToken();
-    if (token) {
-      const up = await uploadInvoiceToDrive(
-        {
-          pdfBuffer,
-          finalName: finalName!,
-          invoiceDateIso: extracted.invoiceDate!,
-          folderCode: mapping!.folderCode,
-          folderLabel: mapping!.folderLabel,
-        },
-        input.driveFolderCache,
-      );
-      drivePath = up.drivePath;
-      uploaded = true;
-    }
-  } catch (e) {
-    errors.push(`drive: ${(e as Error).message}`);
-  }
 
-  patch.drivePath = drivePath;
-
-  // ---- 4. Match Excel (cross-currency) ----
+  // ---- 3. Match Excel (cross-currency) ----
   // On cherche dans les 3 sheets dans l'ordre EUR > CHF > USD parce
   // que la devise du PDF (USD/CHF/EUR) n'indique PAS sur quel compte
   // bancaire le débit a été fait — ça dépend de la carte liée. Le
@@ -520,14 +573,37 @@ async function autoProcessInvoiceInner(
     }
   }
 
+  // ---- 5. Upload Drive — UNIQUEMENT si la facture est rapprochée ----
+  // Règle métier : on ne classe que ce qui est validé contre la banque.
+  // Sans match, le PDF reste en base mais n'est pas envoyé sur Drive.
+  if (matchedRow !== null) {
+    try {
+      const token = await getDriveAccessToken();
+      if (token) {
+        const up = await uploadInvoiceToDrive(
+          {
+            pdfBuffer,
+            finalName: finalName!,
+            invoiceDateIso: extracted.invoiceDate!,
+            folderCode: mapping!.folderCode,
+            folderLabel: mapping!.folderLabel,
+          },
+          input.driveFolderCache,
+        );
+        drivePath = up.drivePath;
+        uploaded = true;
+      }
+    } catch (e) {
+      errors.push(`drive: ${(e as Error).message}`);
+    }
+    patch.drivePath = drivePath;
+  }
+
   // ---- Status final ----
-  // - matched  → ligne Excel trouvée (top du happy path)
-  // - uploaded → sur Drive mais Excel pas encore matchée
-  // - renamed  → fichier renommé (finalName construit) mais Drive non
-  //              configuré ou upload a échoué
+  // - matched  → ligne Excel trouvée → uploadé sur Drive si possible
+  // - renamed  → pas de match Excel → reste dans le sas, pas sur Drive
   let finalStatus: InvoiceStatus;
   if (matchedRow !== null) finalStatus = "matched";
-  else if (uploaded) finalStatus = "uploaded";
   else finalStatus = "renamed";
 
   await updateInvoice(input.invoiceId, {
