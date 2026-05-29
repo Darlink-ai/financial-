@@ -16,6 +16,16 @@ type MonthlyPoint = { month: string; ca: number; expenses: number };
 const MONTHS_TO_SHOW = 6;
 const CURRENCIES: AccountCurrency[] = ["USD", "EUR", "CHF"];
 
+// Annotation one-shot : achat du business EFI en avril 2026 (-60'627,74 EUR
+// sortis du compte EUR). On affiche un 2ème point Dépenses sur ce mois,
+// hors achat, pour montrer ce que les dépenses opérationnelles "normales"
+// auraient été. Ne PAS étendre cette logique aux autres mois sans demande.
+const EFI_ACQUISITION = {
+  month: "2026-04",
+  amountEur: 60627.74,
+  label: "EFI acquisition",
+};
+
 /** Récupère un sheet via l'API. Renvoie null si rien stocké. */
 async function fetchSheet(
   month: string,
@@ -202,6 +212,24 @@ function LineChart({ data }: { data: MonthlyPoint[] }) {
     padL + (data.length === 1 ? innerW / 2 : (i / (data.length - 1)) * innerW);
   const yOf = (v: number) => padT + innerH - ((v - minVal) / range) * innerH;
 
+  // Annotation EFI acquisition : indice du mois ciblé + montant en USD
+  // converti via le taux moyen du mois (lib/fx). On ne rend rien si le
+  // mois n'est pas dans la fenêtre 6 mois affichée.
+  const efiIdx = data.findIndex((d) => d.month === EFI_ACQUISITION.month);
+  const efiUsd =
+    efiIdx >= 0
+      ? convertAmount(
+          EFI_ACQUISITION.amountEur,
+          "EUR",
+          "USD",
+          EFI_ACQUISITION.month,
+        )
+      : 0;
+  const efiPoint = efiIdx >= 0 ? data[efiIdx] : null;
+  const efiExpensesWithout = efiPoint
+    ? Math.max(0, efiPoint.expenses - efiUsd)
+    : 0;
+
   // Map mouse X → index du point le plus proche, pour le tooltip au hover.
   const onMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -319,6 +347,42 @@ function LineChart({ data }: { data: MonthlyPoint[] }) {
           </g>
         ))}
 
+        {/* Annotation EFI acquisition (avril 2026 uniquement). */}
+        {efiIdx >= 0 && efiPoint && (
+          <g pointerEvents="none">
+            {/* Trait pointillé reliant le point dépenses au point "hors EFI" */}
+            <line
+              x1={xOf(efiIdx)}
+              x2={xOf(efiIdx)}
+              y1={yOf(efiPoint.expenses)}
+              y2={yOf(efiExpensesWithout)}
+              stroke={EXPENSES_COLOR}
+              strokeWidth={1.5}
+              strokeDasharray="3 3"
+              opacity={0.6}
+            />
+            {/* Point creux pour distinguer du point principal */}
+            <circle
+              cx={xOf(efiIdx)}
+              cy={yOf(efiExpensesWithout)}
+              r={4}
+              fill="#1a2342"
+              stroke={EXPENSES_COLOR}
+              strokeWidth={2}
+            />
+            {/* Label sous le point */}
+            <text
+              x={xOf(efiIdx) + 8}
+              y={yOf(efiExpensesWithout) + 4}
+              fontSize={10}
+              fill={EXPENSES_COLOR}
+              fillOpacity={0.85}
+            >
+              {EFI_ACQUISITION.label}
+            </text>
+          </g>
+        )}
+
         {/* Ligne verticale de guide + halo au point survolé */}
         {hoverIdx != null && hoverPoint && (
           <g pointerEvents="none">
@@ -392,6 +456,42 @@ function LineChart({ data }: { data: MonthlyPoint[] }) {
               {formatAmount(hoverMargin, "USD")}
             </span>
           </div>
+          {/* Sur le mois de l'acquisition EFI, on affiche aussi la version
+              "hors acquisition" pour aider à comparer avec les autres mois. */}
+          {hoverPoint.month === EFI_ACQUISITION.month && (
+            <div className="border-t border-border mt-1.5 pt-1.5 space-y-0.5">
+              <div className="flex items-center gap-2 text-[10px] text-muted">
+                <span
+                  className="inline-block w-2 h-2 rounded-full border"
+                  style={{ borderColor: EXPENSES_COLOR }}
+                />
+                <span>Hors {EFI_ACQUISITION.label}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-muted">Dépenses</span>
+                <span className="ml-auto text-text">
+                  {formatAmount(efiExpensesWithout, "USD")}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-muted">Marge brute</span>
+                <span
+                  className={`ml-auto font-semibold ${
+                    hoverPoint.ca - efiExpensesWithout >= 0
+                      ? "text-ok"
+                      : "text-err"
+                  }`}
+                >
+                  {hoverPoint.ca - efiExpensesWithout >= 0 ? "+" : ""}
+                  {formatAmount(hoverPoint.ca - efiExpensesWithout, "USD")}
+                </span>
+              </div>
+              <div className="text-[10px] text-muted mt-1">
+                Achat one-shot : {formatAmount(EFI_ACQUISITION.amountEur, "EUR")}{" "}
+                (≈ {formatAmount(efiUsd, "USD")})
+              </div>
+            </div>
+          )}
         </div>
       )}
 
