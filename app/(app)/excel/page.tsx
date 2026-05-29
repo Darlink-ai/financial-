@@ -399,6 +399,20 @@ export default function ExcelPage() {
                         });
                         await reloadFromDb();
                       }}
+                      onDelete={async () => {
+                        // Suppression définitive — l'utilisateur dit que
+                        // ce n'est pas une vraie facture (faux positif Gmail).
+                        const r = await fetch(`/api/invoices/${i.id}`, {
+                          method: "DELETE",
+                        });
+                        if (!r.ok) {
+                          alert(
+                            `Impossible de supprimer (HTTP ${r.status}). Réessaie.`,
+                          );
+                          return;
+                        }
+                        await reloadFromDb();
+                      }}
                     />
                   ))}
                 </div>
@@ -432,9 +446,11 @@ export default function ExcelPage() {
 function UnmatchedRow({
   invoice,
   onAssign,
+  onDelete,
 }: {
   invoice: Invoice;
   onAssign: (rowNumber: number) => Promise<void>;
+  onDelete: () => Promise<void>;
 }) {
   const [row, setRow] = useState("");
   const [busy, setBusy] = useState(false);
@@ -449,6 +465,21 @@ function UnmatchedRow({
     try {
       await onAssign(n);
       setRow("");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async () => {
+    if (
+      !confirm(
+        `Supprimer définitivement cette ligne ?\n\n${invoice.creditor ?? ""} — ${invoice.subject}\n\nC'est pour quand un mail a été détecté comme facture à tort (faux positif). L'invoice sera enlevée du système.`,
+      )
+    )
+      return;
+    setBusy(true);
+    try {
+      await onDelete();
     } finally {
       setBusy(false);
     }
@@ -486,6 +517,14 @@ function UnmatchedRow({
           title="Forcer le rapprochement à cette ligne"
         >
           {busy ? "…" : "Valider"}
+        </button>
+        <button
+          onClick={remove}
+          disabled={busy}
+          className="btn !py-1 !px-2 text-[11px] disabled:opacity-50 hover:!border-err hover:text-err"
+          title="Ce n'est pas une vraie facture — supprimer du système"
+        >
+          <Trash2 size={11} />
         </button>
       </div>
     </div>
