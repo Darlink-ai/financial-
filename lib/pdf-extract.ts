@@ -371,15 +371,79 @@ function domainToCreditor(domain: string | undefined): string | null {
   return root.charAt(0).toUpperCase() + root.slice(1);
 }
 
+/**
+ * Liste des noms de fournisseurs connus qu'on peut détecter en search
+ * full-text dans le PDF. Utile quand l'heuristique "première ligne non
+ * générique" échoue (PDFs avec layout désordonné).
+ *
+ * On match le nom n'importe où dans le PDF — si "RunPod" apparaît, c'est
+ * très probablement une facture RunPod. Si plusieurs matchent, on prend
+ * celui avec la fréquence la plus élevée.
+ */
+const KNOWN_VENDORS = [
+  "RunPod",
+  "OpenAI",
+  "Anthropic",
+  "Vercel",
+  "GitHub",
+  "GitLab",
+  "Stripe",
+  "PayPal",
+  "AWS",
+  "Google Cloud",
+  "Cloudflare",
+  "Notion",
+  "Linear",
+  "Figma",
+  "Adobe",
+  "Microsoft",
+  "Hetzner",
+  "Deep Infra",
+  "Sentry",
+  "PostHog",
+  "xAI",
+  "Mistral",
+  "Together",
+  "Replicate",
+  "Modal",
+  "Supabase",
+  "Swisscom",
+  "Helvetia",
+  "UBS",
+];
+
 function guessCreditorFromPdfText(text: string): string | null {
-  // On prend la première ligne non vide (heuristique : c'est souvent
-  // le logo ou le nom de l'émetteur). On ignore les lignes trop génériques.
+  if (!text) return null;
+  // 1. Search direct par noms connus (case-insensitive) — le plus fiable.
+  // On compte les occurrences pour gérer les cas où plusieurs marques
+  // sont mentionnées (genre Stripe en intermédiaire de paiement pour
+  // une vraie facture OpenAI).
+  const counts: { name: string; count: number; firstAt: number }[] = [];
+  for (const vendor of KNOWN_VENDORS) {
+    const re = new RegExp(`\\b${vendor.replace(/\s+/g, "\\s+")}\\b`, "gi");
+    const matches = text.match(re);
+    if (!matches) continue;
+    counts.push({
+      name: vendor,
+      count: matches.length,
+      firstAt: text.toLowerCase().indexOf(vendor.toLowerCase()),
+    });
+  }
+  if (counts.length > 0) {
+    // Préfère la marque la plus fréquente ; en cas d'égalité, celle qui
+    // apparaît le plus tôt dans le doc (typiquement le header / logo).
+    counts.sort((a, b) => b.count - a.count || a.firstAt - b.firstAt);
+    return counts[0].name;
+  }
+
+  // 2. Fallback heuristique : 1ère ligne non générique du début du PDF.
   const lines = text
     .split("\n")
     .map((l) => l.trim())
     .filter((l) => l.length > 2 && l.length < 60);
   for (const l of lines.slice(0, 10)) {
-    if (/facture|invoice|reçu|receipt|client/i.test(l)) continue;
+    if (/facture|invoice|reçu|receipt|client|page|date|total/i.test(l))
+      continue;
     if (/^\d+$/.test(l)) continue;
     if (l.split(" ").length > 6) continue; // trop long pour un nom
     return l;

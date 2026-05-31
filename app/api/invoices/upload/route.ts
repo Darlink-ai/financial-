@@ -56,12 +56,18 @@ export async function POST(req: Request) {
     const invoiceId = `inv-manual-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const receivedAt = new Date().toISOString();
 
+    // IMPORTANT : pour les uploads manuels, on passe fromEmail="" et pas
+    // un faux email type "ajout-manuel@factura". Sinon le code de
+    // guessCreditorFromEmail tombe sur le domaine "factura" comme fallback
+    // de créditeur quand l'extraction PDF rate, ce qui pollue le rename.
+    // Avec "" → fallback ignoré, on garde seulement ce que le PDF contient
+    // (ou null si rien trouvé, et l'utilisateur corrige sur /import).
     await insertIncomingInvoice({
       id: invoiceId,
       mailboxId: "manual",
       sourceMessageId: invoiceId, // unique par construction
       subject: file.name,
-      fromEmail: "ajout-manuel@factura",
+      fromEmail: "",
       mailbox: "Ajout manuel",
       receivedAt,
       attachmentName: file.name,
@@ -72,7 +78,7 @@ export async function POST(req: Request) {
     const mappings = await getAllMappings();
     const outcome = await autoProcessInvoice({
       invoiceId,
-      fromEmail: "ajout-manuel@factura",
+      fromEmail: "",
       subject: file.name,
       receivedAt,
       pdfBase64: base64,
