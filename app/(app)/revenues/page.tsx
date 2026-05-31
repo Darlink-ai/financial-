@@ -920,6 +920,12 @@ function RevenueDetail({
           />
         </div>
 
+        {/* Petit guide format du fichier — toujours visible (que le fichier
+            soit déjà chargé ou pas), pour rappel quand on remplace. */}
+        <div className="px-5 pb-4">
+          <FileFormatHint />
+        </div>
+
         {warnings.length > 0 && (
           <div className="px-5 pb-3">
             <div className="card bg-warn/5 border-warn/30 p-3 text-[11px] text-warn">
@@ -943,7 +949,7 @@ function RevenueDetail({
                 Charge le fichier des revenus par pays
               </div>
               <div className="text-[11px] text-muted mt-1">
-                .xlsx / .xls / .csv — colonne 1 : pays, colonne 2 : revenu
+                .xlsx / .xls / .csv — 3 colonnes : Statut · Pays · Montant
               </div>
             </div>
           </div>
@@ -1403,6 +1409,54 @@ function RateInput({
 
 function roundCents(n: number) {
   return Math.round(n * 100) / 100;
+}
+
+/**
+ * Petit guide visible au-dessus de la dropzone : rappel du format
+ * attendu pour le fichier transactions + warning sur les statuts mixtes.
+ */
+function FileFormatHint() {
+  return (
+    <div className="card bg-panel2/50 border-border p-3 text-[11px] space-y-2">
+      <div className="text-[10px] uppercase tracking-wider text-muted">
+        Format attendu — 3 colonnes
+      </div>
+      <div className="grid grid-cols-3 gap-3">
+        <div>
+          <div className="text-muted">Colonne 1</div>
+          <div className="font-mono text-text">Statut</div>
+          <div className="text-[10px] text-muted mt-0.5">
+            approved, declined,<br />refund, chargeback
+          </div>
+        </div>
+        <div>
+          <div className="text-muted">Colonne 2</div>
+          <div className="font-mono text-text">Pays</div>
+          <div className="text-[10px] text-muted mt-0.5">
+            United States,<br />France, Germany…
+          </div>
+        </div>
+        <div>
+          <div className="text-muted">Colonne 3</div>
+          <div className="font-mono text-text">Montant</div>
+          <div className="text-[10px] text-muted mt-0.5">
+            12.99, 27.99…<br />en USD natif
+          </div>
+        </div>
+      </div>
+      <div className="text-[10px] text-warn border-t border-border/50 pt-2 flex items-start gap-1.5">
+        <span>⚠️</span>
+        <span>
+          <span className="font-medium">Rappel :</span> dans la colonne Statut,
+          assure-toi que les lignes <span className="font-mono">refund</span> et{" "}
+          <span className="font-mono">chargeback</span> sont bien séparées (pas
+          mélangées avec des <span className="font-mono">sale</span> /{" "}
+          <span className="font-mono">approved</span>) — sinon les compteurs et
+          les montants débités seront faux.
+        </span>
+      </div>
+    </div>
+  );
 }
 
 function CountryTable({ revenue }: { revenue: Revenue }) {
