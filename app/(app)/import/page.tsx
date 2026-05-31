@@ -61,7 +61,19 @@ export default function ImportPage() {
   const { reloadFromDb, invoices } = useStore();
   const [items, setItems] = useState<DraftItem[]>([]);
   const [dragOver, setDragOver] = useState(false);
+  const [purgingDb, setPurgingDb] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // Option C : force un reloadFromDb au mount pour que la vue initiale
+  // reflète exactement ce qui est en DB (brouillons "Ajout manuel" laissés
+  // d'une session précédente). Sans ça, la première validation déclenche
+  // un reload qui fait apparaître d'un coup des dizaines/centaines de
+  // brouillons "fantômes" → effet de surprise (149 → 340) qu'on évite.
+  useEffect(() => {
+    void reloadFromDb();
+    // On veut juste au mount — reloadFromDb est stable (zustand).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /** Drafts persistants : toutes les invoices créées via /import (mailbox
    *  "Ajout manuel") qui sont encore en status="renamed" (pas validées) et
@@ -375,6 +387,90 @@ export default function ImportPage() {
     setItems((prev) => prev.filter((p) => p.status === "uploading"));
   };
 
+  /**
+   * Option B : supprime EN DB tous les brouillons issus de "Ajout manuel"
+   * qui sont encore en status renamed/manual (= non rapprochés). N'agit
+   * QUE sur mailbox='Ajout manuel' — les factures Gmail-synced, les
+   * rapprochées Excel (status='matched'), les factures en cours d'analyse,
+   * etc. ne sont absolument pas touchées.
+   *
+   * Filtre strict côté SQL → garanti côté serveur même si l'UI est buggée.
+   */
+  const purgeAllManualDrafts = async () => {
+    // 1) Lecture du nombre exact côté serveur (pas du count local — peut
+    //    être divergent si la session est restée ouverte longtemps).
+    let serverCount = 0;
+    try {
+      const r = await fetch("/api/invoices/bulk-manual-drafts", {
+        cache: "no-store",
+      });
+      const data = (await r.json().catch(() => null)) as
+        | { ok?: boolean; count?: number }
+        | null;
+      if (!r.ok || !data?.ok) {
+        alert(`Impossible de compter les brouillons : HTTP ${r.status}`);
+        return;
+      }
+      serverCount = data.count ?? 0;
+    } catch (e) {
+      alert(`Erreur réseau : ${(e as Error).message}`);
+      return;
+    }
+
+    if (serverCount === 0) {
+      alert("Aucun brouillon Ajout manuel à supprimer.");
+      return;
+    }
+
+    const ok = confirm(
+      [
+        `⚠ Supprimer définitivement ${serverCount} brouillon(s) issus de "Ajout manuel" ?`,
+        "",
+        "Seuls les brouillons NON rapprochés (status renamed/manual) seront effacés.",
+        "",
+        "RIEN d'autre n'est touché :",
+        "  • les factures rapprochées Excel (vertes) restent intactes",
+        "  • les factures Gmail-synced ne sont pas concernées",
+        "  • les mailboxes, mappings, Drive, revenus, etc. ne bougent pas",
+        "",
+        "Action irréversible. Continuer ?",
+      ].join("\n"),
+    );
+    if (!ok) return;
+
+    setPurgingDb(true);
+    try {
+      const r = await fetch("/api/invoices/bulk-manual-drafts", {
+        method: "DELETE",
+      });
+      const data = (await r.json().catch(() => null)) as
+        | { ok?: boolean; deleted?: number; ids?: string[] }
+        | null;
+      if (!r.ok || !data?.ok) {
+        alert(`Échec suppression : HTTP ${r.status}`);
+        return;
+      }
+      const deletedIds = new Set(data.ids ?? []);
+      // Nettoie aussi la liste locale : tous les items dont l'invoice
+      // vient d'être supprimée disparaissent de la vue. Les items en cours
+      // d'upload (pas encore d'invoice.id) restent — on n'a aucune raison
+      // de les retirer.
+      setItems((prev) =>
+        prev.filter((p) => {
+          const id = p.invoice?.id;
+          if (!id) return true;
+          return !deletedIds.has(id);
+        }),
+      );
+      await reloadFromDb();
+      alert(`${data.deleted ?? 0} brouillon(s) supprimé(s) de la DB.`);
+    } catch (e) {
+      alert(`Erreur : ${(e as Error).message}`);
+    } finally {
+      setPurgingDb(false);
+    }
+  };
+
   /** Index des lignes Excel déjà occupées par une facture en status="matched"
    *  (= verte dans le rapprochement Excel). Clé : `${currency}|${row}|${month}`.
    *  Sert à signaler aux drafts de /import qu'ils ciblent une ligne déjà
@@ -584,7 +680,7 @@ export default function ImportPage() {
                 {draftedCount > 0 && (
                   <button
                     onClick={validateAll}
-                    disabled={validatingAll}
+                    disabled={validatingAll || purgingDb}
                     className="btn btn-primary disabled:opacity-50"
                     title={`Valider en séquence les ${draftedCount} brouillon(s) qui ont une ligne Excel renseignée. Skip ceux qui ciblent une ligne déjà prise.`}
                   >
@@ -602,10 +698,27 @@ export default function ImportPage() {
                 )}
                 <button
                   onClick={clearAll}
-                  disabled={validatingAll}
+                  disabled={validatingAll || purgingDb}
                   className="btn disabled:opacity-50"
+                  title="Vide la liste affichée. N'efface rien en base — les brouillons réapparaîtront au prochain reload."
                 >
                   <Trash2 size={12} /> Vider la vue
+                </button>
+                <button
+                  onClick={purgeAllManualDrafts}
+                  disabled={validatingAll || purgingDb}
+                  className="btn disabled:opacity-50 hover:!border-err hover:text-err"
+                  title="Supprime EN BASE tous les brouillons Ajout manuel non rapprochés. Aucune autre facture n'est touchée (Gmail, rapprochées, etc. intactes)."
+                >
+                  {purgingDb ? (
+                    <>
+                      <RefreshCw size={12} className="animate-spin" /> Suppression…
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 size={12} /> Vider tous les brouillons (DB)
+                    </>
+                  )}
                 </button>
               </div>
             </div>

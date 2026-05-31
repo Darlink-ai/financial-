@@ -919,6 +919,43 @@ export async function deleteAllInvoices(): Promise<number> {
   return result.count ?? 0;
 }
 
+/**
+ * Supprime UNIQUEMENT les brouillons issus de "Ajout manuel" qui ne sont
+ * pas encore rapprochés (status renamed/manual). Filtre strict et explicite
+ * sur mailbox = 'Ajout manuel' — aucune autre boîte mail / aucun autre
+ * statut n'est touché. Les factures validées (status='matched'), les
+ * brouillons Gmail (mailbox ≠ 'Ajout manuel'), tout ce qui est en cours
+ * d'analyse, etc. restent intacts.
+ *
+ * Retourne le nombre de lignes effacées + la liste des IDs (pour audit /
+ * confirmation côté UI).
+ */
+export async function deleteManualDraftInvoices(): Promise<{
+  count: number;
+  ids: string[];
+}> {
+  const sql = client();
+  const rows = await sql<{ id: string }[]>`
+    DELETE FROM invoices
+    WHERE mailbox = 'Ajout manuel'
+      AND status IN ('renamed', 'manual')
+    RETURNING id
+  `;
+  return { count: rows.length, ids: rows.map((r) => r.id) };
+}
+
+/** Compte (sans supprimer) les brouillons "Ajout manuel" éligibles à
+ *  un bulk-delete — utilisé pour afficher un nombre dans la confirmation. */
+export async function countManualDraftInvoices(): Promise<number> {
+  const sql = client();
+  const [{ n }] = await sql<{ n: number }[]>`
+    SELECT COUNT(*)::int AS n FROM invoices
+    WHERE mailbox = 'Ajout manuel'
+      AND status IN ('renamed', 'manual')
+  `;
+  return n;
+}
+
 export async function updateInvoice(id: string, patch: Partial<Invoice>): Promise<Invoice | null> {
   const sql = client();
   const [current] = await sql<RawInvoice[]>`SELECT * FROM invoices WHERE id = ${id}`;
