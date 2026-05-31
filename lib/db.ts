@@ -838,8 +838,14 @@ export async function findInvoicesMatchingRow(opts: {
   excludeId: string;
   accountCurrency: string;
   rowIndex: number;
+  /** Mois de la facture (YYYY-MM). Chaque mois a son propre fichier Excel,
+   *  donc la ligne #N de janvier ≠ ligne #N de février. Le dédupe DOIT
+   *  scoper à un mois précis sinon on confond des factures totalement
+   *  différentes qui se trouvent au même n° de ligne dans 2 mois distincts. */
+  invoiceMonth: string;
 }): Promise<{ id: string; receivedAt: string; finalName: string | null }[]> {
   const sql = client();
+  const monthLike = `${opts.invoiceMonth}-%`;
   const rows = await sql<{
     id: string;
     received_at: Date;
@@ -850,6 +856,7 @@ export async function findInvoicesMatchingRow(opts: {
       AND account_currency = ${opts.accountCurrency}
       AND id != ${opts.excludeId}
       AND status = 'matched'
+      AND invoice_date LIKE ${monthLike}
   `;
   return rows.map((r) => ({
     id: r.id,

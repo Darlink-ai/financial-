@@ -72,9 +72,12 @@ export async function rematchInvoicesForBucket(opts: {
   }
 
   const state = await getAllState();
+  // On exige inv.invoiceDate (pas de fallback sur receivedAt) — sinon une
+  // facture mal datée serait re-matchée contre le mois courant à tort.
+  // Les factures sans invoiceDate restent en sas, à rapprocher manuellement.
   const candidates = state.invoices.filter((inv) => {
-    const ref = inv.invoiceDate ?? inv.receivedAt;
-    if (ref.slice(0, 7) !== opts.month) return false;
+    if (!inv.invoiceDate) return false;
+    if (inv.invoiceDate.slice(0, 7) !== opts.month) return false;
     return inv.creditor != null;
   });
 
@@ -437,10 +440,22 @@ async function autoProcessInvoiceInner(
   // bancaire le débit a été fait — ça dépend de la carte liée. Le
   // premier match gagne, et l'accountCurrency de la facture est mis
   // à la devise du sheet matché.
-  const dateForMonth = extracted.invoiceDate ?? input.receivedAt;
-  const month = dateForMonth.slice(0, 7);
+  //
+  // IMPORTANT : on n'utilise PAS receivedAt comme fallback si
+  // invoiceDate est manquante. Sinon une facture mal datée serait
+  // matchée contre les sheets du mois courant (ou de la date de
+  // réception du mail) → faux match. Sans invoiceDate fiable, on
+  // skip le match auto et l'utilisateur valide manuellement.
+  const month = extracted.invoiceDate
+    ? extracted.invoiceDate.slice(0, 7)
+    : null;
   let matchedRow: number | null = null;
   let matchedCurrency: AccountCurrency | null = null;
+  if (!month) {
+    errors.push(
+      "match: date de facture introuvable — match auto skip, à rapprocher manuellement.",
+    );
+  }
 
   const dummy: Invoice = {
     id: input.invoiceId,
@@ -470,43 +485,45 @@ async function autoProcessInvoiceInner(
   };
   let bestNearMiss: NearMiss | null = null;
 
-  for (const currency of EXCEL_SEARCH_ORDER) {
-    try {
-      const sheet = await getExcelSheet(month, currency);
-      if (!sheet) continue;
-      const matches = matchInvoicesAgainstSheet(
-        { headers: sheet.headers, rows: sheet.rows },
-        [dummy],
-      );
-      if (matches.length > 0) {
-        matchedRow = matches[0].rowIndex + 2;
-        matchedCurrency = currency;
-        const excelAmount = matches[0].excelAmount;
-        if (excelAmount != null && Number.isFinite(excelAmount)) {
-          patch.amount = Math.abs(excelAmount);
-        }
-        break;
-      } else {
-        // Pas de match au seuil 4 → on calcule la meilleure ligne
-        // approchante pour la remonter au user en cas d'échec.
-        const candidate = findBestCandidate(
+  if (month) {
+    for (const currency of EXCEL_SEARCH_ORDER) {
+      try {
+        const sheet = await getExcelSheet(month, currency);
+        if (!sheet) continue;
+        const matches = matchInvoicesAgainstSheet(
           { headers: sheet.headers, rows: sheet.rows },
-          dummy,
+          [dummy],
         );
-        if (
-          candidate &&
-          (!bestNearMiss || candidate.score > bestNearMiss.score)
-        ) {
-          bestNearMiss = {
-            currency,
-            rowIndex: candidate.result.rowIndex + 2,
-            score: candidate.score,
-            reasons: candidate.result.reasons,
-          };
+        if (matches.length > 0) {
+          matchedRow = matches[0].rowIndex + 2;
+          matchedCurrency = currency;
+          const excelAmount = matches[0].excelAmount;
+          if (excelAmount != null && Number.isFinite(excelAmount)) {
+            patch.amount = Math.abs(excelAmount);
+          }
+          break;
+        } else {
+          // Pas de match au seuil 4 → on calcule la meilleure ligne
+          // approchante pour la remonter au user en cas d'échec.
+          const candidate = findBestCandidate(
+            { headers: sheet.headers, rows: sheet.rows },
+            dummy,
+          );
+          if (
+            candidate &&
+            (!bestNearMiss || candidate.score > bestNearMiss.score)
+          ) {
+            bestNearMiss = {
+              currency,
+              rowIndex: candidate.result.rowIndex + 2,
+              score: candidate.score,
+              reasons: candidate.result.reasons,
+            };
+          }
         }
+      } catch (e) {
+        errors.push(`excel(${currency}): ${(e as Error).message}`);
       }
-    } catch (e) {
-      errors.push(`excel(${currency}): ${(e as Error).message}`);
     }
   }
 
@@ -533,12 +550,16 @@ async function autoProcessInvoiceInner(
   // avant le reçu) et on supprime les autres.
   let deletedAsDuplicateOf: string | null = null;
   const deletedOtherIds: string[] = [];
-  if (matchedRow !== null && matchedCurrency) {
+  if (matchedRow !== null && matchedCurrency && month) {
     try {
       const others = await findInvoicesMatchingRow({
         excludeId: input.invoiceId,
         accountCurrency: matchedCurrency,
         rowIndex: matchedRow,
+        // Scope au mois de la facture courante — la ligne #N de mars n'est
+        // PAS la même que la ligne #N de janvier. Sans ce filtre, on
+        // supprime à tort des factures comme doublons inter-mois.
+        invoiceMonth: month,
       });
       if (others.length > 0) {
         const currentTime = new Date(input.receivedAt).getTime();
