@@ -236,21 +236,83 @@ export default function ExcelPage() {
     });
   };
 
-  const downloadHighlighted = () => {
-    if (!workbook || !sheet) return;
-    const ws = workbook.Sheets[activeSheet];
-    // xlsx (community) doesn't support cell styling on write — we export a CSV with a marker column.
-    const out: (string | number | null)[][] = [
-      [...sheet.headers, "Rapprochement"],
-      ...sheet.rows.map((row, idx) => {
-        const m = matchedRows.get(idx);
-        return [...row, m ? `✓ ${m.invoice.creditor} (${m.confidence})` : ""];
-      }),
-    ];
-    const newWs = XLSX.utils.aoa_to_sheet(out);
-    const newWb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(newWb, newWs, "Rapprochement");
-    XLSX.writeFile(newWb, `${(fileName ?? "rapprochement").replace(/\.[^.]+$/, "")}-matched.xlsx`);
+  const downloadHighlighted = async () => {
+    if (!sheet) return;
+    // ExcelJS supporte le styling cellule par cellule, contrairement à
+    // xlsx community. On reproduit le fichier original + colonne
+    // "Rapprochement" + fond vert sur les lignes matchées.
+    const ExcelJS = (await import("exceljs")).default;
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Rapprochement");
+
+    // Row 1 : headers
+    const headerRow = ws.addRow([...sheet.headers, "Rapprochement"]);
+    headerRow.font = { bold: true };
+    headerRow.fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: "FFE6E8EB" }, // gris clair
+    };
+
+    // Data rows
+    sheet.rows.forEach((row, idx) => {
+      const m = matchedRows.get(idx);
+      const cells = [
+        ...row.map((c) => {
+          // Convertit les dates ISO en objet Date pour qu'Excel les
+          // reconnaisse comme dates et pas comme texte.
+          if (typeof c === "string" && /^\d{4}-\d{2}-\d{2}T/.test(c)) {
+            const d = new Date(c);
+            if (!Number.isNaN(d.getTime())) return d;
+          }
+          return c;
+        }),
+        m ? `✓ ${m.invoice.creditor} (${m.confidence})` : "",
+      ];
+      const xRow = ws.addRow(cells);
+      if (m) {
+        // Vert clair sur toute la ligne — pareil que le code de couleur
+        // de l'UI (bg-ok/0.07).
+        xRow.eachCell({ includeEmpty: true }, (cell) => {
+          cell.fill = {
+            type: "pattern",
+            pattern: "solid",
+            fgColor: { argb: "FFD4F1DC" }, // vert très clair
+          };
+        });
+      }
+    });
+
+    // Auto-fit colonnes (largeur max 50 char, min 10)
+    ws.columns.forEach((col) => {
+      let max = 10;
+      col.eachCell?.({ includeEmpty: false }, (cell) => {
+        const v = cell.value;
+        const len =
+          v == null
+            ? 0
+            : typeof v === "string"
+            ? v.length
+            : typeof v === "number"
+            ? String(v).length
+            : 10;
+        if (len > max) max = len;
+      });
+      col.width = Math.min(50, max + 2);
+    });
+
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${(fileName ?? "rapprochement").replace(/\.[^.]+$/, "")}-matched.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   return (
