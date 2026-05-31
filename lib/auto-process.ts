@@ -260,6 +260,10 @@ export type AutoProcessInput = {
   pdfBase64: string;
   mappings: FolderMapping[];
   driveFolderCache?: DriveFolderCache; // partagé entre invoices du même run
+  /** Mode brouillon : skip le upload Drive même si la facture est matchée.
+   *  Utilisé par /import pour laisser l'utilisateur valider chaque facture
+   *  manuellement avant de pousser sur Drive. */
+  skipDrive?: boolean;
 };
 
 export type AutoProcessOutcome = {
@@ -576,7 +580,11 @@ async function autoProcessInvoiceInner(
   // ---- 5. Upload Drive — UNIQUEMENT si la facture est rapprochée ----
   // Règle métier : on ne classe que ce qui est validé contre la banque.
   // Sans match, le PDF reste en base mais n'est pas envoyé sur Drive.
-  if (matchedRow !== null) {
+  //
+  // Mode brouillon (skipDrive=true, ex. /import) : on saute l'upload même
+  // si matché. L'utilisateur valide manuellement après review, ce qui
+  // déclenche l'upload via /api/invoices/[id]/assign-row.
+  if (matchedRow !== null && !input.skipDrive) {
     try {
       const token = await getDriveAccessToken();
       if (token) {
@@ -602,13 +610,26 @@ async function autoProcessInvoiceInner(
   // ---- Status final ----
   // - matched  → ligne Excel trouvée → uploadé sur Drive si possible
   // - renamed  → pas de match Excel → reste dans le sas, pas sur Drive
+  //
+  // Mode brouillon (skipDrive) : on garde "renamed" + excelRowMatched=null
+  // dans la DB même si on a trouvé un match. Le match proposé est
+  // retourné dans l'outcome pour que l'UI puisse pré-remplir l'input,
+  // mais c'est l'utilisateur qui validera (via /assign-row) → ce moment
+  // déclenche le match en DB + l'upload Drive.
   let finalStatus: InvoiceStatus;
-  if (matchedRow !== null) finalStatus = "matched";
-  else finalStatus = "renamed";
+  if (input.skipDrive) {
+    finalStatus = "renamed";
+  } else if (matchedRow !== null) {
+    finalStatus = "matched";
+  } else {
+    finalStatus = "renamed";
+  }
+
+  const dbRowMatched = input.skipDrive ? null : matchedRow;
 
   await updateInvoice(input.invoiceId, {
     ...patch,
-    excelRowMatched: matchedRow,
+    excelRowMatched: dbRowMatched,
     status: finalStatus,
   });
 
@@ -616,6 +637,8 @@ async function autoProcessInvoiceInner(
     status: finalStatus,
     classified: true,
     uploadedToDrive: uploaded,
+    // On retourne TOUJOURS le match proposé pour que l'UI puisse l'afficher
+    // — même en draft où il n'est pas écrit en DB.
     matchedExcelRow: matchedRow,
     errors,
     deletedAsDuplicateOf,

@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
-import { getAllMappings, insertIncomingInvoice, updateInvoice } from "@/lib/db";
+import {
+  getAllMappings,
+  getInvoiceWithAttachment,
+  insertIncomingInvoice,
+} from "@/lib/db";
 import { autoProcessInvoice } from "@/lib/auto-process";
 
 export const runtime = "nodejs";
@@ -11,27 +15,25 @@ export const maxDuration = 90;
  *
  * Upload manuel d'une facture PDF (file en multipart/form-data, clé "file").
  * Crée une row invoices avec une mailbox synthétique "manual" puis lance
- * le pipeline autoProcessInvoice complet (extraction → classification →
- * Drive → match Excel).
+ * le pipeline autoProcessInvoice (extraction → classification → match Excel).
  *
- * Le client envoie 1 fichier par appel pour avoir un feedback progressif
- * et éviter les body size limits côté Vercel.
+ * Mode brouillon (form field `draft=1`) : skipDrive=true côté pipeline.
+ *   - Le PDF est traité (extract + classify + match proposé), mais on n'écrit
+ *     pas le match en DB et on ne pousse pas sur Drive.
+ *   - L'invoice retournée a status="renamed" et excelRowMatched=null.
+ *   - Le match proposé est dans outcome.matchedExcelRow → l'UI l'affiche
+ *     en pré-remplissage de l'input "N° ligne". L'utilisateur valide
+ *     via /api/invoices/[id]/assign-row qui déclenche le match + Drive.
+ *
+ * Mode immédiat (sans draft) : pipeline complet, status="matched" + Drive
+ *   si un match est trouvé, sinon "renamed".
  */
 export async function POST(req: Request) {
   try {
     const form = await req.formData();
     const file = form.get("file");
-    // Optionnel : numéro de ligne Excel à forcer en match après autoProcess.
-    // Si l'utilisateur a déjà repéré visuellement la ligne dans le rapprochement,
-    // il peut nous la donner directement pour court-circuiter le matcher.
-    const excelRowRaw = form.get("excelRow");
-    let forcedExcelRow: number | null = null;
-    if (typeof excelRowRaw === "string" && excelRowRaw.trim()) {
-      const parsed = parseInt(excelRowRaw.trim(), 10);
-      if (Number.isFinite(parsed) && parsed >= 2) {
-        forcedExcelRow = parsed;
-      }
-    }
+    const draftFlag = form.get("draft");
+    const draft = draftFlag === "1" || draftFlag === "true";
 
     if (!file || !(file instanceof File)) {
       return NextResponse.json(
@@ -75,33 +77,21 @@ export async function POST(req: Request) {
       receivedAt,
       pdfBase64: base64,
       mappings,
+      skipDrive: draft,
     });
 
-    // Override manuel du match Excel : si l'utilisateur a fourni un n° de ligne,
-    // on force le match après le pipeline automatique. Le statut "matched" prime
-    // sur ce que autoProcess a pu décider (uploaded / renamed / manual).
-    let forcedMatch = false;
-    if (forcedExcelRow !== null) {
-      await updateInvoice(invoiceId, {
-        excelRowMatched: forcedExcelRow,
-        status: "matched",
-      });
-      forcedMatch = true;
-    }
+    // Récupère l'invoice fraîche en DB pour la renvoyer au client
+    // (creditor, amount, date, finalName, etc. — utiles pour la preview UI).
+    const withAtt = await getInvoiceWithAttachment(invoiceId);
+    const invoice = withAtt?.invoice ?? null;
 
     return NextResponse.json({
       ok: true,
       invoiceId,
-      outcome: {
-        ...outcome,
-        // Si on a forcé le match, on reflète ça dans l'outcome pour que le
-        // client affiche bien "matched" plutôt que l'ancien statut.
-        ...(forcedMatch
-          ? { status: "matched", matchedExcelRow: forcedExcelRow }
-          : {}),
-      },
-      forcedExcelRow,
+      outcome,
+      invoice,
       fileName: file.name,
+      draft,
     });
   } catch (e) {
     const err = e as Error;
