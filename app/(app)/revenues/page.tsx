@@ -169,6 +169,7 @@ export default function RevenuesPage() {
             value={totals.captured}
             currency={displayCurrency}
             icon={Banknote}
+            hint="Somme brute des transactions approved du fichier. Les refunds et chargebacks ne sont PAS comptés ici — ils sont stockés séparément et déduits du Net encaissé."
           />
           <TotalTile
             label="Frais processeur"
@@ -176,6 +177,7 @@ export default function RevenuesPage() {
             currency={displayCurrency}
             icon={Percent}
             tone="warn"
+            hint="Total des frais : Auth + Capture + Declined + Refund + Chargeback + IC++ markup + Interchange + Scheme + frais fixes mensuels + wires."
           />
           <TotalTile
             label="Rolling reserve (net)"
@@ -183,6 +185,7 @@ export default function RevenuesPage() {
             currency={displayCurrency}
             icon={Clock}
             tone="info"
+            hint="Reserve retenue ce mois (10% du capturé) MOINS la reserve libérée d'une période d'il y a ~6 mois. C'est l'impact net sur la trésorerie."
           />
           <TotalTile
             label="Net encaissé"
@@ -190,6 +193,7 @@ export default function RevenuesPage() {
             currency={displayCurrency}
             icon={TrendingUp}
             tone="ok"
+            hint="Capturé − Frais processeur − Reserve nette − Refunds − Chargebacks. Si Payment Amount EUR est renseigné, c'est cette valeur exacte qui est utilisée à la place."
           />
         </section>
 
@@ -306,12 +310,14 @@ function TotalTile({
   currency,
   icon: Icon,
   tone = "neutral",
+  hint,
 }: {
   label: string;
   value: number;
   currency: string;
   icon: React.ComponentType<{ size?: number; className?: string }>;
   tone?: "neutral" | "ok" | "warn" | "info";
+  hint?: string;
 }) {
   const toneClass =
     tone === "ok"
@@ -322,7 +328,7 @@ function TotalTile({
           ? "text-accent"
           : "text-text";
   return (
-    <div className="card p-5">
+    <div className="card p-5" title={hint}>
       <div className="flex items-center justify-between mb-3">
         <div className="text-[12px] text-muted">{label}</div>
         <Icon size={16} className="text-muted" />
