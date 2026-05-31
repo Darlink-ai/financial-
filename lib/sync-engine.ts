@@ -53,6 +53,10 @@ function buildGmailQuery(opts: SyncOptions): string {
   } else {
     parts.push(`newer_than:${opts.lookbackDays ?? 6}d`);
   }
+  // Scope explicite : inbox + spam, mais PAS trash. Permet d'attraper les
+  // factures que le filtre anti-spam Gmail a classé indésirables (cas
+  // courant pour les factures de SaaS US ou des nouveaux émetteurs).
+  parts.push("(in:inbox OR in:spam)");
   return parts.join(" ");
 }
 
@@ -125,7 +129,9 @@ export async function runSync(
       try {
         const accessToken = await getValidAccessToken(mb);
 
-        const messageIds = await listMessages(accessToken, query, 100);
+        // includeSpamTrash=true → l'API renvoie aussi les messages en
+        // dossier Spam (et Trash, mais on filtre Trash via la query).
+        const messageIds = await listMessages(accessToken, query, 100, true);
         r.totalMessages = messageIds.length;
 
         for (const messageId of messageIds) {

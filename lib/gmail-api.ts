@@ -34,10 +34,21 @@ export async function listMessages(
   accessToken: string,
   query: string,
   maxResults = 100,
+  /**
+   * Par défaut, Gmail API EXCLUT les messages dans spam et trash.
+   * Mettre à true pour inclure ces dossiers — utile pour récupérer les
+   * factures que l'algorithme anti-spam de Gmail a classé indésirables.
+   * On combine avec un filtre query (in:inbox OR in:spam) pour exclure
+   * la corbeille (in:trash).
+   */
+  includeSpamTrash = false,
 ): Promise<string[]> {
   const url = new URL(`${BASE}/messages`);
   url.searchParams.set("q", query);
   url.searchParams.set("maxResults", String(maxResults));
+  if (includeSpamTrash) {
+    url.searchParams.set("includeSpamTrash", "true");
+  }
 
   const r = await fetch(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
