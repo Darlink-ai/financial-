@@ -505,15 +505,20 @@ function LineChart({
         )}
       </svg>
 
-      {/* Tooltip HTML positionné au-dessus du point survolé */}
-      {hoverIdx != null && hoverPoint && (
+      {/* Tooltip HTML positionné au-dessus du point survolé.
+          Décale horizontalement selon la position pour pas déborder
+          du chart sur les premiers/derniers points. */}
+      {hoverIdx != null && hoverPoint && (() => {
+        const xPct = (xOf(hoverIdx) / width) * 100;
+        // Smooth clamp : -10% à gauche, -90% à droite, -50% au milieu.
+        const xOffsetPct = xPct < 15 ? -10 : xPct > 85 ? -90 : -50;
+        return (
         <div
           className="absolute pointer-events-none bg-panel2 border border-border rounded-lg px-3 py-2 text-[11px] shadow-xl tabular-nums whitespace-nowrap"
           style={{
-            // Centre le tooltip sur le point. Clamp pour pas déborder.
-            left: `${(xOf(hoverIdx) / width) * 100}%`,
+            left: `${xPct}%`,
             top: `${(Math.min(yOf(hoverPoint.ca), yOf(hoverPoint.expenses)) / height) * 100}%`,
-            transform: "translate(-50%, calc(-100% - 12px))",
+            transform: `translate(${xOffsetPct}%, calc(-100% - 12px))`,
           }}
         >
           <div className="font-semibold text-[12px] mb-1.5">
@@ -599,7 +604,8 @@ function LineChart({
             </div>
           )}
         </div>
-      )}
+        );
+      })()}
 
       <div className="flex items-center gap-4 text-[11px] text-muted pt-2 px-2 flex-wrap">
         <Legend color={CA_COLOR} label="Chiffre d'affaires" />
