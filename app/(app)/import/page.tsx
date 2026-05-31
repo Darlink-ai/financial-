@@ -13,7 +13,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import type { Invoice, AccountCurrency } from "@/lib/types";
-import { formatAmount, formatSwissDate } from "@/lib/format";
+import { formatAmount, buildFinalName } from "@/lib/format";
 
 /**
  * État de chaque brouillon :
@@ -47,6 +47,12 @@ type DraftItem = {
   rowInput: string;
   /** Devise sélectionnée pour le rapprochement (modifiable). */
   currencyInput: AccountCurrency;
+  /** Overrides éditables (pré-remplis depuis l'auto-extract, modifiables
+   *  par l'utilisateur avant Valider). */
+  creditorInput: string;
+  folderCodeInput: string;
+  invoiceDateInput: string; // YYYY-MM-DD
+  finalNameInput: string;   // Sans .pdf
   /** Warnings ou erreurs renvoyés par autoProcess. */
   errors?: string[];
 };
@@ -74,6 +80,10 @@ export default function ImportPage() {
       status: "uploading",
       rowInput: "",
       currencyInput: "USD",
+      creditorInput: "",
+      folderCodeInput: "",
+      invoiceDateInput: "",
+      finalNameInput: "",
     }));
     setItems((prev) => [...prev, ...newItems]);
     // Upload séquentiel pour pas saturer le serveur (chaque autoProcess
@@ -128,6 +138,12 @@ export default function ImportPage() {
         proposedCurrency: inv?.accountCurrency ?? "USD",
         rowInput: proposedRow != null ? String(proposedRow) : "",
         currencyInput: inv?.accountCurrency ?? "USD",
+        // Pré-remplit les champs éditables avec ce que l'auto-extract
+        // a trouvé. L'utilisateur peut corriger avant de Valider.
+        creditorInput: inv?.creditor ?? "",
+        folderCodeInput: inv?.folderCode ?? "",
+        invoiceDateInput: inv?.invoiceDate ?? "",
+        finalNameInput: inv?.finalName ?? "",
         errors: data.outcome?.errors,
       });
     } catch (e) {
@@ -149,13 +165,31 @@ export default function ImportPage() {
     }
     setItemByKey(it.key, { status: "validating", message: undefined });
     try {
+      // Construit le payload avec les overrides éditables. On ne renvoie
+      // que ceux qui ont changé OU qui sont remplis (sinon serveur garde
+      // la valeur actuelle).
+      const payload: Record<string, unknown> = {
+        rowNumber: n,
+        accountCurrency: it.currencyInput,
+      };
+      const creditor = it.creditorInput.trim();
+      const folderCode = it.folderCodeInput.trim();
+      const invoiceDate = it.invoiceDateInput.trim();
+      const finalName = it.finalNameInput.trim();
+      if (creditor) payload.creditor = creditor;
+      if (folderCode) {
+        payload.folderCode = folderCode;
+        // On envoie aussi folderLabel si on l'a (depuis l'invoice originale,
+        // sinon on déduit du code).
+        payload.folderLabel = it.invoice.folderLabel ?? folderCode;
+      }
+      if (invoiceDate) payload.invoiceDate = invoiceDate;
+      if (finalName) payload.finalName = finalName;
+
       const r = await fetch(`/api/invoices/${it.invoice.id}/assign-row`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          rowNumber: n,
-          accountCurrency: it.currencyInput,
-        }),
+        body: JSON.stringify(payload),
       });
       const data = (await r.json().catch(() => null)) as
         | {
@@ -362,41 +396,22 @@ function DraftRow({
             )}
           </div>
 
-          {/* Ligne 2 : données extraites */}
-          {inv && (
-            <div className="grid grid-cols-[1fr_1fr_1fr_auto] gap-x-4 gap-y-1 text-[11px] text-muted tabular-nums">
-              <div>
-                <span className="text-muted">Créditeur : </span>
-                <span className="text-text">{inv.creditor ?? "—"}</span>
-              </div>
-              <div>
-                <span className="text-muted">Date : </span>
-                <span className="text-text">
-                  {formatSwissDate(inv.invoiceDate)}
-                </span>
-              </div>
-              <div>
-                <span className="text-muted">Montant : </span>
-                <span className="text-text">
-                  {formatAmount(inv.amount, inv.currency)}
-                </span>
-              </div>
-              <div>
-                <span className="text-muted">Code : </span>
-                <span className="text-text font-mono">
-                  {inv.folderCode
-                    ? `${inv.folderCode} — ${inv.folderLabel}`
-                    : "—"}
-                </span>
-              </div>
-            </div>
+          {/* Ligne 2 : données extraites éditables. L'utilisateur peut
+              corriger ce que l'auto-extract a sorti, et la correction
+              propage : 1) nom Drive recalculé, 2) folder mapping sauvé
+              en cache (créditeur → code) au moment du Valider. */}
+          {inv && item.status === "drafted" && (
+            <EditableExtractedFields item={item} onChange={onChange} />
           )}
 
-          {/* Ligne 3 : nom final proposé */}
-          {inv?.finalName && (
-            <div className="text-[11px]">
-              <span className="text-muted">Nom Drive proposé : </span>
-              <span className="font-mono text-text">{inv.finalName}.pdf</span>
+          {/* Ligne 2bis : montant (pas éditable — vient de l'Excel à la
+              validation, l'override ici n'aurait pas d'effet utile). */}
+          {inv && (
+            <div className="text-[11px] text-muted">
+              <span>Montant extrait : </span>
+              <span className="text-text">
+                {formatAmount(inv.amount, inv.currency)}
+              </span>
             </div>
           )}
 
@@ -522,5 +537,97 @@ function StatusBadge({ status }: { status: DraftStatus }) {
     <span className="badge err inline-flex items-center gap-1">
       <AlertCircle size={10} /> Échec
     </span>
+  );
+}
+
+/**
+ * Champs éditables pour Créditeur / Date / Code dossier / Nom Drive.
+ * Pré-remplis depuis l'auto-extract. Si l'utilisateur modifie un des 3
+ * premiers, on recalcule automatiquement le finalName (sauf s'il a
+ * déjà été édité manuellement, auquel cas on respecte son override).
+ */
+function EditableExtractedFields({
+  item,
+  onChange,
+}: {
+  item: DraftItem;
+  onChange: (patch: Partial<DraftItem>) => void;
+}) {
+  // Si l'utilisateur a édité le finalName manuellement, on ne le réécrase
+  // pas en changeant créditeur/date/code. Heuristique : si finalName diffère
+  // du calcul auto à partir des champs courants, c'est qu'il a été modifié.
+  const autoName = buildFinalName(
+    item.invoiceDateInput,
+    item.creditorInput,
+    item.folderCodeInput,
+  );
+  const finalNameWasEdited =
+    item.finalNameInput.trim() !== "" &&
+    item.finalNameInput !== autoName;
+
+  const recompute = (patch: Partial<DraftItem>) => {
+    const next: DraftItem = { ...item, ...patch };
+    if (!finalNameWasEdited) {
+      const newAuto = buildFinalName(
+        next.invoiceDateInput,
+        next.creditorInput,
+        next.folderCodeInput,
+      );
+      if (newAuto) next.finalNameInput = newAuto;
+    }
+    onChange(next);
+  };
+
+  return (
+    <div className="space-y-1.5">
+      <div className="grid grid-cols-[1fr_120px_120px] gap-2">
+        <label className="text-[11px] flex items-center gap-2">
+          <span className="text-muted w-16 shrink-0">Créditeur</span>
+          <input
+            type="text"
+            value={item.creditorInput}
+            onChange={(e) => recompute({ creditorInput: e.target.value })}
+            placeholder="Nom du fournisseur"
+            className="input !py-1 !px-2 text-[11px] flex-1"
+            title="Modifie si le nom extrait du PDF est faux. Le mapping créditeur → code sera sauvé pour le prochain upload du même fournisseur."
+          />
+        </label>
+        <label className="text-[11px] flex items-center gap-2">
+          <span className="text-muted shrink-0">Date</span>
+          <input
+            type="date"
+            value={item.invoiceDateInput}
+            onChange={(e) => recompute({ invoiceDateInput: e.target.value })}
+            className="input !py-1 !px-2 text-[11px] flex-1"
+            title="Date de la facture (YYYY-MM-DD)"
+          />
+        </label>
+        <label className="text-[11px] flex items-center gap-2">
+          <span className="text-muted shrink-0">Code</span>
+          <input
+            type="text"
+            value={item.folderCodeInput}
+            onChange={(e) => recompute({ folderCodeInput: e.target.value })}
+            placeholder="6100"
+            className="input !py-1 !px-2 text-[11px] font-mono flex-1"
+            title="Code comptable (ex. 6100). Sera utilisé pour le mapping créditeur → code en cache."
+          />
+        </label>
+      </div>
+      <label className="text-[11px] flex items-center gap-2">
+        <span className="text-muted w-16 shrink-0">Nom Drive</span>
+        <input
+          type="text"
+          value={item.finalNameInput}
+          onChange={(e) => onChange({ finalNameInput: e.target.value })}
+          placeholder={
+            autoName ?? "Sera construit depuis date / créditeur / code"
+          }
+          className="input !py-1 !px-2 text-[11px] font-mono flex-1"
+          title="Nom final sur Drive (sans .pdf). Édite si la composition auto ne te convient pas."
+        />
+        <span className="text-[10px] text-muted shrink-0">.pdf</span>
+      </label>
+    </div>
   );
 }
