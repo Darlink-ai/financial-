@@ -242,6 +242,19 @@ export default function ImportPage() {
       );
       return;
     }
+    // Si la ligne ciblée est déjà occupée par une facture validée
+    // (= verte dans le rapprochement Excel), on demande confirmation.
+    const occupier = findOccupier(it);
+    if (occupier) {
+      const month = (it.invoiceDateInput || "").slice(0, 7);
+      if (
+        !confirm(
+          `⚠ La ligne #${n} ${it.currencyInput} de ${month} est déjà rapprochée par :\n\n${occupier.finalName ?? occupier.creditor ?? occupier.id}\n\nValider cette facture va déplacer le match vers elle. L'ancienne facture rapprochée sera dégradée (status "renamed"). Continuer ?`,
+        )
+      ) {
+        return;
+      }
+    }
     setItemByKey(it.key, { status: "validating", message: undefined });
     try {
       // Construit le payload avec les overrides éditables. On ne renvoie
@@ -362,6 +375,39 @@ export default function ImportPage() {
     setItems((prev) => prev.filter((p) => p.status === "uploading"));
   };
 
+  /** Index des lignes Excel déjà occupées par une facture en status="matched"
+   *  (= verte dans le rapprochement Excel). Clé : `${currency}|${row}|${month}`.
+   *  Sert à signaler aux drafts de /import qu'ils ciblent une ligne déjà
+   *  prise par une autre facture. */
+  const occupiedRows = useMemo(() => {
+    const map = new Map<string, Invoice>();
+    for (const inv of invoices) {
+      if (inv.status !== "matched") continue;
+      if (!inv.excelRowMatched) continue;
+      const month = inv.invoiceDate?.slice(0, 7);
+      if (!month) continue;
+      const key = `${inv.accountCurrency}|${inv.excelRowMatched}|${month}`;
+      // Si déjà un occupant pour cette clé (multiple matches → dédupe en
+      // cours), on garde le 1er trouvé — peu importe pour l'avertissement.
+      if (!map.has(key)) map.set(key, inv);
+    }
+    return map;
+  }, [invoices]);
+
+  /** Renvoie la facture déjà rapprochée à la cible d'un draft donné, ou
+   *  null si la ligne est libre. */
+  const findOccupier = (it: DraftItem): Invoice | null => {
+    const row = parseInt(it.rowInput.trim(), 10);
+    if (!Number.isFinite(row) || row < 2) return null;
+    const month = it.invoiceDateInput.slice(0, 7);
+    if (!month) return null;
+    const occupier = occupiedRows.get(
+      `${it.currencyInput}|${row}|${month}`,
+    );
+    if (occupier && occupier.id === it.invoice?.id) return null; // soi-même
+    return occupier ?? null;
+  };
+
   const draftedCount = items.filter((i) => i.status === "drafted").length;
 
   /** Détecte les collisions de cible (même rowNumber + currency + mois).
@@ -467,11 +513,13 @@ export default function ImportPage() {
                 const siblingNames = siblingKeys
                   .map((k) => items.find((p) => p.key === k)?.fileName)
                   .filter((n): n is string => !!n);
+                const occupier = findOccupier(it);
                 return (
                   <DraftRow
                     key={it.key}
                     item={it}
                     siblingNames={siblingNames}
+                    occupier={occupier}
                     onChange={(patch) => setItemByKey(it.key, patch)}
                     onValidate={() => validateItem(it)}
                     onDelete={() => deleteItem(it)}
@@ -493,6 +541,7 @@ export default function ImportPage() {
 function DraftRow({
   item,
   siblingNames,
+  occupier,
   onChange,
   onValidate,
   onDelete,
@@ -502,6 +551,9 @@ function DraftRow({
   /** Noms des autres drafts qui ciblent la même ligne Excel (collision).
    *  Quand non-vide → badge ⚠️ + warning visible dans la review. */
   siblingNames: string[];
+  /** Facture déjà rapprochée à la même ligne (verte dans Excel). Quand
+   *  présente → badge rouge "ligne déjà prise" + confirm à la validation. */
+  occupier: Invoice | null;
   onChange: (patch: Partial<DraftItem>) => void;
   onValidate: () => void;
   onDelete: () => void;
@@ -538,6 +590,15 @@ function DraftRow({
               >
                 <AlertCircle size={10} /> Doublon avec {siblingNames.length} autre
                 {siblingNames.length > 1 ? "s" : ""}
+              </span>
+            )}
+            {occupier && item.status === "drafted" && (
+              <span
+                className="badge err inline-flex items-center gap-1 text-[10px]"
+                title={`La ligne Excel #${item.rowInput} ${item.currencyInput} ${item.invoiceDateInput.slice(0, 7)} est déjà prise par ${occupier.finalName ?? occupier.creditor ?? occupier.id}. Valider va remplacer ce match — l'ancienne facture sera dégradée.`}
+              >
+                <AlertCircle size={10} /> Ligne déjà prise par{" "}
+                {occupier.creditor ?? "une autre facture"}
               </span>
             )}
             {inv && (
