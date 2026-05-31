@@ -80,12 +80,19 @@ export function DashboardChart() {
   const [expensesByMonth, setExpensesByMonth] = useState<Record<string, number>>(
     {},
   );
+  // transfersByMonth[ym] = { count, amountUsd } : pour informer l'utilisateur
+  // de combien de transferts inter-comptes ont été détectés + exclus.
+  const [transfersByMonth, setTransfersByMonth] = useState<
+    Record<string, { count: number; amountUsd: number }>
+  >({});
 
   useEffect(() => {
     const controller = new AbortController();
     let cancelled = false;
     (async () => {
       const next: Record<string, number> = {};
+      const transfersNext: Record<string, { count: number; amountUsd: number }> =
+        {};
       // Pour chaque mois : on charge les 3 sheets EN PARALLÈLE, on détecte
       // les transferts inter-comptes (genre EUR → CHF), puis on calcule
       // le total des dépenses EN EXCLUANT ces transferts.
@@ -112,11 +119,24 @@ export function DashboardChart() {
           );
           // Index : currency → set des rowIndex à exclure du débit total.
           const excludedRowsByCurrency = new Map<AccountCurrency, Set<number>>();
+          let transfersAmountUsd = 0;
           for (const t of transfers) {
             const set =
               excludedRowsByCurrency.get(t.debit.currency) ?? new Set<number>();
             set.add(t.debit.rowIndex);
             excludedRowsByCurrency.set(t.debit.currency, set);
+            transfersAmountUsd += convertAmount(
+              t.debit.amount,
+              t.debit.currency,
+              "USD",
+              month,
+            );
+          }
+          if (transfers.length > 0) {
+            transfersNext[month] = {
+              count: transfers.length,
+              amountUsd: transfersAmountUsd,
+            };
           }
 
           let totalUsd = 0;
@@ -140,7 +160,10 @@ export function DashboardChart() {
           next[month] = totalUsd;
         }),
       );
-      if (!cancelled) setExpensesByMonth(next);
+      if (!cancelled) {
+        setExpensesByMonth(next);
+        setTransfersByMonth(transfersNext);
+      }
     })();
     return () => {
       cancelled = true;
@@ -205,7 +228,7 @@ export function DashboardChart() {
       </div>
 
       {hasData ? (
-        <LineChart data={data} />
+        <LineChart data={data} transfersByMonth={transfersByMonth} />
       ) : (
         <div className="h-[240px] flex flex-col items-center justify-center text-center text-muted text-[13px]">
           <div>Aucune donnée de revenus sur les 6 derniers mois.</div>
@@ -218,7 +241,13 @@ export function DashboardChart() {
   );
 }
 
-function LineChart({ data }: { data: MonthlyPoint[] }) {
+function LineChart({
+  data,
+  transfersByMonth,
+}: {
+  data: MonthlyPoint[];
+  transfersByMonth: Record<string, { count: number; amountUsd: number }>;
+}) {
   // Mesure la largeur réelle du conteneur — comme ça la SVG remplit
   // exactement l'espace dispo, sans bandes vides à cause d'un viewBox
   // d'un autre ratio.
@@ -572,9 +601,31 @@ function LineChart({ data }: { data: MonthlyPoint[] }) {
         </div>
       )}
 
-      <div className="flex items-center gap-4 text-[11px] text-muted pt-2 px-2">
+      <div className="flex items-center gap-4 text-[11px] text-muted pt-2 px-2 flex-wrap">
         <Legend color={CA_COLOR} label="Chiffre d'affaires" />
         <Legend color={EXPENSES_COLOR} label="Dépenses (3 comptes)" />
+        {(() => {
+          // Total transferts détectés sur les 6 mois visibles.
+          const totalCount = data.reduce(
+            (s, d) => s + (transfersByMonth[d.month]?.count ?? 0),
+            0,
+          );
+          const totalAmount = data.reduce(
+            (s, d) => s + (transfersByMonth[d.month]?.amountUsd ?? 0),
+            0,
+          );
+          if (totalCount === 0) return null;
+          return (
+            <span
+              className="text-[11px] text-accent"
+              title={`Débits identifiés comme transferts inter-comptes (EUR↔CHF↔USD) et exclus du total des dépenses. Détection : débit > 4 000 matchant un crédit dans une autre devise à ±5%, ±7 jours.`}
+            >
+              ↔ {totalCount} transfert{totalCount > 1 ? "s" : ""} interne
+              {totalCount > 1 ? "s" : ""} exclu{totalCount > 1 ? "s" : ""} (
+              {formatAmount(totalAmount, "USD")})
+            </span>
+          );
+        })()}
         <div className="ml-auto tabular-nums text-text">
           Dernier mois : {formatAmount(data[data.length - 1].ca, "USD")} CA ·{" "}
           {formatAmount(data[data.length - 1].expenses, "USD")} dépenses
