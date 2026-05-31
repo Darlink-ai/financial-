@@ -53,10 +53,11 @@ function buildGmailQuery(opts: SyncOptions): string {
   } else {
     parts.push(`newer_than:${opts.lookbackDays ?? 6}d`);
   }
-  // Scope explicite : inbox + spam, mais PAS trash. Permet d'attraper les
-  // factures que le filtre anti-spam Gmail a classé indésirables (cas
-  // courant pour les factures de SaaS US ou des nouveaux émetteurs).
-  parts.push("(in:inbox OR in:spam)");
+  // Avec includeSpamTrash=true côté API, l'opérateur `-in:trash` est plus
+  // sûr que `(in:inbox OR in:spam)` (Gmail interprète parfois les parens
+  // bizarrement). Résultat : tout sauf la corbeille = inbox + spam +
+  // dossiers custom + indésirables.
+  parts.push("-in:trash");
   return parts.join(" ");
 }
 
@@ -133,6 +134,9 @@ export async function runSync(
         // dossier Spam (et Trash, mais on filtre Trash via la query).
         const messageIds = await listMessages(accessToken, query, 100, true);
         r.totalMessages = messageIds.length;
+        console.log(
+          `[sync] ${mb.email} query="${query}" → ${messageIds.length} message(s) trouvé(s) par Gmail`,
+        );
 
         for (const messageId of messageIds) {
           const dup = await invoiceExistsForMessage(mb.id, messageId);
