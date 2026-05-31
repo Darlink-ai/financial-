@@ -409,6 +409,83 @@ export default function ImportPage() {
   };
 
   const draftedCount = items.filter((i) => i.status === "drafted").length;
+  const [validatingAll, setValidatingAll] = useState(false);
+
+  /** Validation en batch de tous les drafts éligibles. Skip ceux qui :
+   *   - n'ont pas de n° ligne renseigné
+   *   - ciblent une ligne déjà prise par une facture matched (pour pas
+   *     écraser sans confirmation)
+   *  Les doublons entre brouillons (siblings) sont auto-nettoyés par
+   *  validateItem au fil du traitement. Récap final dans une alert. */
+  const validateAll = async () => {
+    type Skipped = { name: string; reason: string };
+    const eligibles: DraftItem[] = [];
+    const skipped: Skipped[] = [];
+    for (const it of items) {
+      if (it.status !== "drafted" || !it.invoice?.id) continue;
+      const n = parseInt(it.rowInput.trim(), 10);
+      if (!Number.isFinite(n) || n < 2) {
+        skipped.push({ name: it.fileName, reason: "n° ligne vide ou invalide" });
+        continue;
+      }
+      if (findOccupier(it)) {
+        skipped.push({
+          name: it.fileName,
+          reason: "ligne déjà prise par une autre facture",
+        });
+        continue;
+      }
+      eligibles.push(it);
+    }
+
+    if (eligibles.length === 0) {
+      alert(
+        `Aucun brouillon prêt à valider.\n\n${skipped.length} skip(s) :\n• ${skipped.map((s) => `${s.name} (${s.reason})`).join("\n• ") || "(rien)"}`,
+      );
+      return;
+    }
+
+    const msg = [
+      `Valider ${eligibles.length} facture(s) en séquence ?`,
+      `Les doublons entre brouillons seront auto-supprimés.`,
+      skipped.length > 0
+        ? `\n${skipped.length} skip(s) prévu(s) :\n• ${skipped.map((s) => `${s.name} (${s.reason})`).join("\n• ")}`
+        : "",
+    ].join("\n");
+    if (!confirm(msg)) return;
+
+    setValidatingAll(true);
+    // Track des invoice IDs traités (= validés OU auto-supprimés comme
+    // siblings) pour skip dans les itérations suivantes.
+    const handled = new Set<string>();
+    let processed = 0;
+    for (const it of eligibles) {
+      if (handled.has(it.invoice!.id)) continue;
+      handled.add(it.invoice!.id);
+      // Marque les siblings comme handled — ils seront auto-supprimés
+      // par validateItem.
+      const siblingKeys = collisionMap.get(it.key) ?? [];
+      for (const sk of siblingKeys) {
+        const sib = items.find((p) => p.key === sk);
+        if (sib?.invoice?.id) handled.add(sib.invoice.id);
+      }
+      await validateItem(it);
+      processed++;
+    }
+    setValidatingAll(false);
+
+    // Petit récap. Les badges sur les rows reflètent le résultat de
+    // chaque ligne — on ne ré-itère pas le détail ici.
+    const summary = [
+      `${processed} facture(s) traitée(s).`,
+      skipped.length > 0
+        ? `${skipped.length} skip(s) (ligne vide / ligne déjà prise — voir le détail au démarrage).`
+        : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+    alert(`Validation en lot terminée.\n\n${summary}`);
+  };
 
   /** Détecte les collisions de cible (même rowNumber + currency + mois).
    *  Renvoie pour chaque draft "drafted" la clé partagée + la liste des
@@ -503,9 +580,34 @@ export default function ImportPage() {
                   validé{validatedCount > 1 ? "s" : ""}
                 </span>
               </div>
-              <button onClick={clearAll} className="btn ml-auto">
-                <Trash2 size={12} /> Vider la vue
-              </button>
+              <div className="flex items-center gap-2 ml-auto">
+                {draftedCount > 0 && (
+                  <button
+                    onClick={validateAll}
+                    disabled={validatingAll}
+                    className="btn btn-primary disabled:opacity-50"
+                    title={`Valider en séquence les ${draftedCount} brouillon(s) qui ont une ligne Excel renseignée. Skip ceux qui ciblent une ligne déjà prise.`}
+                  >
+                    {validatingAll ? (
+                      <>
+                        <RefreshCw size={12} className="animate-spin" /> Validation
+                        en cours…
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 size={12} /> Valider tout ({draftedCount})
+                      </>
+                    )}
+                  </button>
+                )}
+                <button
+                  onClick={clearAll}
+                  disabled={validatingAll}
+                  className="btn disabled:opacity-50"
+                >
+                  <Trash2 size={12} /> Vider la vue
+                </button>
+              </div>
             </div>
             <div className="divide-y divide-border">
               {items.map((it) => {
