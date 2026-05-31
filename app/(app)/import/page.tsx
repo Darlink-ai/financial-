@@ -269,7 +269,33 @@ export default function ImportPage() {
           ? undefined
           : `Match OK, Drive non envoyé (${data.drive?.reason ?? "raison inconnue"})`,
       });
+
+      // Auto-suppression des siblings qui ciblaient la même ligne Excel
+      // (même rowNumber + currency + mois). Ils sont devenus obsolètes
+      // car la ligne est maintenant prise par celle qu'on vient de valider.
+      const siblings = collisionMap.get(it.key) ?? [];
+      const deletedNames: string[] = [];
+      for (const siblingKey of siblings) {
+        const sibling = items.find((p) => p.key === siblingKey);
+        if (!sibling || !sibling.invoice) continue;
+        try {
+          const dr = await fetch(`/api/invoices/${sibling.invoice.id}`, {
+            method: "DELETE",
+          });
+          if (dr.ok) {
+            deletedNames.push(sibling.fileName);
+            setItems((prev) => prev.filter((p) => p.key !== siblingKey));
+          }
+        } catch {
+          /* silent — pas bloquant */
+        }
+      }
       await reloadFromDb();
+      if (deletedNames.length > 0) {
+        alert(
+          `Facture validée sur ligne #${n}.\n\n${deletedNames.length} doublon(s) supprimé(s) automatiquement (même ligne Excel) :\n• ${deletedNames.join("\n• ")}`,
+        );
+      }
     } catch (e) {
       setItemByKey(it.key, {
         status: "drafted",
@@ -315,6 +341,38 @@ export default function ImportPage() {
   };
 
   const draftedCount = items.filter((i) => i.status === "drafted").length;
+
+  /** Détecte les collisions de cible (même rowNumber + currency + mois).
+   *  Renvoie pour chaque draft "drafted" la clé partagée + la liste des
+   *  autres clés en collision avec elle. Permet d'afficher un badge ⚠️
+   *  et de supprimer automatiquement les siblings à la Validation. */
+  const collisionMap = useMemo(() => {
+    const byTarget = new Map<string, string[]>(); // target key → [item.key]
+    for (const it of items) {
+      if (it.status !== "drafted") continue;
+      const row = parseInt(it.rowInput.trim(), 10);
+      if (!Number.isFinite(row) || row < 2) continue;
+      const month = (it.invoiceDateInput || "").slice(0, 7);
+      if (!month) continue;
+      const target = `${it.currencyInput}|${row}|${month}`;
+      const arr = byTarget.get(target) ?? [];
+      arr.push(it.key);
+      byTarget.set(target, arr);
+    }
+    // Inverse : key item → liste des keys siblings (siblings = même cible
+    // mais autre PDF).
+    const siblings = new Map<string, string[]>();
+    for (const [, keys] of byTarget) {
+      if (keys.length < 2) continue;
+      for (const k of keys) {
+        siblings.set(
+          k,
+          keys.filter((x) => x !== k),
+        );
+      }
+    }
+    return siblings;
+  }, [items]);
   const validatedCount = items.filter((i) => i.status === "validated").length;
 
   return (
@@ -382,16 +440,23 @@ export default function ImportPage() {
               </button>
             </div>
             <div className="divide-y divide-border">
-              {items.map((it) => (
-                <DraftRow
-                  key={it.key}
-                  item={it}
-                  onChange={(patch) => setItemByKey(it.key, patch)}
-                  onValidate={() => validateItem(it)}
-                  onDelete={() => deleteItem(it)}
-                  onDismiss={() => dismissItem(it.key)}
-                />
-              ))}
+              {items.map((it) => {
+                const siblingKeys = collisionMap.get(it.key) ?? [];
+                const siblingNames = siblingKeys
+                  .map((k) => items.find((p) => p.key === k)?.fileName)
+                  .filter((n): n is string => !!n);
+                return (
+                  <DraftRow
+                    key={it.key}
+                    item={it}
+                    siblingNames={siblingNames}
+                    onChange={(patch) => setItemByKey(it.key, patch)}
+                    onValidate={() => validateItem(it)}
+                    onDelete={() => deleteItem(it)}
+                    onDismiss={() => dismissItem(it.key)}
+                  />
+                );
+              })}
             </div>
           </div>
         )}
@@ -405,12 +470,16 @@ export default function ImportPage() {
  *  Valider qui déclenche /assign-row → Drive upload. */
 function DraftRow({
   item,
+  siblingNames,
   onChange,
   onValidate,
   onDelete,
   onDismiss,
 }: {
   item: DraftItem;
+  /** Noms des autres drafts qui ciblent la même ligne Excel (collision).
+   *  Quand non-vide → badge ⚠️ + warning visible dans la review. */
+  siblingNames: string[];
   onChange: (patch: Partial<DraftItem>) => void;
   onValidate: () => void;
   onDelete: () => void;
@@ -440,6 +509,15 @@ function DraftRow({
               ({(item.fileSize / 1024).toFixed(0)} ko)
             </span>
             <StatusBadge status={item.status} />
+            {siblingNames.length > 0 && item.status === "drafted" && (
+              <span
+                className="badge warn inline-flex items-center gap-1 text-[10px]"
+                title={`Cette facture cible la même ligne Excel que ${siblingNames.length} autre(s) : ${siblingNames.join(", ")}. Valider celle-ci supprimera automatiquement les autres.`}
+              >
+                <AlertCircle size={10} /> Doublon avec {siblingNames.length} autre
+                {siblingNames.length > 1 ? "s" : ""}
+              </span>
+            )}
             {inv && (
               <a
                 href={`/api/invoices/${inv.id}/pdf`}
