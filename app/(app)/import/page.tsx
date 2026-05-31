@@ -93,30 +93,52 @@ export default function ImportPage() {
       }));
   }, [invoices]);
 
-  // Au mount + à chaque update du store : on merge les persisted drafts
-  // avec le state local. Les items en cours d'upload (status "uploading"
-  // ou "validating") restent intacts car ils ne sont pas encore en DB.
+  // Merge intelligent : on préserve les inputs locaux (rowInput, creditor,
+  // etc.) en marchant la liste locale d'abord, puis on ajoute les nouveaux
+  // drafts DB qui n'y sont pas encore. Si un item local n'a plus de
+  // correspondance DB (= invoice supprimée), on le retire — sauf s'il est
+  // dans un état post-action (validated/failed) qu'on veut garder visible.
   useEffect(() => {
     setItems((local) => {
-      // On garde les items locaux en cours d'opération (upload / validate
-      // / validated juste après) parce que la DB ne reflète pas encore
-      // leur état final.
-      const liveStates = new Set([
-        "uploading",
-        "validating",
-        "validated",
-        "failed",
-      ]);
-      const localLive = local.filter((it) => liveStates.has(it.status));
-      const localLiveInvoiceIds = new Set(
-        localLive.map((it) => it.invoice?.id).filter(Boolean),
-      );
-      // On exclut les drafts DB qui correspondent à un item local "live"
-      // pour pas doubler.
-      const dbItems = persistedDrafts.filter(
-        (d) => !localLiveInvoiceIds.has(d.invoice?.id),
-      );
-      return [...dbItems, ...localLive];
+      const persistedByInvoiceId = new Map<string, DraftItem>();
+      for (const d of persistedDrafts) {
+        if (d.invoice?.id) persistedByInvoiceId.set(d.invoice.id, d);
+      }
+
+      const localInvoiceIds = new Set<string>();
+      const merged: DraftItem[] = [];
+
+      for (const it of local) {
+        const invoiceId = it.invoice?.id;
+        if (!invoiceId) {
+          // Item local sans invoice (uploading en cours) → on garde.
+          merged.push(it);
+          continue;
+        }
+        localInvoiceIds.add(invoiceId);
+        const persisted = persistedByInvoiceId.get(invoiceId);
+        if (persisted) {
+          // Présent partout : on PRÉSERVE le local (rowInput, creditor,
+          // folderCode, finalName tels que l'user les a tapés). On rafraîchit
+          // juste les métadonnées d'invoice (au cas où l'auto-process a
+          // recalculé un champ côté serveur entre temps).
+          merged.push({ ...it, invoice: persisted.invoice });
+        } else if (it.status === "validated" || it.status === "failed") {
+          // L'invoice n'est plus dans persistedDrafts (probablement parce
+          // qu'elle est passée à "matched" suite à un Valider), mais on
+          // garde la row dans la vue pour que l'user voie le résultat.
+          merged.push(it);
+        }
+        // Sinon : status="drafted" mais plus en DB → supprimée (clic
+        // corbeille ou auto-clean doublon), on retire du tableau.
+      }
+
+      // Ajoute les nouveaux drafts DB qui n'étaient pas du tout en local.
+      for (const d of persistedDrafts) {
+        const id = d.invoice?.id;
+        if (id && !localInvoiceIds.has(id)) merged.push(d);
+      }
+      return merged;
     });
   }, [persistedDrafts]);
 
