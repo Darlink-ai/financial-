@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { PageHeader } from "@/components/PageHeader";
 import { useStore } from "@/lib/store";
 import {
@@ -58,10 +58,67 @@ type DraftItem = {
 };
 
 export default function ImportPage() {
-  const { reloadFromDb } = useStore();
+  const { reloadFromDb, invoices } = useStore();
   const [items, setItems] = useState<DraftItem[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  /** Drafts persistants : toutes les invoices créées via /import (mailbox
+   *  "Ajout manuel") qui sont encore en status="renamed" (pas validées) et
+   *  pas supprimées. On les "rehydrate" comme DraftItem au mount + à chaque
+   *  changement du store, pour qu'on retrouve la review row si on a quitté
+   *  la page sans Valider. */
+  const persistedDrafts = useMemo<DraftItem[]>(() => {
+    return invoices
+      .filter(
+        (inv) =>
+          inv.mailbox === "Ajout manuel" &&
+          (inv.status === "renamed" || inv.status === "manual"),
+      )
+      .map<DraftItem>((inv) => ({
+        key: `db-${inv.id}`,
+        fileName: inv.attachment?.name ?? inv.subject,
+        fileSize: inv.attachment?.sizeBytes ?? 0,
+        status: "drafted",
+        invoice: inv,
+        proposedRow: inv.excelRowMatched ?? null,
+        proposedCurrency: inv.accountCurrency,
+        rowInput:
+          inv.excelRowMatched != null ? String(inv.excelRowMatched) : "",
+        currencyInput: inv.accountCurrency,
+        creditorInput: inv.creditor ?? "",
+        folderCodeInput: inv.folderCode ?? "",
+        invoiceDateInput: inv.invoiceDate ?? "",
+        finalNameInput: inv.finalName ?? "",
+      }));
+  }, [invoices]);
+
+  // Au mount + à chaque update du store : on merge les persisted drafts
+  // avec le state local. Les items en cours d'upload (status "uploading"
+  // ou "validating") restent intacts car ils ne sont pas encore en DB.
+  useEffect(() => {
+    setItems((local) => {
+      // On garde les items locaux en cours d'opération (upload / validate
+      // / validated juste après) parce que la DB ne reflète pas encore
+      // leur état final.
+      const liveStates = new Set([
+        "uploading",
+        "validating",
+        "validated",
+        "failed",
+      ]);
+      const localLive = local.filter((it) => liveStates.has(it.status));
+      const localLiveInvoiceIds = new Set(
+        localLive.map((it) => it.invoice?.id).filter(Boolean),
+      );
+      // On exclut les drafts DB qui correspondent à un item local "live"
+      // pour pas doubler.
+      const dbItems = persistedDrafts.filter(
+        (d) => !localLiveInvoiceIds.has(d.invoice?.id),
+      );
+      return [...dbItems, ...localLive];
+    });
+  }, [persistedDrafts]);
 
   /** Lance l'upload draft de chaque fichier en parallèle (3 en même temps
    *  pour pas saturer le serveur). */
