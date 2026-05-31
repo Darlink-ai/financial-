@@ -20,6 +20,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   computeExpenseTotal,
+  detectInterAccountTransfers,
   type ParsedSheet,
 } from "@/lib/excel-match";
 import type { Period } from "@/components/AnalysePeriodPicker";
@@ -27,6 +28,7 @@ import { useStore } from "@/lib/store";
 import type { AccountCurrency, Business, Revenue } from "@/lib/types";
 import {
   DEFAULT_FX_TO_CHF,
+  getFxRate,
   getRateToChf,
   hasMonthlyOverride,
 } from "@/lib/fx";
@@ -152,24 +154,61 @@ export function useAnalyseAggregates(period: Period): AnalyseAggregates {
     setLoading(true);
     (async () => {
       const next: typeof monthlySheets = {};
-      // Charge en parallèle tous les buckets de la période.
+      // Pour chaque mois, on charge les 3 sheets puis on calcule les
+      // dépenses en EXCLUANT les transferts inter-comptes (genre EUR→CHF
+      // pour > 4k qui matchent un crédit dans une autre devise).
       await Promise.all(
-        months.flatMap((month) =>
-          CURRENCIES.map(async (currency) => {
-            const { sheet, fileName } = await fetchSheet(
-              month,
-              currency,
-              controller.signal,
-            );
-            if (cancelled) return;
+        months.map(async (month) => {
+          const monthSheets: Partial<
+            Record<AccountCurrency, ParsedSheet | null | undefined>
+          > = {};
+          const fileNames: Partial<Record<AccountCurrency, string | null>> = {};
+          await Promise.all(
+            CURRENCIES.map(async (currency) => {
+              const { sheet, fileName } = await fetchSheet(
+                month,
+                currency,
+                controller.signal,
+              );
+              if (cancelled) return;
+              monthSheets[currency] = sheet;
+              fileNames[currency] = fileName;
+            }),
+          );
+          if (cancelled) return;
+
+          // Détecte les transferts inter-comptes pour le mois.
+          const transfers = detectInterAccountTransfers(
+            monthSheets,
+            (from, to) => getFxRate(month, from, to),
+            { minAmount: 4000, amountTolerance: 0.05, dateWindowDays: 7 },
+          );
+          const excludedByCur = new Map<AccountCurrency, Set<number>>();
+          for (const t of transfers) {
+            const set = excludedByCur.get(t.debit.currency) ?? new Set<number>();
+            set.add(t.debit.rowIndex);
+            excludedByCur.set(t.debit.currency, set);
+          }
+
+          for (const currency of CURRENCIES) {
+            const sheet = monthSheets[currency];
+            const fileName = fileNames[currency] ?? null;
             if (!sheet) {
               (next[month] ??= {})[currency] = { amount: 0, fileName: null };
-              return;
+              continue;
             }
-            const { totalDebit } = computeExpenseTotal(sheet);
-            (next[month] ??= {})[currency] = { amount: totalDebit, fileName };
-          }),
-        ),
+            const { totalDebit, rowDebits } = computeExpenseTotal(sheet);
+            let cleaned = totalDebit;
+            const excluded = excludedByCur.get(currency);
+            if (excluded && excluded.size > 0) {
+              for (const idx of excluded) cleaned -= rowDebits[idx] ?? 0;
+            }
+            (next[month] ??= {})[currency] = {
+              amount: cleaned,
+              fileName,
+            };
+          }
+        }),
       );
       if (!cancelled) {
         setMonthlySheets(next);

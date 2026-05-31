@@ -339,6 +339,158 @@ export function listAllCredits(sheet: ParsedSheet): CreditLine[] {
 }
 
 /**
+ * Détecte les transferts inter-comptes (genre EUR → CHF). Un transfert
+ * apparaît :
+ *   - Comme DÉBIT dans le compte source (montant > minAmount)
+ *   - Comme CRÉDIT dans un AUTRE compte (montant matchant à ±tol% après
+ *     conversion FX, date à ±dateWindow jours)
+ *
+ * Ces opérations doublent le montant des dépenses si on les compte (le
+ * débit n'est pas une vraie sortie d'argent, juste un déplacement entre
+ * comptes du même propriétaire).
+ *
+ * fxRateFor(from, to, date) : doit renvoyer le taux 1 unité from → to.
+ * Pour notre cas, on passe getFxRate(month, from, to) — la date n'est
+ * actuellement pas utilisée mais on garde l'argument pour évolution.
+ */
+export type DetectedTransfer = {
+  debit: {
+    currency: "USD" | "EUR" | "CHF";
+    rowIndex: number;
+    amount: number;
+    date: string | null;
+    description: string;
+  };
+  credit: {
+    currency: "USD" | "EUR" | "CHF";
+    rowIndex: number;
+    amount: number;
+    date: string | null;
+    description: string;
+  };
+  /** Différence relative entre le montant débité et le crédit attendu (FX). */
+  amountDiffPct: number;
+  /** Écart en jours entre la date du débit et celle du crédit. */
+  daysDiff: number | null;
+};
+
+export function detectInterAccountTransfers(
+  sheetsByCurrency: Partial<
+    Record<"USD" | "EUR" | "CHF", ParsedSheet | null | undefined>
+  >,
+  fxRateFor: (
+    from: "USD" | "EUR" | "CHF",
+    to: "USD" | "EUR" | "CHF",
+    isoDate: string | null,
+  ) => number,
+  options: {
+    minAmount?: number;
+    amountTolerance?: number; // 0-1, ex 0.05 pour ±5%
+    dateWindowDays?: number;
+  } = {},
+): DetectedTransfer[] {
+  const minAmount = options.minAmount ?? 4000;
+  const tol = options.amountTolerance ?? 0.05;
+  const dateWindow = options.dateWindowDays ?? 7;
+
+  type LineRef = {
+    currency: "USD" | "EUR" | "CHF";
+    rowIndex: number;
+    amount: number;
+    date: string | null;
+    description: string;
+  };
+
+  // Collecte des débits > minAmount par devise.
+  const bigDebits: LineRef[] = [];
+  // Tous les crédits (peu importe le montant — peut être inférieur au seuil
+  // à cause des frais bancaires).
+  const allCredits: LineRef[] = [];
+
+  for (const cur of ["USD", "EUR", "CHF"] as const) {
+    const sheet = sheetsByCurrency[cur];
+    if (!sheet) continue;
+    const { rowDebits } = computeExpenseTotal(sheet);
+    const { idxCreditor, idxDate, dataStartRow } = detectColumns(sheet);
+    for (let i = dataStartRow; i < sheet.rows.length; i++) {
+      const debitAmt = rowDebits[i];
+      if (debitAmt >= minAmount) {
+        const row = sheet.rows[i];
+        const description =
+          idxCreditor >= 0 ? String(row[idxCreditor] ?? "") : "";
+        const date =
+          idxDate >= 0 ? parseDate(row[idxDate]) ?? String(row[idxDate] ?? "") : null;
+        bigDebits.push({
+          currency: cur,
+          rowIndex: i,
+          amount: debitAmt,
+          date: date || null,
+          description: description.trim(),
+        });
+      }
+    }
+    for (const c of listAllCredits(sheet)) {
+      allCredits.push({
+        currency: cur,
+        rowIndex: c.rowIndex,
+        amount: c.amount,
+        date: c.date,
+        description: c.description,
+      });
+    }
+  }
+
+  // Matching : pour chaque gros débit, trouver le meilleur crédit dans une
+  // AUTRE devise qui correspond.
+  const usedCreditKeys = new Set<string>();
+  const transfers: DetectedTransfer[] = [];
+  for (const debit of bigDebits) {
+    let best: { credit: LineRef; diffPct: number; daysDiff: number | null } | null =
+      null;
+    for (const credit of allCredits) {
+      if (credit.currency === debit.currency) continue; // doit être un autre compte
+      const creditKey = `${credit.currency}:${credit.rowIndex}`;
+      if (usedCreditKeys.has(creditKey)) continue;
+
+      // Convertit le crédit dans la devise du débit pour comparer.
+      const rate = fxRateFor(credit.currency, debit.currency, credit.date);
+      const expected = credit.amount * rate;
+      if (expected <= 0) continue;
+      const diffPct = Math.abs(debit.amount - expected) / debit.amount;
+      if (diffPct > tol) continue;
+
+      // Check date si dispo.
+      let daysDiff: number | null = null;
+      if (debit.date && credit.date) {
+        const a = new Date(debit.date).getTime();
+        const b = new Date(credit.date).getTime();
+        if (Number.isFinite(a) && Number.isFinite(b)) {
+          daysDiff = Math.abs(a - b) / 86_400_000;
+          if (daysDiff > dateWindow) continue;
+        }
+      }
+
+      // Préfère le match avec le plus petit diff %.
+      if (!best || diffPct < best.diffPct) {
+        best = { credit, diffPct, daysDiff };
+      }
+    }
+
+    if (best) {
+      transfers.push({
+        debit,
+        credit: best.credit,
+        amountDiffPct: best.diffPct,
+        daysDiff: best.daysDiff,
+      });
+      usedCreditKeys.add(`${best.credit.currency}:${best.credit.rowIndex}`);
+    }
+  }
+
+  return transfers;
+}
+
+/**
  * Trouve toutes les lignes CRÉDIT (entrée d'argent) dont la description
  * contient l'un des patterns donnés (case-insensitive, normalisé).
  *

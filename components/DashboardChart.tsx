@@ -4,8 +4,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { TrendingUp } from "lucide-react";
 import { useStore, formatMonthLabel } from "@/lib/store";
 import { formatAmount } from "@/lib/format";
-import { computeExpenseTotal, type ParsedSheet } from "@/lib/excel-match";
-import { convertAmount } from "@/lib/fx";
+import {
+  computeExpenseTotal,
+  detectInterAccountTransfers,
+  type ParsedSheet,
+} from "@/lib/excel-match";
+import { convertAmount, getFxRate } from "@/lib/fx";
 import type { AccountCurrency } from "@/lib/types";
 
 const CA_COLOR = "#3b82f6"; // blue-500
@@ -82,18 +86,59 @@ export function DashboardChart() {
     let cancelled = false;
     (async () => {
       const next: Record<string, number> = {};
+      // Pour chaque mois : on charge les 3 sheets EN PARALLÈLE, on détecte
+      // les transferts inter-comptes (genre EUR → CHF), puis on calcule
+      // le total des dépenses EN EXCLUANT ces transferts.
       await Promise.all(
-        months.flatMap((month) =>
-          CURRENCIES.map(async (currency) => {
-            const sheet = await fetchSheet(month, currency, controller.signal);
-            if (cancelled) return;
-            if (!sheet) return;
-            const { totalDebit } = computeExpenseTotal(sheet);
-            // Convertit le débit local en USD via le taux du mois.
-            const inUsd = convertAmount(totalDebit, currency, "USD", month);
-            next[month] = (next[month] ?? 0) + inUsd;
-          }),
-        ),
+        months.map(async (month) => {
+          const sheets: Partial<
+            Record<AccountCurrency, ParsedSheet | null | undefined>
+          > = {};
+          await Promise.all(
+            CURRENCIES.map(async (currency) => {
+              const sheet = await fetchSheet(month, currency, controller.signal);
+              if (cancelled) return;
+              sheets[currency] = sheet;
+            }),
+          );
+          if (cancelled) return;
+
+          // Détection des transferts internes (débit > 4k matchant un
+          // crédit dans une autre devise, ±5% FX, ±7j).
+          const transfers = detectInterAccountTransfers(
+            sheets,
+            (from, to) => getFxRate(month, from, to),
+            { minAmount: 4000, amountTolerance: 0.05, dateWindowDays: 7 },
+          );
+          // Index : currency → set des rowIndex à exclure du débit total.
+          const excludedRowsByCurrency = new Map<AccountCurrency, Set<number>>();
+          for (const t of transfers) {
+            const set =
+              excludedRowsByCurrency.get(t.debit.currency) ?? new Set<number>();
+            set.add(t.debit.rowIndex);
+            excludedRowsByCurrency.set(t.debit.currency, set);
+          }
+
+          let totalUsd = 0;
+          for (const currency of CURRENCIES) {
+            const sheet = sheets[currency];
+            if (!sheet) continue;
+            const { totalDebit, rowDebits } = computeExpenseTotal(sheet);
+            // Si pas de transfert → somme directe ; sinon on soustrait
+            // les rows exclues.
+            const excluded = excludedRowsByCurrency.get(currency);
+            let localDebit = totalDebit;
+            if (excluded && excluded.size > 0) {
+              let removed = 0;
+              for (const idx of excluded) {
+                removed += rowDebits[idx] ?? 0;
+              }
+              localDebit -= removed;
+            }
+            totalUsd += convertAmount(localDebit, currency, "USD", month);
+          }
+          next[month] = totalUsd;
+        }),
       );
       if (!cancelled) setExpensesByMonth(next);
     })();
