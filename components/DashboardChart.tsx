@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { TrendingUp } from "lucide-react";
+import { TrendingUp, Loader2 } from "lucide-react";
 import { useStore, formatMonthLabel } from "@/lib/store";
 import { formatAmount } from "@/lib/format";
 import {
@@ -215,32 +215,34 @@ export function DashboardChart() {
           <div className="text-[14px] font-semibold flex items-center gap-2">
             <TrendingUp size={15} className="text-accent" />
             Évolution sur 6 mois
-            {isLoading && (
-              <span
-                className="inline-block w-1.5 h-1.5 rounded-full bg-accent animate-pulse"
-                title="Chargement des données…"
-                aria-label="Chargement"
-              />
-            )}
           </div>
           <div className="text-[11px] text-muted">
             Chiffre d&apos;affaires et dépenses (3 comptes confondus) en USD
           </div>
         </div>
-        <div className="card !rounded-lg p-1 flex items-center gap-0.5">
-          {filterOptions.map((opt) => (
-            <button
-              key={opt.value}
-              onClick={() => setFilter(opt.value)}
-              className={`px-3 py-1 rounded-md text-[12px] font-medium transition-colors ${
-                filter === opt.value
-                  ? "bg-panel2 text-text border border-border"
-                  : "text-muted hover:text-text border border-transparent"
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
+        <div className="flex items-center gap-2">
+          {isLoading && (
+            <Loader2
+              size={13}
+              className="text-muted animate-spin"
+              aria-label="Chargement"
+            />
+          )}
+          <div className="card !rounded-lg p-1 flex items-center gap-0.5">
+            {filterOptions.map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => setFilter(opt.value)}
+                className={`px-3 py-1 rounded-md text-[12px] font-medium transition-colors ${
+                  filter === opt.value
+                    ? "bg-panel2 text-text border border-border"
+                    : "text-muted hover:text-text border border-transparent"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
