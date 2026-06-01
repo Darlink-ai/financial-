@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { TrendingUp } from "lucide-react";
+import { TrendingUp, RefreshCw, AlertCircle } from "lucide-react";
 import { useStore, formatMonthLabel } from "@/lib/store";
 import { formatAmount } from "@/lib/format";
 import {
@@ -72,8 +72,18 @@ function buildMonths(): string[] {
 }
 
 export function DashboardChart() {
-  const { revenues, businesses } = useStore();
+  const { revenues, businesses, ready, dbError, reloadFromDb } = useStore();
   const [filter, setFilter] = useState<string>("all");
+  const [reloading, setReloading] = useState(false);
+
+  const handleManualReload = async () => {
+    setReloading(true);
+    try {
+      await reloadFromDb();
+    } finally {
+      setReloading(false);
+    }
+  };
 
   const months = useMemo(() => buildMonths(), []);
   // expensesByMonth[ym] = total dépenses USD, somme des 3 buckets convertis.
@@ -186,6 +196,35 @@ export function DashboardChart() {
   // Si toutes les valeurs sont 0, on affiche un message au lieu d'un chart vide.
   const hasData = data.some((p) => p.ca > 0 || p.expenses > 0);
 
+  // Diagnostic CA = 0 sur tous les mois visibles. Aide à savoir POURQUOI :
+  //  - store pas prêt (fetch /api/state pas fini ou échoué)
+  //  - revenues vide en DB
+  //  - revenues présents mais hors fenêtre (mois antérieurs)
+  //  - revenues présents dans la fenêtre mais capturedAmount = 0
+  const caDiagnostic = useMemo(() => {
+    const allCaZero = data.every((p) => p.ca === 0);
+    if (!allCaZero) return null;
+    const monthsSet = new Set(months);
+    const inWindow = revenues.filter((r) => monthsSet.has(r.month));
+    const inWindowWithAmount = inWindow.filter(
+      (r) => (r.capturedAmount ?? 0) > 0,
+    );
+    // Mois distincts trouvés en DB (max 6 affichés pour pas spammer).
+    const allMonthsInDb = Array.from(
+      new Set(revenues.map((r) => r.month).filter(Boolean)),
+    ).sort();
+    return {
+      ready,
+      hasDbError: !!dbError,
+      dbErrorMessage: dbError?.message ?? null,
+      totalRevenuesLoaded: revenues.length,
+      revenuesInWindow: inWindow.length,
+      revenuesInWindowWithAmount: inWindowWithAmount.length,
+      windowMonths: months,
+      monthsFoundInDb: allMonthsInDb.slice(-12), // 12 derniers mois max
+    };
+  }, [data, revenues, months, ready, dbError]);
+
   const filterOptions = useMemo(
     () => [
       { value: "all", label: "Tous", color: "#94a3b8" },
@@ -210,22 +249,44 @@ export function DashboardChart() {
             Chiffre d&apos;affaires et dépenses (3 comptes confondus) en USD
           </div>
         </div>
-        <div className="card !rounded-lg p-1 flex items-center gap-0.5">
-          {filterOptions.map((opt) => (
-            <button
-              key={opt.value}
-              onClick={() => setFilter(opt.value)}
-              className={`px-3 py-1 rounded-md text-[12px] font-medium transition-colors ${
-                filter === opt.value
-                  ? "bg-panel2 text-text border border-border"
-                  : "text-muted hover:text-text border border-transparent"
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleManualReload}
+            disabled={reloading}
+            className="btn !py-1 !px-2 text-[11px] disabled:opacity-50"
+            title="Recharger les données du store (revenues, businesses, etc.) sans rafraîchir la page entière."
+          >
+            <RefreshCw
+              size={11}
+              className={reloading ? "animate-spin" : ""}
+            />
+            {reloading ? "Chargement…" : "Recharger"}
+          </button>
+          <div className="card !rounded-lg p-1 flex items-center gap-0.5">
+            {filterOptions.map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => setFilter(opt.value)}
+                className={`px-3 py-1 rounded-md text-[12px] font-medium transition-colors ${
+                  filter === opt.value
+                    ? "bg-panel2 text-text border border-border"
+                    : "text-muted hover:text-text border border-transparent"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
+
+      {caDiagnostic && (
+        <CaDiagnosticBanner
+          info={caDiagnostic}
+          onReload={handleManualReload}
+          reloading={reloading}
+        />
+      )}
 
       {hasData ? (
         <LineChart data={data} transfersByMonth={transfersByMonth} />
@@ -637,6 +698,90 @@ function LineChart({
           {formatAmount(data[data.length - 1].expenses, "USD")} dépenses
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Bannière de diagnostic affichée quand la ligne CA est plate à 0 sur
+ * la fenêtre. Donne assez d'infos pour comprendre la cause sans avoir
+ * à ouvrir la console : store ready ?, revenues chargés ?, mois trouvés
+ * en DB ?
+ */
+function CaDiagnosticBanner({
+  info,
+  onReload,
+  reloading,
+}: {
+  info: {
+    ready: boolean;
+    hasDbError: boolean;
+    dbErrorMessage: string | null;
+    totalRevenuesLoaded: number;
+    revenuesInWindow: number;
+    revenuesInWindowWithAmount: number;
+    windowMonths: string[];
+    monthsFoundInDb: string[];
+  };
+  onReload: () => void;
+  reloading: boolean;
+}) {
+  // Devine la cause la plus probable pour formuler le message.
+  let title: string;
+  let detail: string;
+  let tone: "warn" | "err" = "warn";
+  if (info.hasDbError) {
+    tone = "err";
+    title = "Impossible de charger les données";
+    detail = info.dbErrorMessage ?? "Erreur DB inconnue.";
+  } else if (!info.ready) {
+    title = "Données en cours de chargement…";
+    detail =
+      "Le store n'a pas encore terminé de récupérer revenues + invoices. Patiente quelques secondes ou clique Recharger.";
+  } else if (info.totalRevenuesLoaded === 0) {
+    title = "Aucun revenu en base";
+    detail =
+      "La table revenues est vide. Va dans Revenus pour saisir un mois (ex. import EMP + country file).";
+  } else if (info.revenuesInWindow === 0) {
+    title = "Revenus présents mais hors fenêtre 6 mois";
+    detail = `${info.totalRevenuesLoaded} revenu(s) en base, aucun dans ${info.windowMonths[0]} → ${info.windowMonths[info.windowMonths.length - 1]}. Mois trouvés : ${info.monthsFoundInDb.join(", ") || "—"}.`;
+  } else if (info.revenuesInWindowWithAmount === 0) {
+    title = "Revenus présents mais capturedAmount = 0";
+    detail = `${info.revenuesInWindow} revenu(s) sur la fenêtre, tous à 0. L'import EMP / country file a probablement échoué ou n'a pas été sauvegardé.`;
+  } else {
+    // Cas étrange : on a des revenues > 0 dans la fenêtre mais le chart
+    // affiche 0. Signal un bug de filter (businessId ?), race re-render…
+    tone = "err";
+    title = "Incohérence : revenus présents mais chart à 0";
+    detail = `${info.revenuesInWindowWithAmount} revenu(s) avec capturedAmount > 0 dans la fenêtre, mais le chart en affiche 0. Recharge pour réessayer — si ça persiste, c'est un bug d'agrégation.`;
+  }
+
+  const toneClasses =
+    tone === "err"
+      ? "border-err/30 bg-err/[0.06] text-err"
+      : "border-warn/30 bg-warn/[0.06] text-warn";
+
+  return (
+    <div
+      className={`border rounded-lg px-3 py-2 mb-3 text-[11px] flex items-start gap-2 ${toneClasses}`}
+    >
+      <AlertCircle size={13} className="shrink-0 mt-0.5" />
+      <div className="min-w-0 flex-1">
+        <div className="font-semibold">{title}</div>
+        <div className="text-muted text-[10.5px] mt-0.5">{detail}</div>
+        <div className="text-muted text-[10px] mt-1 tabular-nums">
+          ready={String(info.ready)} · revenues={info.totalRevenuesLoaded} ·
+          dans fenêtre={info.revenuesInWindow} · avec montant={info.revenuesInWindowWithAmount}
+        </div>
+      </div>
+      <button
+        onClick={onReload}
+        disabled={reloading}
+        className="btn !py-1 !px-2 text-[10px] shrink-0 disabled:opacity-50"
+      >
+        <RefreshCw size={10} className={reloading ? "animate-spin" : ""} />
+        Recharger
+      </button>
     </div>
   );
 }
