@@ -598,9 +598,15 @@ async function autoProcessInvoiceInner(
   // opération bancaire, on a 2 invoices en DB qui ciblent la même ligne
   // Excel. On garde la plus ancienne (typiquement la facture, arrivée
   // avant le reçu) et on supprime les autres.
+  //
+  // EXCEPTION : en mode draft /import (skipDrive), on NE SUPPRIME RIEN.
+  // L'utilisateur est en mode revue → il voit tous ses uploads et décide
+  // lui-même quoi supprimer. Sans ça, un upload de 149 PDFs dont 18 sont
+  // des doublons d'invoices déjà matched → 18 disparaissent silencieusement
+  // (le user voit 131 au lieu de 149 sans comprendre pourquoi).
   let deletedAsDuplicateOf: string | null = null;
   const deletedOtherIds: string[] = [];
-  if (matchedRow !== null && matchedCurrency && month) {
+  if (matchedRow !== null && matchedCurrency && month && !input.skipDrive) {
     try {
       const others = await findInvoicesMatchingRow({
         excludeId: input.invoiceId,
