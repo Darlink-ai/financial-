@@ -27,6 +27,7 @@ import {
   getExcelSheet,
   getInvoiceRetryCount,
   getInvoiceWithAttachment,
+  getOccupiedExcelRows,
   recordInvoiceFailure,
   recordInvoiceProcessed,
   updateInvoice,
@@ -94,17 +95,37 @@ export async function rematchInvoicesForBucket(opts: {
     excelAmount: number | null;
   };
   const resolved: Resolved[] = [];
+  // Garde trace des lignes déjà attribuées dans ce batch (par devise),
+  // pour qu'une 2e facture du même créditeur/jour aille sur la ligne
+  // SUIVANTE plutôt que de re-matcher la même ligne 14 (qui serait
+  // ensuite dédoublonnée à tort). Le batch est traité dans l'ordre des
+  // candidates — on assigne donc en greedy : 1er trouvé gagne la ligne.
+  const claimedByCurrency: Partial<Record<AccountCurrency, Set<number>>> = {};
   for (const inv of candidates) {
     for (const cur of EXCEL_SEARCH_ORDER) {
       const sheet = sheetsByCurrency[cur];
       if (!sheet) continue;
-      const matches = matchInvoicesAgainstSheet(sheet, [inv]);
+      const claimed = claimedByCurrency[cur] ?? new Set<number>();
+      // Pass 1 : ligne libre (n'importe pas encore prise dans ce batch).
+      let matches = matchInvoicesAgainstSheet(sheet, [inv], {
+        excludeRowIndices: claimed,
+      });
+      // Pass 2 : si rien de libre → on tolère un conflit (vrai doublon
+      // facture/reçu pour la même tx bancaire). Le dédoublonnage par
+      // byKey ci-dessous gardera le plus ancien.
+      if (matches.length === 0 && claimed.size > 0) {
+        matches = matchInvoicesAgainstSheet(sheet, [inv]);
+      }
       if (matches.length > 0) {
+        const rowIndex = matches[0].rowIndex;
+        // rowIndex + 2 = N° Excel humain — cohérent avec excludeRowIndices.
+        claimed.add(rowIndex + 2);
+        claimedByCurrency[cur] = claimed;
         resolved.push({
           invoiceId: inv.id,
           receivedAt: inv.receivedAt,
           currency: cur,
-          rowIndex: matches[0].rowIndex,
+          rowIndex,
           excelAmount: matches[0].excelAmount,
         });
         break;
@@ -490,10 +511,36 @@ async function autoProcessInvoiceInner(
       try {
         const sheet = await getExcelSheet(month, currency);
         if (!sheet) continue;
-        const matches = matchInvoicesAgainstSheet(
+        // Lignes déjà revendiquées dans ce mois/devise par d'autres factures
+        // (matched OU drafts /import avec une ligne proposée). Sert à éviter
+        // que 2 reçus Runpod du 28/01 tombent tous les deux sur la ligne 14
+        // alors que la 15 existe pour la 2e transaction.
+        const excludeRowIndices = await getOccupiedExcelRows({
+          invoiceMonth: month,
+          accountCurrency: currency,
+          excludeInvoiceId: input.invoiceId,
+        });
+
+        // Pass 1 : on tente une ligne LIBRE en priorité (cas le plus
+        // fréquent : N PDFs pour N transactions distinctes).
+        let matches = matchInvoicesAgainstSheet(
           { headers: sheet.headers, rows: sheet.rows },
           [dummy],
+          { excludeRowIndices },
         );
+
+        // Pass 2 : si rien de libre ne match, on tolère une collision avec
+        // une ligne déjà prise. Ça couvre le cas inverse (vrai doublon
+        // facture/reçu pour la MÊME tx bancaire) — le dédoublonnage
+        // downstream (findInvoicesMatchingRow) tranchera en gardant la
+        // plus ancienne et en supprimant l'autre.
+        if (matches.length === 0 && excludeRowIndices.size > 0) {
+          matches = matchInvoicesAgainstSheet(
+            { headers: sheet.headers, rows: sheet.rows },
+            [dummy],
+          );
+        }
+
         if (matches.length > 0) {
           matchedRow = matches[0].rowIndex + 2;
           matchedCurrency = currency;
@@ -503,11 +550,14 @@ async function autoProcessInvoiceInner(
           }
           break;
         } else {
-          // Pas de match au seuil 4 → on calcule la meilleure ligne
-          // approchante pour la remonter au user en cas d'échec.
+          // Pas de match au seuil 4 (même en pass 2) → on calcule la meilleure
+          // ligne approchante pour la remonter au user en cas d'échec.
+          // On utilise l'exclusion ici aussi : le near-miss doit être une
+          // ligne où la facture pourrait raisonnablement aller.
           const candidate = findBestCandidate(
             { headers: sheet.headers, rows: sheet.rows },
             dummy,
+            { excludeRowIndices },
           );
           if (
             candidate &&
@@ -632,11 +682,11 @@ async function autoProcessInvoiceInner(
   // - matched  → ligne Excel trouvée → uploadé sur Drive si possible
   // - renamed  → pas de match Excel → reste dans le sas, pas sur Drive
   //
-  // Mode brouillon (skipDrive) : on garde "renamed" + excelRowMatched=null
-  // dans la DB même si on a trouvé un match. Le match proposé est
-  // retourné dans l'outcome pour que l'UI puisse pré-remplir l'input,
-  // mais c'est l'utilisateur qui validera (via /assign-row) → ce moment
-  // déclenche le match en DB + l'upload Drive.
+  // Mode brouillon (skipDrive) : status reste "renamed" tant que l'user
+  // n'a pas validé. MAIS on stocke quand même excelRowMatched (la ligne
+  // proposée par l'auto-match) en DB — sinon le prochain upload du même
+  // créditeur/jour ne saurait pas que cette ligne est déjà revendiquée
+  // et tomberait dessus en collision (cas 2 reçus Runpod 28/01).
   let finalStatus: InvoiceStatus;
   if (input.skipDrive) {
     finalStatus = "renamed";
@@ -646,7 +696,7 @@ async function autoProcessInvoiceInner(
     finalStatus = "renamed";
   }
 
-  const dbRowMatched = input.skipDrive ? null : matchedRow;
+  const dbRowMatched = matchedRow;
 
   await updateInvoice(input.invoiceId, {
     ...patch,

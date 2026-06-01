@@ -830,6 +830,40 @@ export async function getStuckAnalyzingInvoiceIds(): Promise<string[]> {
 }
 
 /**
+ * Liste les n° de ligne Excel déjà revendiqués dans un mois donné pour
+ * un account currency donné. Inclut :
+ *   - les factures status='matched' (= rapprochées définitivement)
+ *   - les brouillons /import status='renamed' avec un excel_row_matched
+ *     non-null (= drafts qui ont déjà une ligne proposée)
+ *
+ * Sert au matcher pour éviter de proposer la même ligne à 2 PDFs distincts
+ * (cas : 2 reçus Runpod 28/01, lignes 14 et 15 — sans ce filtre, les deux
+ * tombent sur la 14 et l'UI les marque comme doublons).
+ *
+ * Le paramètre excludeInvoiceId permet d'ignorer la facture en cours de
+ * traitement (pour qu'elle ne s'exclue pas elle-même).
+ */
+export async function getOccupiedExcelRows(opts: {
+  invoiceMonth: string; // YYYY-MM
+  accountCurrency: string;
+  excludeInvoiceId?: string;
+}): Promise<Set<number>> {
+  const sql = client();
+  const monthLike = `${opts.invoiceMonth}-%`;
+  const excludeId = opts.excludeInvoiceId ?? "";
+  const rows = await sql<{ row: number }[]>`
+    SELECT excel_row_matched AS row
+    FROM invoices
+    WHERE excel_row_matched IS NOT NULL
+      AND account_currency = ${opts.accountCurrency}
+      AND invoice_date LIKE ${monthLike}
+      AND id != ${excludeId}
+      AND status IN ('matched', 'renamed')
+  `;
+  return new Set(rows.map((r) => r.row).filter((n): n is number => n != null));
+}
+
+/**
  * Trouve les autres factures matchées à la même ligne Excel (mois + compte).
  * Utilisé pour détecter les doublons facture/reçu qui pointent vers une
  * même opération bancaire.

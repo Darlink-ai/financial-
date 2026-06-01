@@ -528,9 +528,18 @@ export function sumCreditsMatching(
 export function matchInvoicesAgainstSheet(
   sheet: ParsedSheet,
   invoices: Invoice[],
+  opts?: {
+    /** Set des n° de ligne Excel humains (1-based, ex. 14) déjà revendiqués
+     *  par d'autres factures. Le matcher les SKIP, ce qui permet à 2 factures
+     *  du même créditeur/jour (Runpod 28/01 lignes 14 et 15) de tomber chacune
+     *  sur sa propre ligne au lieu d'entrer en collision. */
+    excludeRowIndices?: Set<number>;
+  },
 ): MatchResult[] {
   const { idxCreditor, idxAmount, idxDate, idxCode, dataStartRow } =
     detectColumns(sheet);
+
+  const excludeRows = opts?.excludeRowIndices ?? new Set<number>();
 
   const results: MatchResult[] = [];
 
@@ -552,6 +561,13 @@ export function matchInvoicesAgainstSheet(
       // Skip les lignes de préambule (numéro de compte, etc.) AVANT
       // la vraie ligne d'en-tête.
       if (rowIndex < dataStartRow) return;
+
+      // Skip les lignes déjà revendiquées par d'autres factures (matched ou
+      // drafts /import). Convention : excludeRowIndices contient des N° Excel
+      // humains (1-based), et le rowIndex 0-based équivaut au N° Excel
+      // rowIndex + 2. Voir `matchedRow = matches[0].rowIndex + 2` dans
+      // auto-process pour la même convention.
+      if (excludeRows.has(rowIndex + 2)) return;
 
       const reasons: string[] = [];
       let score = 0;
@@ -653,15 +669,18 @@ export function matchInvoicesAgainstSheet(
 export function findBestCandidate(
   sheet: ParsedSheet,
   inv: Invoice,
+  opts?: { excludeRowIndices?: Set<number> },
 ): { result: MatchResult; score: number } | null {
   const { idxCreditor, idxAmount, idxDate, idxCode, dataStartRow } =
     detectColumns(sheet);
+  const excludeRows = opts?.excludeRowIndices ?? new Set<number>();
 
   const invCreditorTokens = creditorTokens(inv.creditor);
   let best: { result: MatchResult; score: number } | null = null;
 
   sheet.rows.forEach((row, rowIndex) => {
     if (rowIndex < dataStartRow) return;
+    if (excludeRows.has(rowIndex + 2)) return;
     const reasons: string[] = [];
     let score = 0;
 
