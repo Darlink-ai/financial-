@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import {
+  findInvoicesMatchingRow,
   getAllMappings,
+  getInvoiceWithAttachment,
   saveCreditorClassification,
   updateInvoice,
 } from "@/lib/db";
@@ -95,6 +97,45 @@ export async function POST(
     }
     if (finalName) patch.finalName = finalName;
 
+    // ---- 1b. Si la ligne ciblée est déjà occupée par une autre facture
+    //    status='matched' du même mois + même devise, on dégrade l'ancienne
+    //    en 'renamed' (l'UI a déjà demandé confirmation à l'utilisateur via
+    //    le dialog "Ligne déjà prise"). Sinon on se retrouve avec 2 factures
+    //    en 'matched' sur la même ligne → incohérence + double comptage.
+    //
+    //    On scope au mois de la facture qu'on valide. Pour ça il faut connaître
+    //    invoiceDate de l'invoice après l'éventuel override.
+    const current = await getInvoiceWithAttachment(id);
+    const effectiveInvoiceDate = invoiceDate || current?.invoice.invoiceDate;
+    const effectiveCurrency = currency || current?.invoice.accountCurrency;
+    const demotedIds: string[] = [];
+    if (effectiveInvoiceDate && effectiveCurrency) {
+      try {
+        const month = effectiveInvoiceDate.slice(0, 7);
+        const occupiers = await findInvoicesMatchingRow({
+          excludeId: id,
+          accountCurrency: effectiveCurrency,
+          rowIndex: row,
+          invoiceMonth: month,
+        });
+        for (const occupier of occupiers) {
+          // On dégrade : status renamed + on enlève le matched row.
+          // L'ancienne facture sort des "vertes" et redevient dispo pour
+          // rapprochement manuel. Drive n'est pas touché.
+          await updateInvoice(occupier.id, {
+            status: "renamed",
+            excelRowMatched: null,
+          });
+          demotedIds.push(occupier.id);
+        }
+      } catch (e) {
+        console.warn(
+          "[assign-row] dégradation des occupants existants a échoué",
+          (e as Error).message,
+        );
+      }
+    }
+
     await updateInvoice(id, patch);
 
     // ---- 2. Si on a creditor + folderCode, on sauve l'association dans
@@ -129,6 +170,7 @@ export async function POST(
     return NextResponse.json({
       ok: true,
       drive: driveResult,
+      demotedInvoiceIds: demotedIds,
     });
   } catch (e) {
     const err = e as Error;
