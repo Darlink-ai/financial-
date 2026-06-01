@@ -849,14 +849,17 @@ export async function getOccupiedExcelRows(opts: {
   excludeInvoiceId?: string;
 }): Promise<Set<number>> {
   const sql = client();
-  const monthLike = `${opts.invoiceMonth}-%`;
   const excludeId = opts.excludeInvoiceId ?? "";
+  // invoice_date est un type `date` PostgreSQL — on NE PEUT PAS faire LIKE
+  // dessus (erreur "operator does not exist: date ~~ unknown"). On scope
+  // au mois via to_char qui renvoie un text formaté.
   const rows = await sql<{ row: number }[]>`
     SELECT excel_row_matched AS row
     FROM invoices
     WHERE excel_row_matched IS NOT NULL
       AND account_currency = ${opts.accountCurrency}
-      AND invoice_date LIKE ${monthLike}
+      AND invoice_date IS NOT NULL
+      AND to_char(invoice_date, 'YYYY-MM') = ${opts.invoiceMonth}
       AND id != ${excludeId}
       AND status IN ('matched', 'renamed')
   `;
@@ -879,7 +882,8 @@ export async function findInvoicesMatchingRow(opts: {
   invoiceMonth: string;
 }): Promise<{ id: string; receivedAt: string; finalName: string | null }[]> {
   const sql = client();
-  const monthLike = `${opts.invoiceMonth}-%`;
+  // invoice_date est de type `date` PostgreSQL — pas de LIKE. On scope au
+  // mois via to_char qui renvoie un text formaté.
   const rows = await sql<{
     id: string;
     received_at: Date;
@@ -890,7 +894,8 @@ export async function findInvoicesMatchingRow(opts: {
       AND account_currency = ${opts.accountCurrency}
       AND id != ${opts.excludeId}
       AND status = 'matched'
-      AND invoice_date LIKE ${monthLike}
+      AND invoice_date IS NOT NULL
+      AND to_char(invoice_date, 'YYYY-MM') = ${opts.invoiceMonth}
   `;
   return rows.map((r) => ({
     id: r.id,
