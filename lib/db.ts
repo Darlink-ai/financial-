@@ -255,11 +255,23 @@ const mapRevenue = (r: RawRevenue): Revenue => ({
 export async function getAllState() {
   await ensureSeeded();
   const sql = client();
+  // IMPORTANT : on N'INCLUT PAS attachment_b64 (le PDF entier en base64).
+  // mapInvoice ne s'en sert pas, mais Postgres l'enverrait quand même sur
+  // le réseau Supabase → Vercel à chaque appel = ~250 KB × N factures par
+  // page load = explosion de l'egress (250 GB/mois facilement). Le PDF est
+  // chargé à la demande via getInvoiceWithAttachment(id) quand l'utilisateur
+  // clique "Aperçu PDF" sur une ligne spécifique.
   const [bizRows, mbRows, mapRows, invRows, revRows, driveRow] = await Promise.all([
     sql<RawBusiness[]>`SELECT * FROM businesses ORDER BY name`,
     sql<RawMailbox[]>`SELECT * FROM mailboxes ORDER BY email`,
     sql<RawMapping[]>`SELECT * FROM folder_mappings`,
-    sql<RawInvoice[]>`SELECT * FROM invoices ORDER BY received_at DESC`,
+    sql<RawInvoice[]>`
+      SELECT id, subject, from_email, mailbox, received_at, creditor,
+             invoice_date, amount, currency, folder_code, folder_label,
+             final_name, drive_path, status, excel_row_matched, attachment,
+             account_currency, retry_count, last_error, last_processed_at
+      FROM invoices ORDER BY received_at DESC
+    `,
     sql<RawRevenue[]>`SELECT * FROM revenues ORDER BY month DESC, business_id`,
     sql<{ provider: string | null; connected: boolean; root_path: string | null }[]>`
       SELECT provider, connected, root_path FROM drive_config WHERE id = 1
@@ -997,7 +1009,16 @@ export async function countManualDraftInvoices(): Promise<number> {
 
 export async function updateInvoice(id: string, patch: Partial<Invoice>): Promise<Invoice | null> {
   const sql = client();
-  const [current] = await sql<RawInvoice[]>`SELECT * FROM invoices WHERE id = ${id}`;
+  // Pareil que getAllState : on N'INCLUT PAS attachment_b64. Le merge se fait
+  // sur les métadonnées, on n'a pas besoin du PDF entier en base64.
+  // updateInvoice est appelée ~3-4×/PDF en upload — multiplie l'egress sinon.
+  const [current] = await sql<RawInvoice[]>`
+    SELECT id, subject, from_email, mailbox, received_at, creditor,
+           invoice_date, amount, currency, folder_code, folder_label,
+           final_name, drive_path, status, excel_row_matched, attachment,
+           account_currency, retry_count, last_error, last_processed_at
+    FROM invoices WHERE id = ${id}
+  `;
   if (!current) return null;
   const merged: Invoice = { ...mapInvoice(current), ...patch, id };
   await sql`
