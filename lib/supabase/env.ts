@@ -7,6 +7,7 @@ export const ALLOWED_EMAILS = [
   "gauthier.koller@famelink.ai",
   "robin.koller@famelink.ai",
   "investisseurs@famelink.ai",
+  "jacqueline@famelink.ai",
 ];
 
 export function isAllowedEmail(email: string | null | undefined): boolean {
