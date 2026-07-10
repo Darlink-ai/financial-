@@ -315,6 +315,27 @@ function CronSection({
       });
       await loadRuns();
       onReload();
+      // Alert récap : le user demande explicitement un feedback à la fin
+      // du sync sur "combien de nouvelles factures ont pu être retrouvées".
+      // Le bandeau vert reste visible en dessous pour le détail, mais
+      // l'alert donne un chiffre clair immédiatement.
+      const netNew =
+        d.totalAdded - (d.totalDeduped ?? 0);
+      const lines = [
+        `Analyse terminée.`,
+        ``,
+        `📥 ${d.totalAdded} nouvelle${d.totalAdded > 1 ? "s" : ""} facture${d.totalAdded > 1 ? "s" : ""} détectée${d.totalAdded > 1 ? "s" : ""} dans les mails${d.totalDeduped ? ` (dont ${d.totalDeduped} dédoublonnée${d.totalDeduped > 1 ? "s" : ""} → ${netNew} conservée${netNew > 1 ? "s" : ""})` : ""}`,
+        `⏭️ ${d.totalSkipped} déjà connue${d.totalSkipped > 1 ? "s" : ""} (skippée${d.totalSkipped > 1 ? "s" : ""})`,
+      ];
+      if (d.results?.length) {
+        lines.push("", "Détail par boîte :");
+        for (const r of d.results) {
+          lines.push(
+            `  • ${r.mailboxEmail} : +${r.added}${r.deduped ? ` (${r.deduped} dédup)` : ""}, ${r.skipped} skip, ${r.totalMessages} mails scan${r.error ? ` ❌ ${r.error}` : ""}`,
+          );
+        }
+      }
+      alert(lines.join("\n"));
     } finally {
       setRunning(false);
     }
