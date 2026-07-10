@@ -61,8 +61,6 @@ export default function ImportPage() {
   const { reloadFromDb, invoices } = useStore();
   const [items, setItems] = useState<DraftItem[]>([]);
   const [dragOver, setDragOver] = useState(false);
-  const [purgingDb, setPurgingDb] = useState(false);
-  const [rematching, setRematching] = useState(false);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [deletingSelected, setDeletingSelected] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -398,11 +396,6 @@ export default function ImportPage() {
     setItems((prev) => prev.filter((p) => p.key !== key));
   };
 
-  const clearAll = () => {
-    if (!confirm("Vider la liste des brouillons en cours ?")) return;
-    setItems((prev) => prev.filter((p) => p.status === "uploading"));
-  };
-
   /**
    * Supprime en DB toutes les factures sélectionnées via checkbox.
    * Séquentiel (pas parallèle) pour éviter de saturer le serveur.
@@ -450,156 +443,6 @@ export default function ImportPage() {
       alert(summary);
     } finally {
       setDeletingSelected(false);
-    }
-  };
-
-  /**
-   * Re-lance l'auto-match sur tous les brouillons /import de janvier à
-   * juin 2026. Utile après une mise à jour du matcher (nouveau algo, seuil
-   * ajusté, exclusion de lignes prises…) pour que les drafts historiques
-   * bénéficient des améliorations sans avoir à réuploader chaque PDF.
-   */
-  const rematchAllDrafts = async () => {
-    if (
-      !confirm(
-        "Re-lancer l'auto-match sur tous les brouillons Ajout manuel de janvier à juin 2026 ?\n\n" +
-          "Chaque PDF sera ré-analysé côté serveur avec le nouveau matcher. La ligne Excel proposée peut changer. Rien n'est validé ni envoyé sur Drive — les brouillons restent en attente de ta validation.\n\n" +
-          "Peut prendre 1-2 minutes selon le nombre de fichiers.",
-      )
-    )
-      return;
-    setRematching(true);
-    try {
-      const r = await fetch("/api/invoices/rematch-drafts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fromMonth: "2026-01", toMonth: "2026-06" }),
-      });
-      const data = (await r.json().catch(() => null)) as
-        | {
-            ok?: boolean;
-            total?: number;
-            processed?: number;
-            breakdown?: {
-              gotMatch: number;
-              rowChanged: number;
-              rowUnchanged: number;
-              lostMatch: number;
-              stillNoMatch: number;
-              failed: number;
-            };
-            message?: string;
-          }
-        | null;
-      if (!r.ok || !data?.ok) {
-        alert(`Échec re-matching : ${data?.message ?? `HTTP ${r.status}`}`);
-        return;
-      }
-      const b = data.breakdown;
-      const summary = b
-        ? [
-            `${data.processed}/${data.total} brouillons re-traités.`,
-            "",
-            `  ${b.gotMatch}  ont maintenant une ligne (n'en avaient pas)`,
-            `  ${b.rowChanged}  ont changé de ligne (le nouveau matcher a fait mieux)`,
-            `  ${b.rowUnchanged}  n'ont pas bougé (même ligne qu'avant)`,
-            `  ${b.stillNoMatch}  toujours sans proposition`,
-            b.lostMatch > 0 ? `  ${b.lostMatch}  ont perdu leur ligne (rare)` : "",
-            b.failed > 0 ? `  ${b.failed}  échecs (voir logs)` : "",
-          ]
-            .filter(Boolean)
-            .join("\n")
-        : "Aucun brouillon trouvé dans la période.";
-      await reloadFromDb();
-      alert(`Re-matching terminé.\n\n${summary}`);
-    } catch (e) {
-      alert(`Erreur réseau : ${(e as Error).message}`);
-    } finally {
-      setRematching(false);
-    }
-  };
-
-  /**
-   * Option B : supprime EN DB tous les brouillons issus de "Ajout manuel"
-   * qui sont encore en status renamed/manual (= non rapprochés). N'agit
-   * QUE sur mailbox='Ajout manuel' — les factures Gmail-synced, les
-   * rapprochées Excel (status='matched'), les factures en cours d'analyse,
-   * etc. ne sont absolument pas touchées.
-   *
-   * Filtre strict côté SQL → garanti côté serveur même si l'UI est buggée.
-   */
-  const purgeAllManualDrafts = async () => {
-    // 1) Lecture du nombre exact côté serveur (pas du count local — peut
-    //    être divergent si la session est restée ouverte longtemps).
-    let serverCount = 0;
-    try {
-      const r = await fetch("/api/invoices/bulk-manual-drafts", {
-        cache: "no-store",
-      });
-      const data = (await r.json().catch(() => null)) as
-        | { ok?: boolean; count?: number }
-        | null;
-      if (!r.ok || !data?.ok) {
-        alert(`Impossible de compter les brouillons : HTTP ${r.status}`);
-        return;
-      }
-      serverCount = data.count ?? 0;
-    } catch (e) {
-      alert(`Erreur réseau : ${(e as Error).message}`);
-      return;
-    }
-
-    if (serverCount === 0) {
-      alert("Aucun brouillon Ajout manuel à supprimer.");
-      return;
-    }
-
-    const ok = confirm(
-      [
-        `⚠ Supprimer définitivement ${serverCount} brouillon(s) issus de "Ajout manuel" ?`,
-        "",
-        "Seuls les brouillons NON rapprochés (status renamed/manual) seront effacés.",
-        "",
-        "RIEN d'autre n'est touché :",
-        "  • les factures rapprochées Excel (vertes) restent intactes",
-        "  • les factures Gmail-synced ne sont pas concernées",
-        "  • les mailboxes, mappings, Drive, revenus, etc. ne bougent pas",
-        "",
-        "Action irréversible. Continuer ?",
-      ].join("\n"),
-    );
-    if (!ok) return;
-
-    setPurgingDb(true);
-    try {
-      const r = await fetch("/api/invoices/bulk-manual-drafts", {
-        method: "DELETE",
-      });
-      const data = (await r.json().catch(() => null)) as
-        | { ok?: boolean; deleted?: number; ids?: string[] }
-        | null;
-      if (!r.ok || !data?.ok) {
-        alert(`Échec suppression : HTTP ${r.status}`);
-        return;
-      }
-      const deletedIds = new Set(data.ids ?? []);
-      // Nettoie aussi la liste locale : tous les items dont l'invoice
-      // vient d'être supprimée disparaissent de la vue. Les items en cours
-      // d'upload (pas encore d'invoice.id) restent — on n'a aucune raison
-      // de les retirer.
-      setItems((prev) =>
-        prev.filter((p) => {
-          const id = p.invoice?.id;
-          if (!id) return true;
-          return !deletedIds.has(id);
-        }),
-      );
-      await reloadFromDb();
-      alert(`${data.deleted ?? 0} brouillon(s) supprimé(s) de la DB.`);
-    } catch (e) {
-      alert(`Erreur : ${(e as Error).message}`);
-    } finally {
-      setPurgingDb(false);
     }
   };
 
@@ -839,7 +682,7 @@ export default function ImportPage() {
                 {selectedKeys.size > 0 && (
                   <button
                     onClick={deleteSelected}
-                    disabled={validatingAll || purgingDb || rematching || deletingSelected}
+                    disabled={validatingAll || deletingSelected}
                     className="btn disabled:opacity-50 hover:!border-err hover:text-err"
                     title={`Supprimer les ${selectedKeys.size} facture(s) cochée(s) en base.`}
                   >
@@ -857,7 +700,7 @@ export default function ImportPage() {
                 {draftedCount > 0 && (
                   <button
                     onClick={validateAll}
-                    disabled={validatingAll || purgingDb || deletingSelected}
+                    disabled={validatingAll || deletingSelected}
                     className="btn btn-primary disabled:opacity-50"
                     title={`Valider en séquence les ${draftedCount} brouillon(s) qui ont une ligne Excel renseignée. Skip ceux qui ciblent une ligne déjà prise.`}
                   >
@@ -873,46 +716,6 @@ export default function ImportPage() {
                     )}
                   </button>
                 )}
-                <button
-                  onClick={rematchAllDrafts}
-                  disabled={validatingAll || purgingDb || rematching}
-                  className="btn disabled:opacity-50"
-                  title="Re-lance l'auto-match sur tous les brouillons Ajout manuel de janvier à juin 2026, avec le nouveau matcher. Ne valide rien, ne pousse rien sur Drive."
-                >
-                  {rematching ? (
-                    <>
-                      <RefreshCw size={12} className="animate-spin" /> Re-matching…
-                    </>
-                  ) : (
-                    <>
-                      <RefreshCw size={12} /> Re-matcher janv-juin
-                    </>
-                  )}
-                </button>
-                <button
-                  onClick={clearAll}
-                  disabled={validatingAll || purgingDb || rematching}
-                  className="btn disabled:opacity-50"
-                  title="Vide la liste affichée. N'efface rien en base — les brouillons réapparaîtront au prochain reload."
-                >
-                  <Trash2 size={12} /> Vider la vue
-                </button>
-                <button
-                  onClick={purgeAllManualDrafts}
-                  disabled={validatingAll || purgingDb}
-                  className="btn disabled:opacity-50 hover:!border-err hover:text-err"
-                  title="Supprime EN BASE tous les brouillons Ajout manuel non rapprochés. Aucune autre facture n'est touchée (Gmail, rapprochées, etc. intactes)."
-                >
-                  {purgingDb ? (
-                    <>
-                      <RefreshCw size={12} className="animate-spin" /> Suppression…
-                    </>
-                  ) : (
-                    <>
-                      <Trash2 size={12} /> Vider tous les brouillons (DB)
-                    </>
-                  )}
-                </button>
               </div>
             </div>
             <div className="divide-y divide-border">
