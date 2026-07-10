@@ -928,6 +928,30 @@ export async function getManualInvoiceIds(): Promise<string[]> {
 }
 
 /**
+ * Liste les IDs des brouillons /import (mailbox='Ajout manuel') qui sont
+ * encore en status renamed/manual, sur une plage de mois donnée (inclus).
+ * Sert au bouton "Re-lancer l'auto-match" — permet d'appliquer le nouveau
+ * matching (multi-passes, exclusion des lignes prises, etc.) à des drafts
+ * historiques sans avoir à les réuploader un par un.
+ */
+export async function getManualDraftIdsBetween(opts: {
+  fromMonth: string; // YYYY-MM inclus
+  toMonth: string; // YYYY-MM inclus
+}): Promise<string[]> {
+  const sql = client();
+  const rows = await sql<{ id: string }[]>`
+    SELECT id FROM invoices
+    WHERE mailbox = 'Ajout manuel'
+      AND status IN ('renamed', 'manual')
+      AND invoice_date IS NOT NULL
+      AND to_char(invoice_date, 'YYYY-MM') >= ${opts.fromMonth}
+      AND to_char(invoice_date, 'YYYY-MM') <= ${opts.toMonth}
+    ORDER BY invoice_date ASC
+  `;
+  return rows.map((r) => r.id);
+}
+
+/**
  * Récupère une facture avec sa pièce jointe (base64) pour aperçu PDF
  * ou re-traitement. Retourne null si l'id n'existe pas.
  */
