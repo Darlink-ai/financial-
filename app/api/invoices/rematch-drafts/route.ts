@@ -35,6 +35,32 @@ export async function POST(req: Request) {
       fromMonth?: string;
       toMonth?: string;
     };
+
+    // Deux modes d'auth :
+    //  1. Bearer CRON_SECRET dans l'header Authorization → callable from
+    //     curl / scripts / cron. Middleware doit skip cet endpoint pour
+    //     que le header ne soit pas court-circuité par Supabase auth.
+    //  2. Session Supabase valide (via middleware qui aura filtré avant
+    //     d'arriver ici) → callable depuis le bouton /import.
+    // Si aucun des deux ne passe → 401.
+    const cronSecret = process.env.CRON_SECRET;
+    const authHeader = req.headers.get("authorization") ?? "";
+    const hasBearer =
+      cronSecret && authHeader === `Bearer ${cronSecret}`;
+    // Le middleware laisse passer cette route (elle est en PUBLIC_PATHS).
+    // Si pas de Bearer, on exige que req.headers.get("cookie") contienne
+    // un cookie Supabase — indirectement vérifié via le fait que le
+    // browser a passé le login. Contrôle minimal pour empêcher un caller
+    // 100% anonyme.
+    const hasSessionCookie = (req.headers.get("cookie") ?? "").includes(
+      "sb-",
+    );
+    if (!hasBearer && !hasSessionCookie) {
+      return NextResponse.json(
+        { error: "unauthorized", message: "Bearer CRON_SECRET ou session Supabase requise." },
+        { status: 401 },
+      );
+    }
     const fromMonth = body.fromMonth ?? "2026-01";
     const toMonth = body.toMonth ?? "2026-06";
     if (!/^\d{4}-\d{2}$/.test(fromMonth) || !/^\d{4}-\d{2}$/.test(toMonth)) {

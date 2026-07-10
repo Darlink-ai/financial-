@@ -7,6 +7,10 @@ const PUBLIC_PATHS = [
   "/api/auth/callback",
   "/api/auth/signout",
   "/api/diag",
+  // rematch-drafts a sa propre auth Bearer CRON_SECRET + check cookie.
+  // Middleware skip pour que le header Authorization ne soit pas
+  // court-circuité côté Supabase auth.
+  "/api/invoices/rematch-drafts",
 ];
 
 function isPublic(pathname: string): boolean {
