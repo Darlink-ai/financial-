@@ -521,19 +521,40 @@ async function autoProcessInvoiceInner(
           excludeInvoiceId: input.invoiceId,
         });
 
-        // Pass 1 : on tente une ligne LIBRE en priorité (cas le plus
-        // fréquent : N PDFs pour N transactions distinctes).
+        // Pass 1 : on tente une ligne LIBRE avec le score standard ≥ 4
+        // (créditeur + montant proche OU créditeur + date proche). Cas
+        // le plus fréquent : N PDFs pour N transactions distinctes.
         let matches = matchInvoicesAgainstSheet(
           { headers: sheet.headers, rows: sheet.rows },
           [dummy],
           { excludeRowIndices },
         );
 
-        // Pass 2 : si rien de libre ne match, on tolère une collision avec
-        // une ligne déjà prise. Ça couvre le cas inverse (vrai doublon
-        // facture/reçu pour la MÊME tx bancaire) — le dédoublonnage
-        // downstream (findInvoicesMatchingRow) tranchera en gardant la
-        // plus ancienne et en supprimant l'autre.
+        // Pass 1b : si aucune ligne LIBRE ne passe le seuil strict, on
+        // tolère un score plus bas (créditeur seul suffit) pour prioriser
+        // quand même une ligne libre. Sinon on tomberait en pass 2 sur
+        // une ligne DÉJÀ occupée alors qu'une ligne libre du même
+        // créditeur existe juste à côté (cas typique : 2 débits Runpod
+        // successifs à des montants/dates légèrement différents, où la
+        // 2e ligne perd 0,5 point de score à cause d'un delta FX).
+        let usedLooseMatch = false;
+        if (matches.length === 0 && excludeRowIndices.size > 0) {
+          const loose = findBestCandidate(
+            { headers: sheet.headers, rows: sheet.rows },
+            dummy,
+            { excludeRowIndices },
+          );
+          if (loose && loose.score >= 3) {
+            matches = [loose.result];
+            usedLooseMatch = true;
+          }
+        }
+
+        // Pass 2 : si RIEN de libre (même en loose) → on tolère une
+        // collision avec une ligne déjà prise. Ça couvre le cas inverse
+        // (vrai doublon facture/reçu pour la MÊME tx bancaire) — le
+        // dédoublonnage downstream (findInvoicesMatchingRow) tranchera
+        // en gardant la plus ancienne.
         if (matches.length === 0 && excludeRowIndices.size > 0) {
           matches = matchInvoicesAgainstSheet(
             { headers: sheet.headers, rows: sheet.rows },
@@ -547,6 +568,11 @@ async function autoProcessInvoiceInner(
           const excelAmount = matches[0].excelAmount;
           if (excelAmount != null && Number.isFinite(excelAmount)) {
             patch.amount = Math.abs(excelAmount);
+          }
+          if (usedLooseMatch) {
+            errors.push(
+              `match: ligne ${matchedRow} (${currency}) proposée en score faible — vérifie le montant/date avant validation.`,
+            );
           }
           break;
         } else {
