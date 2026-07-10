@@ -13,6 +13,8 @@ const PUBLIC_PATHS = [
   "/api/invoices/rematch-drafts",
   // debug-match : diagnostic dry-run authentifié via ?auth=CRON_SECRET.
   "/api/invoices/debug-match",
+  // debug-list : liste read-only des invoices par mois/devise.
+  "/api/invoices/debug-list",
 ];
 
 function isPublic(pathname: string): boolean {
