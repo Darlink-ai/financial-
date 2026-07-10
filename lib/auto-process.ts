@@ -557,7 +557,18 @@ async function autoProcessInvoiceInner(
         // (vrai doublon facture/reçu pour la MÊME tx bancaire) — le
         // dédoublonnage downstream (findInvoicesMatchingRow) tranchera
         // en gardant la plus ancienne.
-        if (matches.length === 0 && excludeRowIndices.size > 0) {
+        //
+        // IMPORTANT : on ne fait PAS pass 2 en mode draft (skipDrive).
+        // Le dédoublonnage downstream est skip en draft (auto-process
+        // ligne "!input.skipDrive"), donc pass 2 assignerait une ligne
+        // occupée sans jamais nettoyer → faux positif genre "Runpod
+        // 1000 USD → ligne 25 (refund -183 EUR)". Mieux vaut laisser
+        // sans match : l'utilisateur validera manuellement.
+        if (
+          matches.length === 0 &&
+          excludeRowIndices.size > 0 &&
+          !input.skipDrive
+        ) {
           matches = matchInvoicesAgainstSheet(
             { headers: sheet.headers, rows: sheet.rows },
             [dummy],
