@@ -11,6 +11,8 @@ const PUBLIC_PATHS = [
   // Middleware skip pour que le header Authorization ne soit pas
   // court-circuité côté Supabase auth.
   "/api/invoices/rematch-drafts",
+  // debug-match : diagnostic dry-run authentifié via ?auth=CRON_SECRET.
+  "/api/invoices/debug-match",
 ];
 
 function isPublic(pathname: string): boolean {
