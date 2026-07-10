@@ -96,11 +96,39 @@ export default function ExcelPage() {
     return matchInvoicesAgainstSheet(sheet, invoices);
   }, [sheet, invoices]);
 
+  // Source de vérité pour les lignes vertes : les factures VALIDÉES en DB
+  // (status='matched' + excel_row_matched non-null + accountCurrency ===
+  // currency). Le matcher live sert seulement de complément pour proposer
+  // des matches sur des factures pas encore validées — sinon une facture
+  // validée manuellement (via /import ou /assign-row) qui ne passe pas
+  // le seuil du matcher live n'apparaîtrait pas en vert alors qu'elle
+  // devrait.
   const matchedRows = useMemo(() => {
     const map = new Map<number, MatchResult>();
-    matches.forEach((m) => map.set(m.rowIndex, m));
+    // Étape 1 : hydrate depuis la DB (invoices déjà matchées).
+    for (const inv of invoices) {
+      if (inv.status !== "matched") continue;
+      if (inv.excelRowMatched == null) continue;
+      // excel_row_matched est stocké en N° Excel humain (1-based avec en-tête).
+      // rowIndex = N° Excel - 2 (0-based dans sheet.rows[]).
+      const rowIdx = inv.excelRowMatched - 2;
+      if (rowIdx < 0) continue;
+      map.set(rowIdx, {
+        rowIndex: rowIdx,
+        invoice: inv,
+        confidence: "high",
+        reasons: ["validé"],
+        excelAmount: null,
+        excelDate: null,
+      });
+    }
+    // Étape 2 : complète avec le matcher live pour les factures pas
+    // encore matched — sans écraser les entrées DB déjà posées.
+    for (const m of matches) {
+      if (!map.has(m.rowIndex)) map.set(m.rowIndex, m);
+    }
     return map;
-  }, [matches]);
+  }, [matches, invoices]);
 
   // Totaux du fichier courant (somme des débits = dépenses du compte).
   const expenseTotals = useMemo(
