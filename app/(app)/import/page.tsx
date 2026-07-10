@@ -61,6 +61,7 @@ export default function ImportPage() {
   const { reloadFromDb, invoices } = useStore();
   const [items, setItems] = useState<DraftItem[]>([]);
   const [dragOver, setDragOver] = useState(false);
+  const [rematchingAll, setRematchingAll] = useState(false);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [deletingSelected, setDeletingSelected] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -446,6 +447,73 @@ export default function ImportPage() {
     }
   };
 
+  /**
+   * Ré-analyse TOUS les brouillons /import (peu importe le mois) via
+   * autoProcess en mode draft. Chaque PDF repasse par extraction +
+   * classification + match Excel avec les dernières règles. Utile
+   * quand le matcher ou l'extracteur ont été améliorés — les drafts
+   * historiques bénéficient sans avoir à réuploader chaque PDF.
+   */
+  const rematchAll = async () => {
+    if (
+      !confirm(
+        "Ré-analyser tous les brouillons /import avec l'IA ?\n\n" +
+          "Chaque PDF est ré-extrait (montant, date, créditeur) + reclassé + re-matché contre Excel. Rien n'est validé, rien n'est envoyé sur Drive.\n\n" +
+          "Peut prendre plusieurs minutes selon le nombre de fichiers.",
+      )
+    )
+      return;
+    setRematchingAll(true);
+    try {
+      const r = await fetch("/api/invoices/rematch-drafts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ all: true }),
+      });
+      const data = (await r.json().catch(() => null)) as
+        | {
+            ok?: boolean;
+            total?: number;
+            processed?: number;
+            breakdown?: {
+              gotMatch: number;
+              rowChanged: number;
+              rowUnchanged: number;
+              lostMatch: number;
+              stillNoMatch: number;
+              failed: number;
+            };
+            message?: string;
+          }
+        | null;
+      if (!r.ok || !data?.ok) {
+        alert(`Échec ré-analyse : ${data?.message ?? `HTTP ${r.status}`}`);
+        return;
+      }
+      const b = data.breakdown;
+      const summary = b
+        ? [
+            `${data.processed}/${data.total} brouillons ré-analysés.`,
+            "",
+            `  ${b.gotMatch}  ont maintenant une ligne (n'en avaient pas)`,
+            `  ${b.rowChanged}  ont changé de ligne (le nouveau matcher a fait mieux)`,
+            `  ${b.rowUnchanged}  n'ont pas bougé`,
+            `  ${b.stillNoMatch}  toujours sans proposition`,
+            b.lostMatch > 0 ? `  ${b.lostMatch}  ont perdu leur ligne (rare)` : "",
+            b.failed > 0 ? `  ${b.failed}  échecs (voir logs)` : "",
+          ]
+            .filter(Boolean)
+            .join("\n")
+        : "Aucun brouillon trouvé.";
+      await reloadFromDb();
+      alert(`Ré-analyse terminée.\n\n${summary}`);
+    } catch (e) {
+      alert(`Erreur réseau : ${(e as Error).message}`);
+    } finally {
+      setRematchingAll(false);
+    }
+  };
+
   /** Index des lignes Excel déjà occupées par une facture en status="matched"
    *  (= verte dans le rapprochement Excel). Clé : `${currency}|${row}|${month}`.
    *  Sert à signaler aux drafts de /import qu'ils ciblent une ligne déjà
@@ -700,7 +768,7 @@ export default function ImportPage() {
                 {draftedCount > 0 && (
                   <button
                     onClick={validateAll}
-                    disabled={validatingAll || deletingSelected}
+                    disabled={validatingAll || deletingSelected || rematchingAll}
                     className="btn btn-primary disabled:opacity-50"
                     title={`Valider en séquence les ${draftedCount} brouillon(s) qui ont une ligne Excel renseignée. Skip ceux qui ciblent une ligne déjà prise.`}
                   >
@@ -716,6 +784,22 @@ export default function ImportPage() {
                     )}
                   </button>
                 )}
+                <button
+                  onClick={rematchAll}
+                  disabled={validatingAll || deletingSelected || rematchingAll}
+                  className="btn disabled:opacity-50"
+                  title="Ré-analyse tous les brouillons (extraction + classification + match Excel) avec les dernières règles. Rien n'est validé ni envoyé sur Drive."
+                >
+                  {rematchingAll ? (
+                    <>
+                      <RefreshCw size={12} className="animate-spin" /> Ré-analyse…
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw size={12} /> Ré-analyser tout
+                    </>
+                  )}
+                </button>
               </div>
             </div>
             <div className="divide-y divide-border">

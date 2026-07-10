@@ -34,6 +34,8 @@ export async function POST(req: Request) {
     const body = (await req.json().catch(() => ({}))) as {
       fromMonth?: string;
       toMonth?: string;
+      /** Si true, ignore la plage → traite TOUS les drafts existants. */
+      all?: boolean;
     };
 
     // Deux modes d'auth :
@@ -61,11 +63,17 @@ export async function POST(req: Request) {
         { status: 401 },
       );
     }
-    const fromMonth = body.fromMonth ?? "2026-01";
-    const toMonth = body.toMonth ?? "2026-06";
-    if (!/^\d{4}-\d{2}$/.test(fromMonth) || !/^\d{4}-\d{2}$/.test(toMonth)) {
+    const fromMonth = body.all ? undefined : body.fromMonth;
+    const toMonth = body.all ? undefined : body.toMonth;
+    if (fromMonth && !/^\d{4}-\d{2}$/.test(fromMonth)) {
       return NextResponse.json(
-        { error: "bad_range", message: "fromMonth/toMonth attendus au format YYYY-MM." },
+        { error: "bad_range", message: "fromMonth attendu au format YYYY-MM." },
+        { status: 400 },
+      );
+    }
+    if (toMonth && !/^\d{4}-\d{2}$/.test(toMonth)) {
+      return NextResponse.json(
+        { error: "bad_range", message: "toMonth attendu au format YYYY-MM." },
         { status: 400 },
       );
     }

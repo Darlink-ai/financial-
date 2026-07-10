@@ -929,23 +929,28 @@ export async function getManualInvoiceIds(): Promise<string[]> {
 
 /**
  * Liste les IDs des brouillons /import (mailbox='Ajout manuel') qui sont
- * encore en status renamed/manual, sur une plage de mois donnée (inclus).
- * Sert au bouton "Re-lancer l'auto-match" — permet d'appliquer le nouveau
+ * encore en status renamed/manual, sur une plage de mois donnée. Si
+ * fromMonth/toMonth sont omis, retourne TOUS les drafts (sans borne).
+ * Sert au bouton "Ré-analyser tout" — permet d'appliquer le nouveau
  * matching (multi-passes, exclusion des lignes prises, etc.) à des drafts
  * historiques sans avoir à les réuploader un par un.
  */
 export async function getManualDraftIdsBetween(opts: {
-  fromMonth: string; // YYYY-MM inclus
-  toMonth: string; // YYYY-MM inclus
+  fromMonth?: string; // YYYY-MM inclus ; omis = pas de borne basse
+  toMonth?: string; // YYYY-MM inclus ; omis = pas de borne haute
 }): Promise<string[]> {
   const sql = client();
+  // On borne à des valeurs extrêmes quand non fournies (plutôt que de
+  // construire deux queries) — plus simple, même perf.
+  const from = opts.fromMonth ?? "0000-01";
+  const to = opts.toMonth ?? "9999-12";
   const rows = await sql<{ id: string }[]>`
     SELECT id FROM invoices
     WHERE mailbox = 'Ajout manuel'
       AND status IN ('renamed', 'manual')
       AND invoice_date IS NOT NULL
-      AND to_char(invoice_date, 'YYYY-MM') >= ${opts.fromMonth}
-      AND to_char(invoice_date, 'YYYY-MM') <= ${opts.toMonth}
+      AND to_char(invoice_date, 'YYYY-MM') >= ${from}
+      AND to_char(invoice_date, 'YYYY-MM') <= ${to}
     ORDER BY invoice_date ASC
   `;
   return rows.map((r) => r.id);
