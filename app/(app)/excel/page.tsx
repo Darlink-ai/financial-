@@ -2,11 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { PageHeader } from "@/components/PageHeader";
-import {
-  useStore,
-  useInvoicesForCurrentMonth,
-  formatMonthLabel,
-} from "@/lib/store";
+import { useStore, formatMonthLabel } from "@/lib/store";
 import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, Download, Trash2 } from "lucide-react";
 import * as XLSX from "xlsx";
 import {
@@ -29,8 +25,20 @@ function dataRowCount(total: number): number {
 }
 
 export default function ExcelPage() {
-  const { updateInvoice, reloadFromDb, selectedMonth } = useStore();
-  const allMonthInvoices = useInvoicesForCurrentMonth();
+  const { updateInvoice, reloadFromDb, selectedMonth, invoices: allInvoices } =
+    useStore();
+  // IMPORTANT : sur /excel on filtre STRICTEMENT par invoiceDate (pas de
+  // fallback sur receivedAt comme le fait useInvoicesForCurrentMonth). Sinon
+  // une facture avec invoiceDate=null mais reçue en mars serait considérée
+  // "March" et polluerait les rapprochements du mois affiché avec des
+  // matches de créditeur+montant qui n'ont rien à voir avec mars.
+  const allMonthInvoices = useMemo<Invoice[]>(
+    () =>
+      allInvoices.filter(
+        (i) => i.invoiceDate && i.invoiceDate.slice(0, 7) === selectedMonth,
+      ),
+    [allInvoices, selectedMonth],
+  );
   const fileRef = useRef<HTMLInputElement>(null);
   // Devise locale à la page — pas de sélecteur global. L'utilisateur
   // choisit ici dans quel "bucket" (CHF / EUR / USD) il dépose son fichier.
