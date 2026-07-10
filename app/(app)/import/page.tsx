@@ -63,7 +63,22 @@ export default function ImportPage() {
   const [dragOver, setDragOver] = useState(false);
   const [purgingDb, setPurgingDb] = useState(false);
   const [rematching, setRematching] = useState(false);
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
+  const [deletingSelected, setDeletingSelected] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  const toggleSelect = (key: string) => {
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+  const selectAllVisible = () => {
+    setSelectedKeys(new Set(items.map((it) => it.key)));
+  };
+  const clearSelection = () => setSelectedKeys(new Set());
 
   // Option C : force un reloadFromDb au mount pour que la vue initiale
   // reflète exactement ce qui est en DB (brouillons "Ajout manuel" laissés
@@ -386,6 +401,56 @@ export default function ImportPage() {
   const clearAll = () => {
     if (!confirm("Vider la liste des brouillons en cours ?")) return;
     setItems((prev) => prev.filter((p) => p.status === "uploading"));
+  };
+
+  /**
+   * Supprime en DB toutes les factures sélectionnées via checkbox.
+   * Séquentiel (pas parallèle) pour éviter de saturer le serveur.
+   * Continue même si une suppression échoue — reporte le total à la fin.
+   */
+  const deleteSelected = async () => {
+    const targets = items.filter(
+      (it) => selectedKeys.has(it.key) && it.invoice?.id,
+    );
+    if (targets.length === 0) {
+      alert("Aucune facture sélectionnée avec un ID DB valide.");
+      return;
+    }
+    if (
+      !confirm(
+        `Supprimer définitivement ${targets.length} facture(s) sélectionnée(s) ?\n\nAction irréversible. Les fichiers seront effacés de la base et disparaîtront de /import.`,
+      )
+    )
+      return;
+    setDeletingSelected(true);
+    let deleted = 0;
+    const failed: string[] = [];
+    try {
+      for (const it of targets) {
+        try {
+          const r = await fetch(`/api/invoices/${it.invoice!.id}`, {
+            method: "DELETE",
+          });
+          if (r.ok) {
+            deleted++;
+            setItems((prev) => prev.filter((p) => p.key !== it.key));
+          } else {
+            failed.push(it.fileName);
+          }
+        } catch {
+          failed.push(it.fileName);
+        }
+      }
+      clearSelection();
+      await reloadFromDb();
+      const summary =
+        failed.length > 0
+          ? `${deleted}/${targets.length} supprimé(s). ${failed.length} échec(s) :\n• ${failed.slice(0, 10).join("\n• ")}${failed.length > 10 ? "\n…" : ""}`
+          : `${deleted} facture(s) supprimée(s).`;
+      alert(summary);
+    } finally {
+      setDeletingSelected(false);
+    }
   };
 
   /**
@@ -734,20 +799,65 @@ export default function ImportPage() {
         {items.length > 0 && (
           <div className="card overflow-hidden">
             <div className="flex items-center justify-between px-5 py-3 border-b border-border gap-3 flex-wrap">
-              <div className="text-[13px]">
+              <div className="text-[13px] flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  checked={
+                    items.length > 0 && selectedKeys.size === items.length
+                  }
+                  ref={(el) => {
+                    if (el)
+                      el.indeterminate =
+                        selectedKeys.size > 0 &&
+                        selectedKeys.size < items.length;
+                  }}
+                  onChange={(e) => {
+                    if (e.target.checked) selectAllVisible();
+                    else clearSelection();
+                  }}
+                  className="accent-accent cursor-pointer"
+                  title={
+                    selectedKeys.size === items.length
+                      ? "Tout désélectionner"
+                      : "Tout sélectionner"
+                  }
+                />
                 <span className="font-medium">
                   {items.length} fichier{items.length > 1 ? "s" : ""}
                 </span>
-                <span className="text-muted ml-2">
-                  · {draftedCount} en attente de validation · {validatedCount}{" "}
+                <span className="text-muted">
+                  · {draftedCount} en attente · {validatedCount}{" "}
                   validé{validatedCount > 1 ? "s" : ""}
                 </span>
+                {selectedKeys.size > 0 && (
+                  <span className="text-accent font-medium">
+                    · {selectedKeys.size} sélectionné{selectedKeys.size > 1 ? "s" : ""}
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-2 ml-auto">
+                {selectedKeys.size > 0 && (
+                  <button
+                    onClick={deleteSelected}
+                    disabled={validatingAll || purgingDb || rematching || deletingSelected}
+                    className="btn disabled:opacity-50 hover:!border-err hover:text-err"
+                    title={`Supprimer les ${selectedKeys.size} facture(s) cochée(s) en base.`}
+                  >
+                    {deletingSelected ? (
+                      <>
+                        <RefreshCw size={12} className="animate-spin" /> Suppression…
+                      </>
+                    ) : (
+                      <>
+                        <Trash2 size={12} /> Supprimer la sélection ({selectedKeys.size})
+                      </>
+                    )}
+                  </button>
+                )}
                 {draftedCount > 0 && (
                   <button
                     onClick={validateAll}
-                    disabled={validatingAll || purgingDb}
+                    disabled={validatingAll || purgingDb || deletingSelected}
                     className="btn btn-primary disabled:opacity-50"
                     title={`Valider en séquence les ${draftedCount} brouillon(s) qui ont une ligne Excel renseignée. Skip ceux qui ciblent une ligne déjà prise.`}
                   >
@@ -818,6 +928,8 @@ export default function ImportPage() {
                     item={it}
                     siblingNames={siblingNames}
                     occupier={occupier}
+                    selected={selectedKeys.has(it.key)}
+                    onToggleSelect={() => toggleSelect(it.key)}
                     onChange={(patch) => setItemByKey(it.key, patch)}
                     onValidate={() => validateItem(it)}
                     onDelete={() => deleteItem(it)}
@@ -840,6 +952,8 @@ function DraftRow({
   item,
   siblingNames,
   occupier,
+  selected,
+  onToggleSelect,
   onChange,
   onValidate,
   onDelete,
@@ -852,6 +966,9 @@ function DraftRow({
   /** Facture déjà rapprochée à la même ligne (verte dans Excel). Quand
    *  présente → badge rouge "ligne déjà prise" + confirm à la validation. */
   occupier: Invoice | null;
+  /** Cochée pour bulk-delete via header. */
+  selected: boolean;
+  onToggleSelect: () => void;
   onChange: (patch: Partial<DraftItem>) => void;
   onValidate: () => void;
   onDelete: () => void;
@@ -868,8 +985,18 @@ function DraftRow({
       : "";
 
   return (
-    <div className={`px-5 py-3 ${accentBorder}`}>
+    <div
+      className={`px-5 py-3 ${accentBorder} ${selected ? "bg-panel2" : ""}`}
+    >
       <div className="flex items-start gap-3">
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={onToggleSelect}
+          className="accent-accent cursor-pointer mt-1 shrink-0"
+          title={selected ? "Désélectionner" : "Sélectionner"}
+          disabled={!item.invoice?.id}
+        />
         <FileText size={16} className="text-muted shrink-0 mt-1" />
         <div className="min-w-0 flex-1 space-y-1">
           {/* Ligne 1 : nom du fichier + status */}
