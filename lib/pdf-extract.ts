@@ -124,10 +124,10 @@ function findAmountWithCurrency(
 ): { amount: number; currency: ExtractedInvoice["currency"] } | null {
   // Format "CHF 1'234.56" ou "€ 1.234,56" ou "USD 200.00"
   const prePattern =
-    /(CHF|EUR|USD|€|\$|Fr\.?)\s*([0-9]{1,3}(?:[\s ',.][0-9]{3})*(?:[.,][0-9]{2})?)/gi;
+    /(CHF|EUR|USD|€|\$|Fr\.?)\s*([0-9]+(?:[\s ',][0-9]{3})*(?:[.,][0-9]{2})?)/gi;
   // Format "1'234.56 CHF" ou "200.00 €"
   const postPattern =
-    /([0-9]{1,3}(?:[\s ',.][0-9]{3})*(?:[.,][0-9]{2})?)\s*(CHF|EUR|USD|€|\$|Fr\.?)/gi;
+    /([0-9]+(?:[\s ',][0-9]{3})*(?:[.,][0-9]{2})?)\s*(CHF|EUR|USD|€|\$|Fr\.?)/gi;
 
   type Candidate = {
     amount: number;

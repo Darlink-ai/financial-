@@ -531,12 +531,11 @@ async function autoProcessInvoiceInner(
         );
 
         // Pass 1b : si aucune ligne LIBRE ne passe le seuil strict, on
-        // tolère un score plus bas (créditeur seul suffit) pour prioriser
-        // quand même une ligne libre. Sinon on tomberait en pass 2 sur
-        // une ligne DÉJÀ occupée alors qu'une ligne libre du même
-        // créditeur existe juste à côté (cas typique : 2 débits Runpod
-        // successifs à des montants/dates légèrement différents, où la
-        // 2e ligne perd 0,5 point de score à cause d'un delta FX).
+        // tolère un score plus bas — mais EXIGE que le créditeur matche
+        // (via reasons qui commence par "créditeur"). Sans cette garde,
+        // le pass 1b pouvait proposer un montant/date proche sur un
+        // TOUT AUTRE créditeur (cas Runpod 03-28 qui tombait sur Atlas
+        // le même jour parce que le montant extrait était mal parsé).
         let usedLooseMatch = false;
         if (matches.length === 0 && excludeRowIndices.size > 0) {
           const loose = findBestCandidate(
@@ -544,7 +543,10 @@ async function autoProcessInvoiceInner(
             dummy,
             { excludeRowIndices },
           );
-          if (loose && loose.score >= 3) {
+          const hasCreditorMatch = loose?.result.reasons.some((r) =>
+            r.startsWith("créditeur"),
+          );
+          if (loose && loose.score >= 3 && hasCreditorMatch) {
             matches = [loose.result];
             usedLooseMatch = true;
           }
