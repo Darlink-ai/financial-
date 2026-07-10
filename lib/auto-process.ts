@@ -571,11 +571,19 @@ async function autoProcessInvoiceInner(
           if (excelAmount != null && Number.isFinite(excelAmount)) {
             patch.amount = Math.abs(excelAmount);
           }
-          if (usedLooseMatch) {
-            errors.push(
-              `match: ligne ${matchedRow} (${currency}) proposée en score faible — vérifie le montant/date avant validation.`,
-            );
-          }
+          // Diagnostic : on remonte pourquoi cette ligne a été choisie.
+          // Le user voit directement dans le warning : creditor / montant /
+          // date qui a matché + le montant Excel de la row. Ça permet de
+          // repérer un faux positif genre "ligne 20 Atlas 183.10 EUR" vs
+          // "facture Runpod 1000 USD".
+          const reasonsStr = matches[0].reasons.join(", ") || "aucun signal fort";
+          const amountStr =
+            excelAmount != null
+              ? ` (montant Excel = ${excelAmount.toFixed(2)} ${currency})`
+              : "";
+          errors.push(
+            `match: ligne ${matchedRow} ${currency} — ${reasonsStr}${amountStr}${usedLooseMatch ? " [PASS LOOSE — score faible, vérifie]" : ""}`,
+          );
           break;
         } else {
           // Pas de match au seuil 4 (même en pass 2) → on calcule la meilleure
