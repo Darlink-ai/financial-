@@ -243,18 +243,33 @@ export function detectColumns(sheet: ParsedSheet): {
 
   /**
    * Score une colonne par son CONTENU sur les 30 premières lignes de data.
-   * Sert à départager plusieurs colonnes matchant le keyword "description"
-   * — ex. Description = heures, Description1 = vrais noms.
-   * Points :
-   *   +3 : contient un suffixe corporate (SA, AG, GMBH, LTD, INC, LLC…)
-   *   +1 : chaîne longue (>= 8 chars) avec des lettres — vrai texte
-   *   -2 : ressemble à une date/heure/ID (via shouldSkipForVendor)
+   * Départage plusieurs colonnes candidates (ex. Description = heures,
+   * Description1 = vrais noms, Détails = "Montant de la transaction carte:").
+   *
+   * Points positifs :
+   *   +5 : contient un suffixe corporate (SA, AG, GMBH, LTD, INC, LLC…)
+   *   +2 : contient un domaine web (.com, .ai, .io, .net, .ch, .fr…)
+   *   +1 : chaîne longue (>= 8 chars) avec des lettres
+   *
+   * Points négatifs (une colonne "détails de transaction" tombe à -4/-6) :
+   *   -5 : préfixe descriptif (Montant, Transaction, Paiement, Virement…)
+   *   -3 : contient un montant avec devise (-12.99 EUR, -345.00 USD)
+   *   -3 : ressemble à une date/heure/ID (via shouldSkipForVendor)
    *   -1 : vide
-   * Retourne le score total.
    */
   function scoreColumnContent(colIdx: number, startRow: number): number {
     if (colIdx < 0) return -Infinity;
-    const CORPORATE = /\b(SA|AG|GMBH|GmbH|SARL|SAS|SASU|Inc|Ltd|LLC|Corp|Co|BV|OY|SPA|SRL|PLC|PBC|LIMITED|LLP)\b/i;
+    const CORPORATE =
+      /\b(SA|AG|GMBH|GmbH|SARL|SAS|SASU|Inc|Ltd|LLC|Corp|Co|BV|OY|SPA|SRL|PLC|PBC|LIMITED|LLP)\b/i;
+    // Domaines web = très bon signal d'un vrai nom de marchand
+    const DOMAIN = /\.(com|ai|io|net|ch|fr|de|uk|org|co|app|dev)\b/i;
+    // Préfixes qui trahissent une colonne de description/détails, pas de nom.
+    const DESC_PREFIX =
+      /^(montant\b|transaction|paiement|virement|retrait|frais\b|commission|achat|prelevement|prélèvement|charge|debit|credit|solde|exchange|taux|rate|no\s?de\s?trans|numero|numéro)/i;
+    // Montant avec devise inline : "-12.99", "12.71 EUR", "-345.00 USD"
+    const AMOUNT_INLINE =
+      /(?:^|\s)-?\d+[.,]\d{2}(?:\s?(EUR|USD|CHF|GBP))?(?:$|\s)/i;
+
     let score = 0;
     const sampleEnd = Math.min(startRow + 30, sheet.rows.length);
     let sampled = 0;
@@ -271,10 +286,15 @@ export function detectColumns(sheet: ParsedSheet): {
       }
       sampled++;
       if (shouldSkipForVendor(s)) {
-        score -= 2;
+        score -= 3;
         continue;
       }
-      if (CORPORATE.test(s)) score += 3;
+      // Signaux négatifs (colonne de description/détails)
+      if (DESC_PREFIX.test(s)) score -= 5;
+      if (AMOUNT_INLINE.test(s)) score -= 3;
+      // Signaux positifs (vrai nom de marchand)
+      if (CORPORATE.test(s)) score += 5;
+      if (DOMAIN.test(s)) score += 2;
       if (s.length >= 8 && /[A-Za-z]/.test(s)) score += 1;
     }
     return sampled === 0 ? -Infinity : score;
