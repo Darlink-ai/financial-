@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import type { Invoice, AccountCurrency } from "@/lib/types";
 import { formatAmount, buildFinalName } from "@/lib/format";
+import { creditorMatchesRow } from "@/lib/creditor-aliases";
 
 /**
  * État de chaque brouillon :
@@ -69,6 +70,16 @@ type DraftItem = {
     invoiceCurrency: string | null;
     invoiceDate: string | null;
     invoiceCreditor: string | null;
+    /** Autres lignes qui satisfont ±20% amount + ±2j date, triées par
+     *  déviation. Permet à l'UI de proposer "ligne suivante" quand
+     *  l'IA refuse le créditeur du candidat courant. */
+    otherCandidates?: Array<{
+      row: number;
+      currency: string;
+      excelAmount: number | null;
+      excelDate: string | null;
+      excelRowText: string | null;
+    }>;
   } | null;
 };
 
@@ -979,7 +990,15 @@ function DraftRow({
               vert quand un critère matche). Remplace la ligne texte des
               errors[] qui est plus difficile à lire d'un coup. */}
           {item.nearMiss && (
-            <NearMissDisplay nearMiss={item.nearMiss} />
+            <NearMissDisplay
+              nearMiss={item.nearMiss}
+              onSelectRow={(row, currency) =>
+                onChange({
+                  rowInput: String(row),
+                  currencyInput: currency as AccountCurrency,
+                })
+              }
+            />
           )}
           {/* Fallback : autres warnings/errors non liés au near-miss */}
           {item.errors && item.errors.length > 0 && !item.nearMiss && (
@@ -1104,79 +1123,45 @@ function StatusBadge({ status }: { status: DraftStatus }) {
 }
 
 /**
- * Table d'alias créditeur — noms différents pour la MÊME entité. Utile
- * parce que la banque affiche souvent l'entité légale (ex. "Sendinblue")
- * alors que la facture PDF montre le nom commercial (ex. "Brevo"). Sans
- * cette table, le matcher signalerait un mismatch créditeur alors que
- * c'est bien la même boîte.
+ * Bloc "match avec ligne X" — affiche les valeurs Excel vs facture côte
+ * à côte pour montant / date / créditeur, avec chaque critère colorié
+ * (vert = OK, orange = hors tolérance, rouge = mismatch créditeur).
  *
- * Chaque groupe est une liste de noms alternatifs. Match bidirectionnel :
- * si "brevo" est dans le nom PDF et "sendinblue" apparaît dans la row
- * bancaire, on considère que ça matche.
- */
-const CREDITOR_ALIASES: string[][] = [
-  ["sendinblue", "brevo"],
-  ["facebook", "meta", "instagram", "whatsapp"],
-  ["google", "alphabet", "gcp"],
-  ["twitter", "x corp"],
-  ["novita", "novita.ai"],
-  ["elevenlabs", "eleven labs"],
-];
-
-function normalize(s: string): string {
-  return s
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
-}
-
-/**
- * Retourne true si le créditeur PDF (ou un de ses alias) apparaît dans
- * le texte de la row Excel.
- */
-function creditorMatchesRow(
-  pdfCreditor: string | null,
-  excelRowText: string | null,
-): boolean {
-  if (!pdfCreditor || !excelRowText) return false;
-  const invNorm = normalize(pdfCreditor);
-  const excelNorm = normalize(excelRowText);
-  if (!invNorm || !excelNorm) return false;
-
-  // Match direct : n'importe quel mot ≥ 4 chars du créditeur PDF trouvé
-  // dans la row bancaire.
-  const tokens = invNorm.split(" ").filter((t) => t.length >= 4);
-  if (tokens.some((t) => excelNorm.includes(t))) return true;
-
-  // Match via alias : cherche si le créditeur PDF est dans un groupe
-  // d'alias, puis vérifie si un des autres noms du groupe est dans la
-  // row bancaire.
-  for (const group of CREDITOR_ALIASES) {
-    const invInGroup = group.some((alias) => invNorm.includes(alias));
-    if (!invInGroup) continue;
-    const excelInGroup = group.some((alias) => excelNorm.includes(alias));
-    if (excelInGroup) return true;
-  }
-  return false;
-}
-
-/**
- * Bloc "match avec ligne X" affiché sous chaque draft quand aucun match
- * strict n'a été trouvé mais qu'une ligne "presque" existe. Affiche les
- * valeurs Excel vs facture côte-à-côte pour montant, date ET créditeur.
- * Les critères qui matchent (amount ±20%, date ±2j = règle stricte, +
- * créditeur trouvé dans la row bancaire ou via alias) sont mis en vert.
+ * ITÉRATION : si l'IA dit que le créditeur ne matche pas, un bouton
+ * "Chercher ligne suivante" apparaît. Il pointe vers le prochain candidat
+ * dans nearMiss.otherCandidates (déjà pré-chargé côté serveur pour éviter
+ * un round-trip). L'utilisateur peut ainsi cycler jusqu'à trouver la
+ * bonne ligne ou passer en manuel.
  */
 function NearMissDisplay({
   nearMiss,
+  onSelectRow,
 }: {
   nearMiss: NonNullable<DraftItem["nearMiss"]>;
+  /** Callback appelé quand l'utilisateur passe à la ligne candidate
+   *  suivante — met à jour rowInput + currencyInput du parent. */
+  onSelectRow: (row: number, currency: string) => void;
 }) {
+  // Index dans la liste [original, ...otherCandidates]. 0 = original.
+  const candidates = useMemo(
+    () => [
+      {
+        row: nearMiss.row,
+        currency: nearMiss.currency,
+        excelAmount: nearMiss.excelAmount,
+        excelDate: nearMiss.excelDate,
+        excelRowText: nearMiss.excelRowText,
+      },
+      ...(nearMiss.otherCandidates ?? []),
+    ],
+    [nearMiss],
+  );
+  const [idx, setIdx] = useState(0);
+  const current = candidates[idx] ?? candidates[0];
+
   const invAmt = nearMiss.invoiceAmount;
   const excelAmt =
-    nearMiss.excelAmount != null ? Math.abs(nearMiss.excelAmount) : null;
+    current.excelAmount != null ? Math.abs(current.excelAmount) : null;
   const amountOk =
     invAmt != null && excelAmt != null && Math.max(invAmt, excelAmt) > 0
       ? Math.abs(invAmt - excelAmt) / Math.max(invAmt, excelAmt) <= 0.2
@@ -1184,37 +1169,36 @@ function NearMissDisplay({
 
   const dateOk =
     nearMiss.invoiceDate != null &&
-    nearMiss.excelDate != null &&
+    current.excelDate != null &&
     Math.abs(
       (new Date(nearMiss.invoiceDate).getTime() -
-        new Date(nearMiss.excelDate).getTime()) /
+        new Date(current.excelDate).getTime()) /
         86_400_000,
     ) <= 2;
 
   const staticOk = creditorMatchesRow(
     nearMiss.invoiceCreditor,
-    nearMiss.excelRowText,
+    current.excelRowText,
   );
 
-  // Extrait le "vendor" apparent depuis la row bancaire — pour l'affichage,
-  // on prend les 40 premiers chars du texte concaténé (souvent le champ
-  // description). Si vide → "—".
-  const bankVendor = nearMiss.excelRowText
-    ? nearMiss.excelRowText.slice(0, 40).trim()
+  const bankVendor = current.excelRowText
+    ? current.excelRowText.slice(0, 40).trim()
     : "—";
 
-  // Fallback LLM : si le check statique échoue, on appelle Claude Haiku via
-  // /api/creditor-check pour voir s'il s'agit d'aliases non listés dans
-  // CREDITOR_ALIASES. State { status, verdict, reason }.
   const [llmCheck, setLlmCheck] = useState<{
     status: "idle" | "loading" | "ok" | "err";
     same?: boolean;
     reason?: string;
   }>({ status: "idle" });
 
+  // Reset LLM state quand on change de candidat (index).
   useEffect(() => {
-    if (staticOk) return; // déjà vert via alias statique, pas besoin
-    if (!nearMiss.invoiceCreditor || !nearMiss.excelRowText) return;
+    setLlmCheck({ status: "idle" });
+  }, [idx]);
+
+  useEffect(() => {
+    if (staticOk) return;
+    if (!nearMiss.invoiceCreditor || !current.excelRowText) return;
     const controller = new AbortController();
     setLlmCheck({ status: "loading" });
     (async () => {
@@ -1246,62 +1230,90 @@ function NearMissDisplay({
     })();
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nearMiss.invoiceCreditor, nearMiss.excelRowText]);
+  }, [nearMiss.invoiceCreditor, current.excelRowText, idx]);
 
-  // Résultat final = statique OU (LLM = OUI)
   const creditorOk = staticOk || (llmCheck.status === "ok" && llmCheck.same === true);
+  const canGoNext = idx < candidates.length - 1;
+  const showNextButton =
+    !creditorOk &&
+    llmCheck.status === "ok" &&
+    llmCheck.same === false &&
+    canGoNext;
+
+  const goToNextCandidate = () => {
+    const nextIdx = idx + 1;
+    setIdx(nextIdx);
+    const nextCandidate = candidates[nextIdx];
+    if (nextCandidate) {
+      onSelectRow(nextCandidate.row, nextCandidate.currency);
+    }
+  };
 
   const fmtAmt = (n: number | null, cur: string | null) =>
-    n != null
-      ? `${n.toFixed(2)}${cur ? " " + cur : ""}`
-      : "—";
+    n != null ? `${n.toFixed(2)}${cur ? " " + cur : ""}` : "—";
 
   return (
     <div className="text-[10.5px] text-warn leading-relaxed">
-      <span>match avec ligne </span>
-      <span className="font-medium">
-        {nearMiss.row} {nearMiss.currency}
-      </span>
-      <span> — </span>
-      <span className={amountOk ? "text-ok" : ""}>
-        montant : {fmtAmt(excelAmt, nearMiss.currency)} (Excel) vs{" "}
-        {fmtAmt(invAmt, nearMiss.invoiceCurrency)} (facture)
-      </span>
-      <span className="text-muted"> · </span>
-      <span className={dateOk ? "text-ok" : ""}>
-        date : {nearMiss.excelDate ?? "—"} (Excel) vs{" "}
-        {nearMiss.invoiceDate ?? "—"} (facture)
-      </span>
-      <span className="text-muted"> · </span>
-      <span className={creditorOk ? "text-ok" : "text-err"}>
-        créditeur : {bankVendor} (Excel) vs{" "}
-        {nearMiss.invoiceCreditor ?? "—"} (facture)
-        {llmCheck.status === "loading" && (
-          <span className="text-muted ml-1"> · vérification IA…</span>
-        )}
-        {llmCheck.status === "ok" && llmCheck.same === true && !staticOk && (
-          <span
-            className="text-ok ml-1"
-            title={llmCheck.reason}
-          >
-            {" "}
-            · ✓ IA confirme même entité
+      <div>
+        <span>match avec ligne </span>
+        <span className="font-medium">
+          {current.row} {current.currency}
+        </span>
+        {idx > 0 && (
+          <span className="text-muted ml-1">
+            (candidat {idx + 1}/{candidates.length})
           </span>
         )}
-        {llmCheck.status === "ok" && llmCheck.same === false && (
-          <span
-            className="text-err ml-1"
-            title={llmCheck.reason}
-          >
-            {" "}
-            · ✗ IA : entités distinctes ⚠
-          </span>
-        )}
-        {llmCheck.status === "err" && (
-          <span className="text-muted ml-1"> · (IA indispo)</span>
-        )}
-        {llmCheck.status === "idle" && !staticOk && " ⚠"}
-      </span>
+        <span> — </span>
+        <span className={amountOk ? "text-ok" : ""}>
+          montant : {fmtAmt(excelAmt, current.currency)} (Excel) vs{" "}
+          {fmtAmt(invAmt, nearMiss.invoiceCurrency)} (facture)
+        </span>
+        <span className="text-muted"> · </span>
+        <span className={dateOk ? "text-ok" : ""}>
+          date : {current.excelDate ?? "—"} (Excel) vs{" "}
+          {nearMiss.invoiceDate ?? "—"} (facture)
+        </span>
+        <span className="text-muted"> · </span>
+        <span className={creditorOk ? "text-ok" : "text-err"}>
+          créditeur : {bankVendor} (Excel) vs{" "}
+          {nearMiss.invoiceCreditor ?? "—"} (facture)
+          {llmCheck.status === "loading" && (
+            <span className="text-muted ml-1"> · vérification IA…</span>
+          )}
+          {llmCheck.status === "ok" && llmCheck.same === true && !staticOk && (
+            <span className="text-ok ml-1" title={llmCheck.reason}>
+              {" "}
+              · ✓ IA confirme même entité
+            </span>
+          )}
+          {llmCheck.status === "ok" && llmCheck.same === false && (
+            <span className="text-err ml-1" title={llmCheck.reason}>
+              {" "}
+              · ✗ IA : entités distinctes ⚠
+            </span>
+          )}
+          {llmCheck.status === "err" && (
+            <span className="text-muted ml-1"> · (IA indispo)</span>
+          )}
+          {llmCheck.status === "idle" && !staticOk && " ⚠"}
+        </span>
+      </div>
+      {showNextButton && (
+        <button
+          onClick={goToNextCandidate}
+          className="mt-1 text-accent hover:underline text-[10px]"
+          title="L'IA refuse ce créditeur. Passer au prochain candidat qui satisfait ±20% montant + ±2j date."
+        >
+          → Chercher ligne suivante ({candidates.length - idx - 1} restante
+          {candidates.length - idx - 1 > 1 ? "s" : ""})
+        </button>
+      )}
+      {!canGoNext && llmCheck.status === "ok" && llmCheck.same === false && (
+        <div className="mt-1 text-muted text-[10px]">
+          Plus de candidat automatique. Tape le n° de ligne manuellement.
+        </div>
+      )}
     </div>
   );
 }

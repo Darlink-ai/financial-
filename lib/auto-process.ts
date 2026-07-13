@@ -36,6 +36,7 @@ import {
 /** Au-delà de ce nombre d'échecs, on abandonne et l'invoice passe en `manual`. */
 const MAX_AUTO_RETRIES = 3;
 import { findBestCandidate, matchInvoicesAgainstSheet } from "./excel-match";
+import { creditorMatchesRow } from "./creditor-aliases";
 import type {
   AccountCurrency,
   FolderMapping,
@@ -290,6 +291,14 @@ export type AutoProcessInput = {
   skipDrive?: boolean;
 };
 
+export type NearMissCandidate = {
+  row: number;
+  currency: string;
+  excelAmount: number | null;
+  excelDate: string | null;
+  excelRowText: string | null;
+};
+
 export type NearMissInfo = {
   row: number;
   currency: string;
@@ -309,6 +318,10 @@ export type NearMissInfo = {
   invoiceDate: string | null;
   /** Créditeur extrait du PDF (facture). */
   invoiceCreditor: string | null;
+  /** Liste ordonnée des autres candidats (déviation croissante) qui
+   *  satisfont ±20% amount + ±2j date. Permet au client d'itérer sur
+   *  « ligne suivante » quand le créditeur ne matche pas. */
+  otherCandidates: NearMissCandidate[];
 };
 
 export type AutoProcessOutcome = {
@@ -532,6 +545,7 @@ async function autoProcessInvoiceInner(
     excelAmount: number | null;
     excelDate: string | null;
     excelRowText: string | null;
+    otherCandidates?: NearMissCandidate[];
   };
   let bestNearMiss: NearMiss | null = null;
 
@@ -550,36 +564,57 @@ async function autoProcessInvoiceInner(
           excludeInvoiceId: input.invoiceId,
         });
 
-        // RÈGLE STRICTE (depuis juillet 2026, cf. demande user) :
-        // match SI ET SEULEMENT SI amount ±20% ET date ±2j. Sinon → pas
-        // de proposition, tri manuel côté utilisateur. Plus de créditeur
-        // dans le scoring, plus de multi-passes fragiles.
-        const matches = matchInvoicesAgainstSheet(
+        // RÈGLE STRICTE (depuis juillet 2026) : match SI amount ±20% ET
+        // date ±2j. On récupère TOUS les candidats valides triés par
+        // déviation, puis on itère pour préférer celui dont le créditeur
+        // matche statiquement (Sendinblue → Brevo, etc.). Sinon on prend
+        // le top (déviation la plus faible) et le client fera un check
+        // LLM ou proposera de passer au suivant.
+        const allMatches = matchInvoicesAgainstSheet(
           { headers: sheet.headers, rows: sheet.rows },
           [dummy],
-          { excludeRowIndices },
+          { excludeRowIndices, returnAllCandidates: true },
         );
 
-        if (matches.length > 0) {
-          matchedRow = matches[0].rowIndex + 2;
+        if (allMatches.length > 0) {
+          // Priorité : premier candidat avec créditeur qui matche via alias.
+          let picked = allMatches.find((m) =>
+            creditorMatchesRow(extracted.creditor, m.excelRowText ?? null),
+          );
+          if (!picked) picked = allMatches[0];
+
+          matchedRow = picked.rowIndex + 2;
           matchedCurrency = currency;
-          const excelAmount = matches[0].excelAmount;
-          const excelDate = matches[0].excelDate;
+          const excelAmount = picked.excelAmount;
+          const excelDate = picked.excelDate;
           if (excelAmount != null && Number.isFinite(excelAmount)) {
             patch.amount = Math.abs(excelAmount);
           }
-          // On populate bestNearMiss même en cas de match strict — c'est ce
-          // que la /import affiche en bloc structuré (Excel vs facture,
-          // avec critère vert quand il matche). Les 2 critères devraient
-          // logiquement être verts ici (règle stricte satisfaite).
+
+          // On expose les autres candidats (déviation croissante) pour que
+          // le client puisse proposer "chercher ligne suivante" si l'IA
+          // dit que le créditeur ne matche pas. Cap à 5 pour ne pas
+          // gonfler la réponse.
+          const others = allMatches
+            .filter((m) => m.rowIndex !== picked!.rowIndex)
+            .slice(0, 5)
+            .map((m) => ({
+              row: m.rowIndex + 2,
+              currency,
+              excelAmount: m.excelAmount,
+              excelDate: m.excelDate,
+              excelRowText: m.excelRowText ?? null,
+            }));
+
           bestNearMiss = {
             currency,
             rowIndex: matchedRow,
             score: 1,
-            reasons: matches[0].reasons,
+            reasons: picked.reasons,
             excelAmount,
             excelDate,
-            excelRowText: matches[0].excelRowText ?? null,
+            excelRowText: picked.excelRowText ?? null,
+            otherCandidates: others,
           };
           break;
         } else {
@@ -756,6 +791,7 @@ async function autoProcessInvoiceInner(
           invoiceCurrency: extracted.currency,
           invoiceDate: extracted.invoiceDate,
           invoiceCreditor: extracted.creditor,
+          otherCandidates: bestNearMiss.otherCandidates ?? [],
         }
       : null,
     errors,

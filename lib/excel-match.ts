@@ -580,6 +580,10 @@ export function matchInvoicesAgainstSheet(
     /** Set des n° de ligne Excel humains (1-based) déjà revendiqués par
      *  d'autres factures — skip pour éviter les collisions. */
     excludeRowIndices?: Set<number>;
+    /** Si true, retourne TOUS les candidats valides pour chaque facture
+     *  (triés par déviation croissante), pas juste le meilleur. Utile
+     *  pour l'itération créditeur côté auto-process. */
+    returnAllCandidates?: boolean;
   },
 ): MatchResult[] {
   const { idxAmount, idxDate, dataStartRow } = detectColumns(sheet);
@@ -587,10 +591,10 @@ export function matchInvoicesAgainstSheet(
   const results: MatchResult[] = [];
 
   for (const inv of invoices) {
-    let best: {
+    const candidates: {
       combinedDev: number;
       result: MatchResult;
-    } | null = null;
+    }[] = [];
 
     sheet.rows.forEach((row, rowIndex) => {
       if (rowIndex < dataStartRow) return;
@@ -624,12 +628,15 @@ export function matchInvoicesAgainstSheet(
         excelDate: rowDate,
         excelRowText: rowStringText(row),
       };
-      if (!best || combinedDev < best.combinedDev) {
-        best = { combinedDev, result: candidate };
-      }
+      candidates.push({ combinedDev, result: candidate });
     });
 
-    if (best) results.push((best as { combinedDev: number; result: MatchResult }).result);
+    candidates.sort((a, b) => a.combinedDev - b.combinedDev);
+    if (opts?.returnAllCandidates) {
+      results.push(...candidates.map((c) => c.result));
+    } else if (candidates.length > 0) {
+      results.push(candidates[0].result);
+    }
   }
 
   return results;
