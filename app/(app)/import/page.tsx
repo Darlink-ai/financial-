@@ -1191,7 +1191,7 @@ function NearMissDisplay({
         86_400_000,
     ) <= 2;
 
-  const creditorOk = creditorMatchesRow(
+  const staticOk = creditorMatchesRow(
     nearMiss.invoiceCreditor,
     nearMiss.excelRowText,
   );
@@ -1202,6 +1202,54 @@ function NearMissDisplay({
   const bankVendor = nearMiss.excelRowText
     ? nearMiss.excelRowText.slice(0, 40).trim()
     : "—";
+
+  // Fallback LLM : si le check statique échoue, on appelle Claude Haiku via
+  // /api/creditor-check pour voir s'il s'agit d'aliases non listés dans
+  // CREDITOR_ALIASES. State { status, verdict, reason }.
+  const [llmCheck, setLlmCheck] = useState<{
+    status: "idle" | "loading" | "ok" | "err";
+    same?: boolean;
+    reason?: string;
+  }>({ status: "idle" });
+
+  useEffect(() => {
+    if (staticOk) return; // déjà vert via alias statique, pas besoin
+    if (!nearMiss.invoiceCreditor || !nearMiss.excelRowText) return;
+    const controller = new AbortController();
+    setLlmCheck({ status: "loading" });
+    (async () => {
+      try {
+        const r = await fetch("/api/creditor-check", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            invoiceCreditor: nearMiss.invoiceCreditor,
+            bankVendor: bankVendor,
+          }),
+          signal: controller.signal,
+        });
+        const data = (await r.json().catch(() => null)) as
+          | { ok?: boolean; same?: boolean; reason?: string }
+          | null;
+        if (!r.ok || !data?.ok) {
+          setLlmCheck({ status: "err" });
+          return;
+        }
+        setLlmCheck({
+          status: "ok",
+          same: !!data.same,
+          reason: data.reason,
+        });
+      } catch {
+        setLlmCheck({ status: "err" });
+      }
+    })();
+    return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nearMiss.invoiceCreditor, nearMiss.excelRowText]);
+
+  // Résultat final = statique OU (LLM = OUI)
+  const creditorOk = staticOk || (llmCheck.status === "ok" && llmCheck.same === true);
 
   const fmtAmt = (n: number | null, cur: string | null) =>
     n != null
@@ -1228,7 +1276,31 @@ function NearMissDisplay({
       <span className={creditorOk ? "text-ok" : "text-err"}>
         créditeur : {bankVendor} (Excel) vs{" "}
         {nearMiss.invoiceCreditor ?? "—"} (facture)
-        {!creditorOk && " ⚠"}
+        {llmCheck.status === "loading" && (
+          <span className="text-muted ml-1"> · vérification IA…</span>
+        )}
+        {llmCheck.status === "ok" && llmCheck.same === true && !staticOk && (
+          <span
+            className="text-ok ml-1"
+            title={llmCheck.reason}
+          >
+            {" "}
+            · ✓ IA confirme même entité
+          </span>
+        )}
+        {llmCheck.status === "ok" && llmCheck.same === false && (
+          <span
+            className="text-err ml-1"
+            title={llmCheck.reason}
+          >
+            {" "}
+            · ✗ IA : entités distinctes ⚠
+          </span>
+        )}
+        {llmCheck.status === "err" && (
+          <span className="text-muted ml-1"> · (IA indispo)</span>
+        )}
+        {llmCheck.status === "idle" && !staticOk && " ⚠"}
       </span>
     </div>
   );
