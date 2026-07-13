@@ -64,9 +64,11 @@ type DraftItem = {
     currency: string;
     excelAmount: number | null;
     excelDate: string | null;
+    excelRowText: string | null;
     invoiceAmount: number | null;
     invoiceCurrency: string | null;
     invoiceDate: string | null;
+    invoiceCreditor: string | null;
   } | null;
 };
 
@@ -1102,11 +1104,70 @@ function StatusBadge({ status }: { status: DraftStatus }) {
 }
 
 /**
+ * Table d'alias créditeur — noms différents pour la MÊME entité. Utile
+ * parce que la banque affiche souvent l'entité légale (ex. "Sendinblue")
+ * alors que la facture PDF montre le nom commercial (ex. "Brevo"). Sans
+ * cette table, le matcher signalerait un mismatch créditeur alors que
+ * c'est bien la même boîte.
+ *
+ * Chaque groupe est une liste de noms alternatifs. Match bidirectionnel :
+ * si "brevo" est dans le nom PDF et "sendinblue" apparaît dans la row
+ * bancaire, on considère que ça matche.
+ */
+const CREDITOR_ALIASES: string[][] = [
+  ["sendinblue", "brevo"],
+  ["facebook", "meta", "instagram", "whatsapp"],
+  ["google", "alphabet", "gcp"],
+  ["twitter", "x corp"],
+  ["novita", "novita.ai"],
+  ["elevenlabs", "eleven labs"],
+];
+
+function normalize(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+/**
+ * Retourne true si le créditeur PDF (ou un de ses alias) apparaît dans
+ * le texte de la row Excel.
+ */
+function creditorMatchesRow(
+  pdfCreditor: string | null,
+  excelRowText: string | null,
+): boolean {
+  if (!pdfCreditor || !excelRowText) return false;
+  const invNorm = normalize(pdfCreditor);
+  const excelNorm = normalize(excelRowText);
+  if (!invNorm || !excelNorm) return false;
+
+  // Match direct : n'importe quel mot ≥ 4 chars du créditeur PDF trouvé
+  // dans la row bancaire.
+  const tokens = invNorm.split(" ").filter((t) => t.length >= 4);
+  if (tokens.some((t) => excelNorm.includes(t))) return true;
+
+  // Match via alias : cherche si le créditeur PDF est dans un groupe
+  // d'alias, puis vérifie si un des autres noms du groupe est dans la
+  // row bancaire.
+  for (const group of CREDITOR_ALIASES) {
+    const invInGroup = group.some((alias) => invNorm.includes(alias));
+    if (!invInGroup) continue;
+    const excelInGroup = group.some((alias) => excelNorm.includes(alias));
+    if (excelInGroup) return true;
+  }
+  return false;
+}
+
+/**
  * Bloc "match avec ligne X" affiché sous chaque draft quand aucun match
  * strict n'a été trouvé mais qu'une ligne "presque" existe. Affiche les
- * valeurs Excel vs facture côte-à-côte pour montant et date. Les critères
- * qui matchent (amount ±20%, date ±2j = la règle stricte) sont mis en
- * vert pour que l'utilisateur voie tout de suite ce qui colle.
+ * valeurs Excel vs facture côte-à-côte pour montant, date ET créditeur.
+ * Les critères qui matchent (amount ±20%, date ±2j = règle stricte, +
+ * créditeur trouvé dans la row bancaire ou via alias) sont mis en vert.
  */
 function NearMissDisplay({
   nearMiss,
@@ -1130,6 +1191,18 @@ function NearMissDisplay({
         86_400_000,
     ) <= 2;
 
+  const creditorOk = creditorMatchesRow(
+    nearMiss.invoiceCreditor,
+    nearMiss.excelRowText,
+  );
+
+  // Extrait le "vendor" apparent depuis la row bancaire — pour l'affichage,
+  // on prend les 40 premiers chars du texte concaténé (souvent le champ
+  // description). Si vide → "—".
+  const bankVendor = nearMiss.excelRowText
+    ? nearMiss.excelRowText.slice(0, 40).trim()
+    : "—";
+
   const fmtAmt = (n: number | null, cur: string | null) =>
     n != null
       ? `${n.toFixed(2)}${cur ? " " + cur : ""}`
@@ -1150,6 +1223,12 @@ function NearMissDisplay({
       <span className={dateOk ? "text-ok" : ""}>
         date : {nearMiss.excelDate ?? "—"} (Excel) vs{" "}
         {nearMiss.invoiceDate ?? "—"} (facture)
+      </span>
+      <span className="text-muted"> · </span>
+      <span className={creditorOk ? "text-ok" : "text-err"}>
+        créditeur : {bankVendor} (Excel) vs{" "}
+        {nearMiss.invoiceCreditor ?? "—"} (facture)
+        {!creditorOk && " ⚠"}
       </span>
     </div>
   );

@@ -14,7 +14,18 @@ export type MatchResult = {
   excelAmount: number | null;
   /** Date de comptabilisation / valuta lue dans la ligne Excel. */
   excelDate: string | null;
+  /** Texte concaténé de toutes les cellules string de la row Excel — sert
+   *  à extraire côté UI le nom du créditeur bancaire pour comparaison avec
+   *  le créditeur PDF (avec alias Brevo/Sendinblue, Meta/Facebook, etc.). */
+  excelRowText?: string;
 };
+
+function rowStringText(row: (string | number | null)[]): string {
+  return row
+    .map((c) => (typeof c === "string" ? c : ""))
+    .filter(Boolean)
+    .join(" ");
+}
 
 const norm = (s: unknown) =>
   String(s ?? "")
@@ -611,6 +622,7 @@ export function matchInvoicesAgainstSheet(
         ],
         excelAmount: rowAmount,
         excelDate: rowDate,
+        excelRowText: rowStringText(row),
       };
       if (!best || combinedDev < best.combinedDev) {
         best = { combinedDev, result: candidate };
@@ -673,6 +685,7 @@ export function findBestCandidate(
           ],
           excelAmount: rowAmount,
           excelDate: rowDate,
+          excelRowText: rowStringText(row),
         },
       };
     }

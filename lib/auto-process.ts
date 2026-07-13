@@ -297,12 +297,18 @@ export type NearMissInfo = {
   excelAmount: number | null;
   /** Date de la ligne Excel (YYYY-MM-DD). */
   excelDate: string | null;
+  /** Texte concaténé de la ligne Excel (créditeur + description) — sert
+   *  côté UI à checker si le créditeur PDF (ou un alias comme
+   *  Brevo/Sendinblue) apparaît dans la row bancaire. */
+  excelRowText: string | null;
   /** Montant extrait du PDF (facture). */
   invoiceAmount: number | null;
   /** Devise extraite du PDF. */
   invoiceCurrency: string | null;
   /** Date extraite du PDF. */
   invoiceDate: string | null;
+  /** Créditeur extrait du PDF (facture). */
+  invoiceCreditor: string | null;
 };
 
 export type AutoProcessOutcome = {
@@ -525,6 +531,7 @@ async function autoProcessInvoiceInner(
     reasons: string[];
     excelAmount: number | null;
     excelDate: string | null;
+    excelRowText: string | null;
   };
   let bestNearMiss: NearMiss | null = null;
 
@@ -572,6 +579,7 @@ async function autoProcessInvoiceInner(
             reasons: matches[0].reasons,
             excelAmount,
             excelDate,
+            excelRowText: matches[0].excelRowText ?? null,
           };
           break;
         } else {
@@ -593,6 +601,7 @@ async function autoProcessInvoiceInner(
               reasons: candidate.result.reasons,
               excelAmount: candidate.result.excelAmount,
               excelDate: candidate.result.excelDate,
+              excelRowText: candidate.result.excelRowText ?? null,
             };
           }
         }
@@ -742,9 +751,11 @@ async function autoProcessInvoiceInner(
           currency: bestNearMiss.currency,
           excelAmount: bestNearMiss.excelAmount,
           excelDate: bestNearMiss.excelDate,
+          excelRowText: bestNearMiss.excelRowText,
           invoiceAmount: extracted.amount,
           invoiceCurrency: extracted.currency,
           invoiceDate: extracted.invoiceDate,
+          invoiceCreditor: extracted.creditor,
         }
       : null,
     errors,
