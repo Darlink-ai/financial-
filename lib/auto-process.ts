@@ -290,12 +290,32 @@ export type AutoProcessInput = {
   skipDrive?: boolean;
 };
 
+export type NearMissInfo = {
+  row: number;
+  currency: string;
+  /** Montant + devise de la ligne Excel (peut être négatif = débit). */
+  excelAmount: number | null;
+  /** Date de la ligne Excel (YYYY-MM-DD). */
+  excelDate: string | null;
+  /** Montant extrait du PDF (facture). */
+  invoiceAmount: number | null;
+  /** Devise extraite du PDF. */
+  invoiceCurrency: string | null;
+  /** Date extraite du PDF. */
+  invoiceDate: string | null;
+};
+
 export type AutoProcessOutcome = {
   status: InvoiceStatus;
   classified: boolean;
   uploadedToDrive: boolean;
   matchedExcelRow: number | null;
   errors: string[];
+  /** Ligne "presque" (near-miss) proposée par le matcher quand aucun match
+   *  strict n'a été trouvé. Sert à pré-remplir l'input /import + afficher
+   *  les valeurs Excel vs facture côte-à-côte, avec un critère colorié en
+   *  vert quand il matche. */
+  nearMiss?: NearMissInfo | null;
   /** Si la facture a été supprimée comme doublon d'une autre invoice. */
   deletedAsDuplicateOf?: string | null;
   /** Autres invoices supprimées en tant que doublons (cas où celle-ci a "gagné"). */
@@ -725,6 +745,19 @@ async function autoProcessInvoiceInner(
     // On retourne TOUJOURS le match proposé pour que l'UI puisse l'afficher
     // — même en draft où il n'est pas écrit en DB.
     matchedExcelRow: matchedRow,
+    // Near-miss (structured) pour que /import pré-remplisse le n° ligne
+    // + colorie les critères qui matchent (date verte quand date matche etc.).
+    nearMiss: bestNearMiss
+      ? {
+          row: bestNearMiss.rowIndex,
+          currency: bestNearMiss.currency,
+          excelAmount: bestNearMiss.excelAmount,
+          excelDate: bestNearMiss.excelDate,
+          invoiceAmount: extracted.amount,
+          invoiceCurrency: extracted.currency,
+          invoiceDate: extracted.invoiceDate,
+        }
+      : null,
     errors,
     deletedAsDuplicateOf,
     deletedOtherIds,

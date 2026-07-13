@@ -55,6 +55,19 @@ type DraftItem = {
   finalNameInput: string;   // Sans .pdf
   /** Warnings ou erreurs renvoyés par autoProcess. */
   errors?: string[];
+  /** Near-miss (ligne "presque" — proche mais sous seuil strict) renvoyée
+   *  par autoProcess quand aucun match parfait n'a été trouvé. Sert à
+   *  pré-remplir rowInput et à afficher le comparatif Excel vs facture
+   *  avec les critères qui matchent en vert. */
+  nearMiss?: {
+    row: number;
+    currency: string;
+    excelAmount: number | null;
+    excelDate: string | null;
+    invoiceAmount: number | null;
+    invoiceCurrency: string | null;
+    invoiceDate: string | null;
+  } | null;
 };
 
 export default function ImportPage() {
@@ -224,6 +237,7 @@ export default function ImportPage() {
               status?: string;
               matchedExcelRow?: number | null;
               errors?: string[];
+              nearMiss?: DraftItem["nearMiss"];
             };
             message?: string;
           }
@@ -236,14 +250,23 @@ export default function ImportPage() {
         return;
       }
       const inv = data.invoice ?? undefined;
-      const proposedRow = data.outcome?.matchedExcelRow ?? null;
+      const strictRow = data.outcome?.matchedExcelRow ?? null;
+      const nearMiss = data.outcome?.nearMiss ?? null;
+      // Pré-remplit rowInput avec le match strict si trouvé, sinon avec
+      // la near-miss (l'utilisateur voit la ligne suggérée + le comparatif
+      // Excel vs facture pour décider).
+      const rowToDisplay = strictRow ?? nearMiss?.row ?? null;
+      const currencyToDisplay =
+        (strictRow ? inv?.accountCurrency : nearMiss?.currency) ??
+        inv?.accountCurrency ??
+        "USD";
       setItemByKey(key, {
         status: "drafted",
         invoice: inv,
-        proposedRow,
+        proposedRow: strictRow,
         proposedCurrency: inv?.accountCurrency ?? "USD",
-        rowInput: proposedRow != null ? String(proposedRow) : "",
-        currencyInput: inv?.accountCurrency ?? "USD",
+        rowInput: rowToDisplay != null ? String(rowToDisplay) : "",
+        currencyInput: currencyToDisplay as AccountCurrency,
         // Pré-remplit les champs éditables avec ce que l'auto-extract
         // a trouvé. L'utilisateur peut corriger avant de Valider.
         creditorInput: inv?.creditor ?? "",
@@ -251,6 +274,7 @@ export default function ImportPage() {
         invoiceDateInput: inv?.invoiceDate ?? "",
         finalNameInput: inv?.finalName ?? "",
         errors: data.outcome?.errors,
+        nearMiss,
       });
     } catch (e) {
       setItemByKey(key, {
@@ -949,7 +973,14 @@ function DraftRow({
           {item.message && (
             <div className="text-[11px] text-warn">{item.message}</div>
           )}
-          {item.errors && item.errors.length > 0 && (
+          {/* Near-miss structuré (montant + date côte-à-côte, colorié
+              vert quand un critère matche). Remplace la ligne texte des
+              errors[] qui est plus difficile à lire d'un coup. */}
+          {item.nearMiss && (
+            <NearMissDisplay nearMiss={item.nearMiss} />
+          )}
+          {/* Fallback : autres warnings/errors non liés au near-miss */}
+          {item.errors && item.errors.length > 0 && !item.nearMiss && (
             <div className="text-[10px] text-warn">
               {item.errors.join(" · ")}
             </div>
@@ -1067,6 +1098,60 @@ function StatusBadge({ status }: { status: DraftStatus }) {
     <span className="badge err inline-flex items-center gap-1">
       <AlertCircle size={10} /> Échec
     </span>
+  );
+}
+
+/**
+ * Bloc "match avec ligne X" affiché sous chaque draft quand aucun match
+ * strict n'a été trouvé mais qu'une ligne "presque" existe. Affiche les
+ * valeurs Excel vs facture côte-à-côte pour montant et date. Les critères
+ * qui matchent (amount ±20%, date ±2j = la règle stricte) sont mis en
+ * vert pour que l'utilisateur voie tout de suite ce qui colle.
+ */
+function NearMissDisplay({
+  nearMiss,
+}: {
+  nearMiss: NonNullable<DraftItem["nearMiss"]>;
+}) {
+  const invAmt = nearMiss.invoiceAmount;
+  const excelAmt =
+    nearMiss.excelAmount != null ? Math.abs(nearMiss.excelAmount) : null;
+  const amountOk =
+    invAmt != null && excelAmt != null && Math.max(invAmt, excelAmt) > 0
+      ? Math.abs(invAmt - excelAmt) / Math.max(invAmt, excelAmt) <= 0.2
+      : false;
+
+  const dateOk =
+    nearMiss.invoiceDate != null &&
+    nearMiss.excelDate != null &&
+    Math.abs(
+      (new Date(nearMiss.invoiceDate).getTime() -
+        new Date(nearMiss.excelDate).getTime()) /
+        86_400_000,
+    ) <= 2;
+
+  const fmtAmt = (n: number | null, cur: string | null) =>
+    n != null
+      ? `${n.toFixed(2)}${cur ? " " + cur : ""}`
+      : "—";
+
+  return (
+    <div className="text-[10.5px] text-warn leading-relaxed">
+      <span>match avec ligne </span>
+      <span className="font-medium">
+        {nearMiss.row} {nearMiss.currency}
+      </span>
+      <span> — </span>
+      <span className={amountOk ? "text-ok" : ""}>
+        montant : {fmtAmt(excelAmt, nearMiss.currency)} (Excel) vs{" "}
+        {fmtAmt(invAmt, nearMiss.invoiceCurrency)} (facture)
+      </span>
+      <span className="text-muted"> · </span>
+      <span className={dateOk ? "text-ok" : ""}>
+        date : {nearMiss.excelDate ?? "—"} (Excel) vs{" "}
+        {nearMiss.invoiceDate ?? "—"} (facture)
+      </span>
+    </div>
   );
 }
 
