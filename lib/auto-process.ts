@@ -557,17 +557,22 @@ async function autoProcessInvoiceInner(
           matchedRow = matches[0].rowIndex + 2;
           matchedCurrency = currency;
           const excelAmount = matches[0].excelAmount;
+          const excelDate = matches[0].excelDate;
           if (excelAmount != null && Number.isFinite(excelAmount)) {
             patch.amount = Math.abs(excelAmount);
           }
-          const reasonsStr = matches[0].reasons.join(", ");
-          const amountStr =
-            excelAmount != null
-              ? ` (montant Excel = ${excelAmount.toFixed(2)} ${currency})`
-              : "";
-          errors.push(
-            `match: ligne ${matchedRow} ${currency} — ${reasonsStr}${amountStr}`,
-          );
+          // On populate bestNearMiss même en cas de match strict — c'est ce
+          // que la /import affiche en bloc structuré (Excel vs facture,
+          // avec critère vert quand il matche). Les 2 critères devraient
+          // logiquement être verts ici (règle stricte satisfaite).
+          bestNearMiss = {
+            currency,
+            rowIndex: matchedRow,
+            score: 1,
+            reasons: matches[0].reasons,
+            excelAmount,
+            excelDate,
+          };
           break;
         } else {
           // Aucune ligne ne respecte la règle stricte → on note la ligne
@@ -598,27 +603,11 @@ async function autoProcessInvoiceInner(
   }
 
   // Si match trouvé : l'accountCurrency vient du sheet, pas du PDF.
+  // Le bloc "match avec ligne X — montant/date" est rendu côté /import
+  // via NearMissDisplay à partir du champ `nearMiss` du outcome — plus
+  // besoin de dupliquer en text dans errors[].
   if (matchedCurrency) {
     patch.accountCurrency = matchedCurrency;
-  } else if (bestNearMiss) {
-    // Pas de match strict (règle amount ±20% + date ±2j) mais on a une
-    // ligne "presque". On affiche côte-à-côte les valeurs Excel vs facture
-    // pour que l'utilisateur voie direct pourquoi ça n'a pas passé la règle.
-    const excelAmtStr =
-      bestNearMiss.excelAmount != null
-        ? `${Math.abs(bestNearMiss.excelAmount).toFixed(2)} ${bestNearMiss.currency}`
-        : "—";
-    const invAmtStr =
-      extracted.amount != null
-        ? `${extracted.amount.toFixed(2)} ${extracted.currency ?? ""}`.trim()
-        : "—";
-    const excelDateStr = bestNearMiss.excelDate ?? "—";
-    const invDateStr = extracted.invoiceDate ?? "—";
-    errors.push(
-      `match avec ligne ${bestNearMiss.rowIndex} ${bestNearMiss.currency} — ` +
-        `montant : ${excelAmtStr} (Excel) vs ${invAmtStr} (facture) · ` +
-        `date : ${excelDateStr} (Excel) vs ${invDateStr} (facture)`,
-    );
   }
 
   // ---- 4b. Dédoublonnage facture / reçu ----
