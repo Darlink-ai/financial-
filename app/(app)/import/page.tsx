@@ -1234,20 +1234,23 @@ function NearMissDisplay({
 
   const creditorOk = staticOk || (llmCheck.status === "ok" && llmCheck.same === true);
   const canGoNext = idx < candidates.length - 1;
-  const showNextButton =
-    !creditorOk &&
-    llmCheck.status === "ok" &&
-    llmCheck.same === false &&
-    canGoNext;
+  const canGoPrev = idx > 0;
+  // Bouton next : toujours visible tant qu'il reste des candidats. Plus
+  // prominent (soulignement) quand le LLM refuse, discret sinon.
+  const showNextButton = canGoNext;
+  const highlightNext =
+    !creditorOk && llmCheck.status === "ok" && llmCheck.same === false;
 
-  const goToNextCandidate = () => {
-    const nextIdx = idx + 1;
+  const goToCandidate = (nextIdx: number) => {
+    if (nextIdx < 0 || nextIdx >= candidates.length) return;
     setIdx(nextIdx);
     const nextCandidate = candidates[nextIdx];
     if (nextCandidate) {
       onSelectRow(nextCandidate.row, nextCandidate.currency);
     }
   };
+  const goToNextCandidate = () => goToCandidate(idx + 1);
+  const goToPrevCandidate = () => goToCandidate(idx - 1);
 
   const fmtAmt = (n: number | null, cur: string | null) =>
     n != null ? `${n.toFixed(2)}${cur ? " " + cur : ""}` : "—";
@@ -1299,15 +1302,36 @@ function NearMissDisplay({
           {llmCheck.status === "idle" && !staticOk && " ⚠"}
         </span>
       </div>
-      {showNextButton && (
-        <button
-          onClick={goToNextCandidate}
-          className="mt-1 text-accent hover:underline text-[10px]"
-          title="L'IA refuse ce créditeur. Passer au prochain candidat qui satisfait ±20% montant + ±2j date."
-        >
-          → Chercher ligne suivante ({candidates.length - idx - 1} restante
-          {candidates.length - idx - 1 > 1 ? "s" : ""})
-        </button>
+      {(canGoPrev || showNextButton) && (
+        <div className="mt-1 flex items-center gap-3 text-[10px]">
+          {canGoPrev && (
+            <button
+              onClick={goToPrevCandidate}
+              className="text-muted hover:text-text hover:underline"
+              title="Revenir au candidat précédent."
+            >
+              ← Précédent
+            </button>
+          )}
+          {showNextButton && (
+            <button
+              onClick={goToNextCandidate}
+              className={
+                highlightNext
+                  ? "text-accent hover:underline font-medium"
+                  : "text-muted hover:text-text hover:underline"
+              }
+              title={
+                highlightNext
+                  ? "L'IA refuse ce créditeur. Passer au candidat suivant."
+                  : "Voir un autre candidat."
+              }
+            >
+              → Ligne suivante ({candidates.length - idx - 1} restante
+              {candidates.length - idx - 1 > 1 ? "s" : ""})
+            </button>
+          )}
+        </div>
       )}
       {!canGoNext && llmCheck.status === "ok" && llmCheck.same === false && (
         <div className="mt-1 text-muted text-[10px]">

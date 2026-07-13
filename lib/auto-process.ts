@@ -564,17 +564,29 @@ async function autoProcessInvoiceInner(
           excludeInvoiceId: input.invoiceId,
         });
 
-        // RÈGLE STRICTE (depuis juillet 2026) : match SI amount ±20% ET
-        // date ±2j. On récupère TOUS les candidats valides triés par
-        // déviation, puis on itère pour préférer celui dont le créditeur
-        // matche statiquement (Sendinblue → Brevo, etc.). Sinon on prend
-        // le top (déviation la plus faible) et le client fera un check
-        // LLM ou proposera de passer au suivant.
-        const allMatches = matchInvoicesAgainstSheet(
+        // RÈGLE STRICTE : match SI amount ±20% ET date ±2j. On récupère
+        // tous les candidats strict + un pool "loose" (±40% + ±5j) pour
+        // enrichir otherCandidates — sinon quand le LLM refuse le nom
+        // du seul candidat strict, l'utilisateur n'a pas de bouton
+        // "chercher ligne suivante" et est bloqué.
+        const strictMatches = matchInvoicesAgainstSheet(
           { headers: sheet.headers, rows: sheet.rows },
           [dummy],
           { excludeRowIndices, returnAllCandidates: true },
         );
+        // Loose : plus large. On dédup contre les strict (par rowIndex).
+        const looseMatches = matchInvoicesAgainstSheet(
+          { headers: sheet.headers, rows: sheet.rows },
+          [dummy],
+          { excludeRowIndices, returnAllCandidates: true, loose: true },
+        );
+        const strictRowSet = new Set(strictMatches.map((m) => m.rowIndex));
+        const extraLoose = looseMatches.filter(
+          (m) => !strictRowSet.has(m.rowIndex),
+        );
+        // Pool : strict d'abord (priorité), puis loose. Cap à 15 pour
+        // limiter la taille de la réponse HTTP.
+        const allMatches = [...strictMatches, ...extraLoose].slice(0, 15);
 
         if (allMatches.length > 0) {
           // Priorité : premier candidat avec créditeur qui matche via alias.

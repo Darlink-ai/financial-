@@ -626,25 +626,32 @@ export function sumCreditsMatching(
  * Créditeur / folder code ne rentrent PLUS dans le scoring — l'utilisateur
  * a explicitement demandé de s'en tenir à ces 2 critères objectifs.
  */
-const AMOUNT_TOLERANCE = 0.2; // ±20%
-const DATE_TOLERANCE_DAYS = 2; // ±2 jours
+const AMOUNT_TOLERANCE = 0.2; // ±20% (strict)
+const DATE_TOLERANCE_DAYS = 2; // ±2 jours (strict)
+const AMOUNT_TOLERANCE_LOOSE = 0.4; // ±40% (fallback pour otherCandidates)
+const DATE_TOLERANCE_DAYS_LOOSE = 5; // ±5 jours (fallback)
 
 function isStrictMatch(
   inv: Invoice,
   rowAmount: number | null,
   rowDate: string | null,
+  opts?: { loose?: boolean },
 ): { ok: false } | { ok: true; amountRel: number; dateDiffDays: number } {
   if (inv.amount == null || rowAmount == null) return { ok: false };
   if (!inv.invoiceDate || !rowDate) return { ok: false };
   const absRow = Math.abs(rowAmount);
   const rel =
     Math.abs(inv.amount - absRow) / Math.max(inv.amount, absRow);
-  if (rel > AMOUNT_TOLERANCE) return { ok: false };
+  const amountTol = opts?.loose ? AMOUNT_TOLERANCE_LOOSE : AMOUNT_TOLERANCE;
+  if (rel > amountTol) return { ok: false };
   const diffDays = Math.abs(
     (new Date(inv.invoiceDate).getTime() - new Date(rowDate).getTime()) /
       86_400_000,
   );
-  if (diffDays > DATE_TOLERANCE_DAYS) return { ok: false };
+  const dateTol = opts?.loose
+    ? DATE_TOLERANCE_DAYS_LOOSE
+    : DATE_TOLERANCE_DAYS;
+  if (diffDays > dateTol) return { ok: false };
   return { ok: true, amountRel: rel, dateDiffDays: diffDays };
 }
 
@@ -659,6 +666,10 @@ export function matchInvoicesAgainstSheet(
      *  (triés par déviation croissante), pas juste le meilleur. Utile
      *  pour l'itération créditeur côté auto-process. */
     returnAllCandidates?: boolean;
+    /** Si true, utilise les tolérances larges (±40% montant, ±5j date)
+     *  au lieu des strictes (±20% / ±2j). Sert à peupler otherCandidates
+     *  avec plus d'options quand le LLM refuse le nom du strict. */
+    loose?: boolean;
   },
 ): MatchResult[] {
   const { idxCreditor, idxAmount, idxDate, dataStartRow } =
@@ -679,7 +690,9 @@ export function matchInvoicesAgainstSheet(
       const rowAmount = idxAmount >= 0 ? parseAmount(row[idxAmount]) : null;
       const rowDate = idxDate >= 0 ? parseDate(row[idxDate]) : null;
 
-      const check = isStrictMatch(inv, rowAmount, rowDate);
+      const check = isStrictMatch(inv, rowAmount, rowDate, {
+        loose: opts?.loose,
+      });
       if (!check.ok) return;
 
       // Déviation combinée : plus c'est bas, plus le match est précis.
