@@ -771,7 +771,17 @@ function SheetTable({
                       : "hover:bg-panel2 border-l-2 border-l-transparent"
                   }
                 >
-                  <td className="px-3 py-1.5 text-muted tabular-nums">{idx + 2}</td>
+                  <td className="px-3 py-1.5 text-muted tabular-nums align-top">
+                    <div>{idx + 2}</div>
+                    {m?.invoice.creditor && (
+                      <div
+                        className="text-[10px] text-ok font-medium mt-0.5 max-w-[110px] truncate"
+                        title={m.invoice.creditor}
+                      >
+                        {m.invoice.creditor}
+                      </div>
+                    )}
+                  </td>
                   {sheet.headers.map((_, ci) => (
                     <td key={ci} className="px-3 py-1.5 whitespace-nowrap">
                       {formatCell(row[ci])}
