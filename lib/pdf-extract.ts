@@ -89,6 +89,10 @@ const MAX_REASONABLE_AMOUNT = 10_000_000;
 
 // Mots-clés qui indiquent un montant total. La proximité avec un de ces
 // mots booste le score d'un candidat — typiquement le bon montant.
+// Mots-clés qui indiquent un montant total. La proximité avec un de ces
+// mots (celui-ci APPARAISSANT AVANT le montant, cf. distancesAfter) booste
+// le score. Recherche par regex avec word-boundary pour éviter les faux
+// positifs (ex: "totalement", "totale" pour "total").
 const TOTAL_KEYWORDS = [
   "total due",
   "amount due",
@@ -98,8 +102,8 @@ const TOTAL_KEYWORDS = [
   "net amount",
   "total ttc",
   "total ht",
-  "total :",
-  "total\n",
+  "total ",
+  "total\t",
   "à payer",
   "montant total",
   "montant dû",
@@ -194,12 +198,19 @@ function findAmountWithCurrency(
     let score = 0;
     // Bonus structure : un vrai montant a presque toujours 2 décimales
     if (c.hasDecimal) score += 8;
-    // Bonus proximité keyword (max 20, dégressif sur 80 chars)
+    // Bonus proximité keyword — SEULEMENT si le montant vient APRÈS le
+    // mot-clé (le cas normal: "Total: X€"). Math.abs() sans filtre laissait
+    // gagner un montant qui précédait juste "Sous-total" alors qu'il n'y
+    // avait aucun rapport (ex: "3 - 18,00 € Sous-total 177,00 €" → le 18
+    // gagnait +19 pts de proximité au lieu du 177).
     if (keywordPositions.length > 0) {
-      const minDist = Math.min(
-        ...keywordPositions.map((kp) => Math.abs(c.index - kp)),
-      );
-      if (minDist <= 80) score += Math.round(20 - minDist / 4);
+      const distancesAfter = keywordPositions
+        .filter((kp) => c.index >= kp)
+        .map((kp) => c.index - kp);
+      if (distancesAfter.length > 0) {
+        const minDist = Math.min(...distancesAfter);
+        if (minDist <= 80) score += Math.round(20 - minDist / 4);
+      }
     }
     return { ...c, score };
   });
@@ -410,6 +421,20 @@ const KNOWN_VENDORS = [
   "Swisscom",
   "Helvetia",
   "UBS",
+  "Sendinblue",
+  "Brevo",
+  "Infomaniak",
+  "Novita",
+  "Novita.ai",
+  "DigitalOcean",
+  "Fireworks",
+  "Groq",
+  "Cursor",
+  "Elevenlabs",
+  "ElevenLabs",
+  "Warp",
+  "Loom",
+  "Slack",
 ];
 
 function guessCreditorFromPdfText(text: string): string | null {
@@ -436,17 +461,41 @@ function guessCreditorFromPdfText(text: string): string | null {
     return counts[0].name;
   }
 
-  // 2. Fallback heuristique : 1ère ligne non générique du début du PDF.
-  const lines = text
-    .split("\n")
-    .map((l) => l.trim())
-    .filter((l) => l.length > 2 && l.length < 60);
-  for (const l of lines.slice(0, 10)) {
-    if (/facture|invoice|reçu|receipt|client|page|date|total/i.test(l))
+  // 2. Fallback heuristique : les 1ers tokens du texte, jusqu'à ce qu'on
+  // tombe sur un digit, une virgule, ou un mot-clé d'adresse (rue, str,
+  // avenue…). Fonctionne aussi bien avec des retours à la ligne qu'avec
+  // du texte one-liner (unpdf mergePages=true produit tout sur une ligne).
+  //
+  // Ex.: "Sendinblue 17 rue Salneuve..." → stop au "17" → "Sendinblue"
+  // Ex.: "Infomaniak Network SA Rue Eugène-Marziano" → stop à "Rue" →
+  //      "Infomaniak Network SA"
+  const ADDRESS_STOPWORDS =
+    /^(rue|route|avenue|av|boulevard|blvd|street|str|strasse|straße|via|c\/|calle|road|rd|place|plaza|chaussée|impasse|allée|chemin|ch|quai|voie|passage|square)\.?$/i;
+  const GENERIC_STOPWORDS =
+    /^(facture|invoice|reçu|receipt|client|page|date|total|amount|montant|payé|paid)$/i;
+
+  const cleaned = text.trim();
+  const tokens = cleaned.split(/\s+/).slice(0, 20);
+  const nameTokens: string[] = [];
+  for (const t of tokens) {
+    // Digit dans le token → probablement N° de rue ou de facture, on stop.
+    if (/\d/.test(t)) break;
+    // Ponctuation isolée
+    if (/^[.,;:—–\-]+$/.test(t)) break;
+    // Mot-clé d'adresse (rue, avenue…) → on stop, on est passé à l'adresse.
+    if (ADDRESS_STOPWORDS.test(t.replace(/[.,;:]$/, ""))) break;
+    // Mots-clés génériques (facture, invoice, etc.) → skip token isolé
+    if (GENERIC_STOPWORDS.test(t.replace(/[.,;:]$/, ""))) {
+      if (nameTokens.length > 0) break;
       continue;
-    if (/^\d+$/.test(l)) continue;
-    if (l.split(" ").length > 6) continue; // trop long pour un nom
-    return l;
+    }
+    nameTokens.push(t.replace(/[,;:]$/, "")); // trim trailing punct
+    if (nameTokens.length >= 5) break; // borne haute : max 5 mots
+  }
+
+  const candidate = nameTokens.join(" ").trim();
+  if (candidate.length >= 3 && candidate.length <= 60) {
+    return candidate;
   }
   return null;
 }
