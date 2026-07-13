@@ -69,33 +69,80 @@ function shouldSkipForVendor(s: string): boolean {
  * "2026-05-24T00:00:00.000Z 10:48:36 2026-0 ..." parce que la banque
  * stringifie ses dates.
  */
+/**
+ * Vérifie si une cellule "ressemble à un vrai nom de marchand/débiteur"
+ * plutôt qu'à un montant, une description de transaction, une date etc.
+ * Renvoie { ok, confidence } — confidence = ranking pour départager
+ * plusieurs candidats.
+ *
+ * REJETS DURS (ok = false, on ne prendra JAMAIS cette cellule) :
+ *   - Dates, heures, timestamps, codes devise, IDs de transaction
+ *   - Chaînes qui commencent par un préfixe descriptif : "Montant",
+ *     "Transaction", "Paiement", "Virement", "Achat", "Frais", etc.
+ *   - Chaînes qui contiennent un montant avec devise inline
+ *     (ex: "-12.99", "12.71 EUR", "-345.00 USD")
+ */
+const DESC_PREFIX_RE =
+  /^(montant\b|transaction|paiement|virement|retrait|frais\b|commission|achat|prelevement|prélèvement|charge|debit|credit|solde|exchange|taux|rate|no\s?de\s?trans|numero|numéro|total)/i;
+const AMOUNT_INLINE_RE =
+  /(?:^|\s)-?\d+[.,]\d{2}(?:\s?(EUR|USD|CHF|GBP|CAD|JPY))?(?:$|\s|;|,)/i;
+const CORPORATE_SUFFIXES_RE =
+  /\b(SA|AG|GMBH|GmbH|SARL|SAS|SASU|Inc|Ltd|LLC|Corp|Co|BV|OY|SPA|SRL|PLC|PBC|LIMITED|LLP)\b/i;
+const DOMAIN_RE = /\.(com|ai|io|net|ch|fr|de|uk|org|co|app|dev)\b/i;
+
+function looksLikeName(s: string): { ok: boolean; confidence: number } {
+  const trimmed = s.trim();
+  if (!trimmed) return { ok: false, confidence: 0 };
+  if (shouldSkipForVendor(trimmed)) return { ok: false, confidence: 0 };
+  // REJET DUR : préfixe descriptif ou montant inline. On ne prendra
+  // JAMAIS "Montant de la transaction carte: -12.99" comme nom.
+  if (DESC_PREFIX_RE.test(trimmed)) return { ok: false, confidence: 0 };
+  if (AMOUNT_INLINE_RE.test(trimmed)) return { ok: false, confidence: 0 };
+  // Ok — c'est un candidat. On calcule sa confiance (ranking).
+  let confidence = 1;
+  if (CORPORATE_SUFFIXES_RE.test(trimmed)) confidence += 4;
+  if (DOMAIN_RE.test(trimmed)) confidence += 3;
+  if (trimmed.length >= 8 && /[A-Za-z]/.test(trimmed)) confidence += 1;
+  return { ok: true, confidence };
+}
+
+/**
+ * Extrait le nom du débiteur/marchand de la row Excel.
+ *
+ * 1. Priorité : si idxCreditor pointe vers une cellule qui passe le
+ *    filtre "looksLikeName", on l'utilise. Elle a la vraie autorité
+ *    (col détectée par header + content scoring).
+ * 2. Fallback : sinon on scanne TOUTES les cellules de la row, on
+ *    filtre celles qui ne ressemblent PAS à un nom (rejet strict des
+ *    montants, descriptions type "Montant de la transaction carte:"),
+ *    et on retourne la plus confiante (corporate suffix > domaine >
+ *    longue chaîne texte).
+ * 3. Si RIEN ne passe le filtre, on retourne "" — mieux que d'afficher
+ *    un montant garbage.
+ */
 function rowStringText(
   row: (string | number | null)[],
   idxCreditor?: number,
 ): string {
-  // 1. Si on connaît la colonne créditeur, on la prend en priorité.
+  // 1. Priorité colonne détectée.
   if (idxCreditor != null && idxCreditor >= 0) {
     const cell = row[idxCreditor];
-    if (typeof cell === "string" && cell.trim() && !shouldSkipForVendor(cell)) {
-      return cell.trim();
+    if (typeof cell === "string") {
+      const check = looksLikeName(cell);
+      if (check.ok) return cell.trim();
     }
   }
-  // 2. Fallback : concat les cellules string qui ne sont ni vides ni des
-  //    dates/heures/currencies/IDs. On rank aussi par "corporate suffix"
-  //    présent (SA, AG, GMBH, SARL, Inc, Ltd) pour prioriser ce qui
-  //    ressemble le plus à un nom d'entreprise.
-  const CORPORATE_SUFFIXES =
-    /\b(SA|AG|GMBH|GmbH|SARL|SAS|SASU|Inc|Ltd|LLC|Corp|Co|BV|OY|SPA|SRL|PLC|PBC)\b/i;
-  const kept = row
-    .map((c) => (typeof c === "string" ? c.trim() : ""))
-    .filter((s) => s && !shouldSkipForVendor(s));
-  // Prefer cells with corporate suffix — les mettre en premier.
-  kept.sort((a, b) => {
-    const aHit = CORPORATE_SUFFIXES.test(a) ? 1 : 0;
-    const bHit = CORPORATE_SUFFIXES.test(b) ? 1 : 0;
-    return bHit - aHit;
-  });
-  return kept.join(" ");
+  // 2. Fallback : scanner toutes les string cells et prendre la plus
+  //    confiante qui ressemble à un nom.
+  const candidates: { text: string; confidence: number }[] = [];
+  for (const c of row) {
+    if (typeof c !== "string") continue;
+    const check = looksLikeName(c);
+    if (check.ok) candidates.push({ text: c.trim(), confidence: check.confidence });
+  }
+  if (candidates.length === 0) return "";
+  candidates.sort((a, b) => b.confidence - a.confidence);
+  return candidates[0].text;
 }
 
 const norm = (s: unknown) =>
