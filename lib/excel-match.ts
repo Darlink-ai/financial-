@@ -20,10 +20,50 @@ export type MatchResult = {
   excelRowText?: string;
 };
 
-function rowStringText(row: (string | number | null)[]): string {
+/** True si la chaîne ressemble à une date/heure ISO ou timestamp brut —
+ *  ne doit PAS être incluse dans le "excelRowText" utilisé pour identifier
+ *  le créditeur (sinon on se retrouve avec "2026-05-24T00:00:00.000Z" à
+ *  la place du nom du débiteur). */
+function looksLikeDateOrTime(s: string): boolean {
+  const trimmed = s.trim();
+  if (!trimmed) return true;
+  // ISO date/datetime: 2026-05-24, 2026-05-24T00:00:00.000Z
+  if (/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}[\d:.Z]*)?$/.test(trimmed)) return true;
+  // Heure seule : 10:48:36, 10:48
+  if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(trimmed)) return true;
+  // "2026-0", "2026-05" fragmentés
+  if (/^\d{4}-\d{1,2}$/.test(trimmed)) return true;
+  // Année seule
+  if (/^\d{4}$/.test(trimmed)) return true;
+  return false;
+}
+
+/**
+ * Extrait le texte "utile" d'une row Excel pour identifier le créditeur.
+ * Cible EN PRIORITÉ la colonne créditeur détectée par detectColumns
+ * (idxCreditor). Si non détectée, concatène les cellules string en
+ * EXCLUANT les dates/heures/timestamps.
+ *
+ * Avant, on concaténait tout → on se retrouvait avec
+ * "2026-05-24T00:00:00.000Z 10:48:36 2026-0 ..." parce que la banque
+ * stringifie ses dates.
+ */
+function rowStringText(
+  row: (string | number | null)[],
+  idxCreditor?: number,
+): string {
+  // 1. Si on connaît la colonne créditeur, on la prend en priorité.
+  if (idxCreditor != null && idxCreditor >= 0) {
+    const cell = row[idxCreditor];
+    if (typeof cell === "string" && cell.trim() && !looksLikeDateOrTime(cell)) {
+      return cell.trim();
+    }
+  }
+  // 2. Fallback : concat toutes les cellules string qui ne sont ni vides
+  //    ni des dates/heures.
   return row
     .map((c) => (typeof c === "string" ? c : ""))
-    .filter(Boolean)
+    .filter((s) => s && !looksLikeDateOrTime(s))
     .join(" ");
 }
 
@@ -586,7 +626,8 @@ export function matchInvoicesAgainstSheet(
     returnAllCandidates?: boolean;
   },
 ): MatchResult[] {
-  const { idxAmount, idxDate, dataStartRow } = detectColumns(sheet);
+  const { idxCreditor, idxAmount, idxDate, dataStartRow } =
+    detectColumns(sheet);
   const excludeRows = opts?.excludeRowIndices ?? new Set<number>();
   const results: MatchResult[] = [];
 
@@ -626,7 +667,7 @@ export function matchInvoicesAgainstSheet(
         ],
         excelAmount: rowAmount,
         excelDate: rowDate,
-        excelRowText: rowStringText(row),
+        excelRowText: rowStringText(row, idxCreditor),
       };
       candidates.push({ combinedDev, result: candidate });
     });
@@ -656,7 +697,8 @@ export function findBestCandidate(
   // écart montant + écart date, MÊME si en dehors des tolérances strictes.
   // Sert à afficher à l'utilisateur "closest thing was line X with 30%
   // amount diff, 5j date diff" quand aucun match strict n'a été trouvé.
-  const { idxAmount, idxDate, dataStartRow } = detectColumns(sheet);
+  const { idxCreditor, idxAmount, idxDate, dataStartRow } =
+    detectColumns(sheet);
   const excludeRows = opts?.excludeRowIndices ?? new Set<number>();
   let best: { result: MatchResult; score: number } | null = null;
 
@@ -692,7 +734,7 @@ export function findBestCandidate(
           ],
           excelAmount: rowAmount,
           excelDate: rowDate,
-          excelRowText: rowStringText(row),
+          excelRowText: rowStringText(row, idxCreditor),
         },
       };
     }
