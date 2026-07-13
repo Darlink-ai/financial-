@@ -521,59 +521,15 @@ async function autoProcessInvoiceInner(
           excludeInvoiceId: input.invoiceId,
         });
 
-        // Pass 1 : on tente une ligne LIBRE avec le score standard ≥ 4
-        // (créditeur + montant proche OU créditeur + date proche). Cas
-        // le plus fréquent : N PDFs pour N transactions distinctes.
-        let matches = matchInvoicesAgainstSheet(
+        // RÈGLE STRICTE (depuis juillet 2026, cf. demande user) :
+        // match SI ET SEULEMENT SI amount ±20% ET date ±2j. Sinon → pas
+        // de proposition, tri manuel côté utilisateur. Plus de créditeur
+        // dans le scoring, plus de multi-passes fragiles.
+        const matches = matchInvoicesAgainstSheet(
           { headers: sheet.headers, rows: sheet.rows },
           [dummy],
           { excludeRowIndices },
         );
-
-        // Pass 1b : si aucune ligne LIBRE ne passe le seuil strict, on
-        // tolère un score plus bas — mais EXIGE que le créditeur matche
-        // (via reasons qui commence par "créditeur"). Sans cette garde,
-        // le pass 1b pouvait proposer un montant/date proche sur un
-        // TOUT AUTRE créditeur (cas Runpod 03-28 qui tombait sur Atlas
-        // le même jour parce que le montant extrait était mal parsé).
-        let usedLooseMatch = false;
-        if (matches.length === 0 && excludeRowIndices.size > 0) {
-          const loose = findBestCandidate(
-            { headers: sheet.headers, rows: sheet.rows },
-            dummy,
-            { excludeRowIndices },
-          );
-          const hasCreditorMatch = loose?.result.reasons.some((r) =>
-            r.startsWith("créditeur"),
-          );
-          if (loose && loose.score >= 3 && hasCreditorMatch) {
-            matches = [loose.result];
-            usedLooseMatch = true;
-          }
-        }
-
-        // Pass 2 : si RIEN de libre (même en loose) → on tolère une
-        // collision avec une ligne déjà prise. Ça couvre le cas inverse
-        // (vrai doublon facture/reçu pour la MÊME tx bancaire) — le
-        // dédoublonnage downstream (findInvoicesMatchingRow) tranchera
-        // en gardant la plus ancienne.
-        //
-        // IMPORTANT : on ne fait PAS pass 2 en mode draft (skipDrive).
-        // Le dédoublonnage downstream est skip en draft (auto-process
-        // ligne "!input.skipDrive"), donc pass 2 assignerait une ligne
-        // occupée sans jamais nettoyer → faux positif genre "Runpod
-        // 1000 USD → ligne 25 (refund -183 EUR)". Mieux vaut laisser
-        // sans match : l'utilisateur validera manuellement.
-        if (
-          matches.length === 0 &&
-          excludeRowIndices.size > 0 &&
-          !input.skipDrive
-        ) {
-          matches = matchInvoicesAgainstSheet(
-            { headers: sheet.headers, rows: sheet.rows },
-            [dummy],
-          );
-        }
 
         if (matches.length > 0) {
           matchedRow = matches[0].rowIndex + 2;
@@ -582,25 +538,18 @@ async function autoProcessInvoiceInner(
           if (excelAmount != null && Number.isFinite(excelAmount)) {
             patch.amount = Math.abs(excelAmount);
           }
-          // Diagnostic : on remonte pourquoi cette ligne a été choisie.
-          // Le user voit directement dans le warning : creditor / montant /
-          // date qui a matché + le montant Excel de la row. Ça permet de
-          // repérer un faux positif genre "ligne 20 Atlas 183.10 EUR" vs
-          // "facture Runpod 1000 USD".
-          const reasonsStr = matches[0].reasons.join(", ") || "aucun signal fort";
+          const reasonsStr = matches[0].reasons.join(", ");
           const amountStr =
             excelAmount != null
               ? ` (montant Excel = ${excelAmount.toFixed(2)} ${currency})`
               : "";
           errors.push(
-            `match: ligne ${matchedRow} ${currency} — ${reasonsStr}${amountStr}${usedLooseMatch ? " [PASS LOOSE — score faible, vérifie]" : ""}`,
+            `match: ligne ${matchedRow} ${currency} — ${reasonsStr}${amountStr}`,
           );
           break;
         } else {
-          // Pas de match au seuil 4 (même en pass 2) → on calcule la meilleure
-          // ligne approchante pour la remonter au user en cas d'échec.
-          // On utilise l'exclusion ici aussi : le near-miss doit être une
-          // ligne où la facture pourrait raisonnablement aller.
+          // Aucune ligne ne respecte la règle stricte → on note la ligne
+          // la plus proche pour info (diagnostic seulement).
           const candidate = findBestCandidate(
             { headers: sheet.headers, rows: sheet.rows },
             dummy,

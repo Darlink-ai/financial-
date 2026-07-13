@@ -525,137 +525,99 @@ export function sumCreditsMatching(
   return { total, matches, allCredits };
 }
 
+/**
+ * RÈGLE DE MATCHING (simplifiée depuis juillet 2026, cf. demande user) :
+ * on considère qu'il y a match SI ET SEULEMENT SI :
+ *   1. Le montant Excel est à ±20% du montant facture
+ *   2. La date Excel est à ±2 jours de la date facture
+ *
+ * Si les deux critères sont satisfaits → match. Sinon → pas de proposition,
+ * tri manuel.
+ *
+ * En cas de plusieurs candidats respectant les 2 critères, on retient celui
+ * dont la déviation combinée (%|amount| + %|date|) est la plus faible.
+ *
+ * Créditeur / folder code ne rentrent PLUS dans le scoring — l'utilisateur
+ * a explicitement demandé de s'en tenir à ces 2 critères objectifs.
+ */
+const AMOUNT_TOLERANCE = 0.2; // ±20%
+const DATE_TOLERANCE_DAYS = 2; // ±2 jours
+
+function isStrictMatch(
+  inv: Invoice,
+  rowAmount: number | null,
+  rowDate: string | null,
+): { ok: false } | { ok: true; amountRel: number; dateDiffDays: number } {
+  if (inv.amount == null || rowAmount == null) return { ok: false };
+  if (!inv.invoiceDate || !rowDate) return { ok: false };
+  const absRow = Math.abs(rowAmount);
+  const rel =
+    Math.abs(inv.amount - absRow) / Math.max(inv.amount, absRow);
+  if (rel > AMOUNT_TOLERANCE) return { ok: false };
+  const diffDays = Math.abs(
+    (new Date(inv.invoiceDate).getTime() - new Date(rowDate).getTime()) /
+      86_400_000,
+  );
+  if (diffDays > DATE_TOLERANCE_DAYS) return { ok: false };
+  return { ok: true, amountRel: rel, dateDiffDays: diffDays };
+}
+
 export function matchInvoicesAgainstSheet(
   sheet: ParsedSheet,
   invoices: Invoice[],
   opts?: {
-    /** Set des n° de ligne Excel humains (1-based, ex. 14) déjà revendiqués
-     *  par d'autres factures. Le matcher les SKIP, ce qui permet à 2 factures
-     *  du même créditeur/jour (Runpod 28/01 lignes 14 et 15) de tomber chacune
-     *  sur sa propre ligne au lieu d'entrer en collision. */
+    /** Set des n° de ligne Excel humains (1-based) déjà revendiqués par
+     *  d'autres factures — skip pour éviter les collisions. */
     excludeRowIndices?: Set<number>;
   },
 ): MatchResult[] {
-  const { idxCreditor, idxAmount, idxDate, idxCode, dataStartRow } =
-    detectColumns(sheet);
-
+  const { idxAmount, idxDate, dataStartRow } = detectColumns(sheet);
   const excludeRows = opts?.excludeRowIndices ?? new Set<number>();
-
   const results: MatchResult[] = [];
 
-  // Quand le `name` ne match pas, on cherche le créditeur dans TOUTES
-  // les cellules string de la row : les relevés UBS mettent souvent le
-  // nom du fournisseur dans une "Description" longue avec d'autres infos.
-  function rowAsText(row: (string | number | null)[]): string {
-    return row
-      .map((c) => (typeof c === "string" ? c : ""))
-      .filter(Boolean)
-      .join(" ");
-  }
-
   for (const inv of invoices) {
-    const invCreditorTokens = creditorTokens(inv.creditor);
-    let best: { score: number; result: MatchResult } | null = null;
+    let best: {
+      combinedDev: number;
+      result: MatchResult;
+    } | null = null;
 
     sheet.rows.forEach((row, rowIndex) => {
-      // Skip les lignes de préambule (numéro de compte, etc.) AVANT
-      // la vraie ligne d'en-tête.
       if (rowIndex < dataStartRow) return;
-
-      // Skip les lignes déjà revendiquées par d'autres factures (matched ou
-      // drafts /import). Convention : excludeRowIndices contient des N° Excel
-      // humains (1-based), et le rowIndex 0-based équivaut au N° Excel
-      // rowIndex + 2. Voir `matchedRow = matches[0].rowIndex + 2` dans
-      // auto-process pour la même convention.
       if (excludeRows.has(rowIndex + 2)) return;
 
-      const reasons: string[] = [];
-      let score = 0;
-
-      const rowCreditor = idxCreditor >= 0 ? norm(row[idxCreditor]) : "";
       const rowAmount = idxAmount >= 0 ? parseAmount(row[idxAmount]) : null;
       const rowDate = idxDate >= 0 ? parseDate(row[idxDate]) : null;
-      const rowCode = idxCode >= 0 ? String(row[idxCode] ?? "").trim() : "";
 
-      // ---- Créditeur (tokenisé) ----
-      // On cherche n'importe quel token significatif (>= 4 chars, hors
-      // suffixes corporate type "inc", "ltd", etc.) dans la cellule
-      // créditeur OU dans toute la row text. Beaucoup plus flexible.
-      if (invCreditorTokens.length > 0) {
-        const haystack = rowCreditor + " " + norm(rowAsText(row));
-        const hitTokens = invCreditorTokens.filter((t) => haystack.includes(t));
-        if (hitTokens.length > 0) {
-          score += 3;
-          reasons.push(`créditeur "${hitTokens.join(", ")}"`);
-        }
-      }
+      const check = isStrictMatch(inv, rowAmount, rowDate);
+      if (!check.ok) return;
 
-      // ---- Montant ----
-      if (inv.amount != null && rowAmount != null) {
-        const absRow = Math.abs(rowAmount);
-        const diff = Math.abs(inv.amount - absRow);
-        const rel = diff / Math.max(inv.amount, absRow);
-        if (diff < 0.01) {
-          score += 3;
-          reasons.push("montant exact");
-        } else if (rel < 0.05) {
-          score += 2;
-          reasons.push("montant ±5%");
-        } else if (rel < 0.15) {
-          score += 1.3;
-          reasons.push("montant ±15% (FX)");
-        } else if (rel < 0.25) {
-          score += 0.8;
-          reasons.push("montant ±25% (FX+frais)");
-        }
-      }
+      // Déviation combinée : plus c'est bas, plus le match est précis.
+      // On normalise date/2j sur [0,1] pour rester dans la même échelle
+      // que amountRel [0,0.2].
+      const combinedDev = check.amountRel + check.dateDiffDays / 10;
 
-      // ---- Date (tolérance max ±7 jours — au-delà on considère que
-      //         c'est pas la même transaction) ----
-      if (inv.invoiceDate && rowDate) {
-        const diffDays = Math.abs(
-          (new Date(inv.invoiceDate).getTime() - new Date(rowDate).getTime()) /
-            86_400_000,
-        );
-        if (diffDays === 0) {
-          score += 2;
-          reasons.push("date exacte");
-        } else if (diffDays <= 3) {
-          score += 1.5;
-          reasons.push("date à ±3j");
-        } else if (diffDays <= 7) {
-          score += 1.2;
-          reasons.push("date à ±7j");
-        }
-        // > 7 jours → 0 point (trop loin pour être la même tx)
-      }
-
-      if (inv.folderCode && rowCode && rowCode === inv.folderCode) {
-        score += 1;
-        reasons.push(`code ${inv.folderCode}`);
-      }
-
-      // Seuil 4 → le créditeur seul (3) ne suffit pas mais
-      // créditeur + montant proche (4-5) ou créditeur + date (4.5-5)
-      // passe. Le créditeur SEUL avec rien d'autre on rejette pour
-      // éviter les faux positifs (plusieurs paiements du même
-      // fournisseur dans le mois).
-      if (score >= 4) {
-        const candidate: MatchResult = {
-          rowIndex,
-          invoice: inv,
-          confidence: score >= 6 ? "high" : score >= 5 ? "medium" : "low",
-          reasons,
-          excelAmount: rowAmount,
-          excelDate: rowDate,
-        };
-        if (!best || score > best.score) {
-          best = { score, result: candidate };
-        }
+      const candidate: MatchResult = {
+        rowIndex,
+        invoice: inv,
+        confidence:
+          check.amountRel < 0.05 && check.dateDiffDays === 0
+            ? "high"
+            : check.amountRel < 0.15
+              ? "medium"
+              : "low",
+        reasons: [
+          `montant ±${(check.amountRel * 100).toFixed(1)}%`,
+          `date à ±${check.dateDiffDays.toFixed(0)}j`,
+        ],
+        excelAmount: rowAmount,
+        excelDate: rowDate,
+      };
+      if (!best || combinedDev < best.combinedDev) {
+        best = { combinedDev, result: candidate };
       }
     });
 
-    if (best) results.push((best as { score: number; result: MatchResult }).result);
+    if (best) results.push((best as { combinedDev: number; result: MatchResult }).result);
   }
 
   return results;
@@ -671,81 +633,44 @@ export function findBestCandidate(
   inv: Invoice,
   opts?: { excludeRowIndices?: Set<number> },
 ): { result: MatchResult; score: number } | null {
-  const { idxCreditor, idxAmount, idxDate, idxCode, dataStartRow } =
-    detectColumns(sheet);
+  // Diagnostic uniquement : renvoie la ligne la PLUS PROCHE en combinant
+  // écart montant + écart date, MÊME si en dehors des tolérances strictes.
+  // Sert à afficher à l'utilisateur "closest thing was line X with 30%
+  // amount diff, 5j date diff" quand aucun match strict n'a été trouvé.
+  const { idxAmount, idxDate, dataStartRow } = detectColumns(sheet);
   const excludeRows = opts?.excludeRowIndices ?? new Set<number>();
-
-  const invCreditorTokens = creditorTokens(inv.creditor);
   let best: { result: MatchResult; score: number } | null = null;
 
   sheet.rows.forEach((row, rowIndex) => {
     if (rowIndex < dataStartRow) return;
     if (excludeRows.has(rowIndex + 2)) return;
-    const reasons: string[] = [];
-    let score = 0;
 
-    const rowCreditor = idxCreditor >= 0 ? norm(row[idxCreditor]) : "";
     const rowAmount = idxAmount >= 0 ? parseAmount(row[idxAmount]) : null;
     const rowDate = idxDate >= 0 ? parseDate(row[idxDate]) : null;
-    const rowCode = idxCode >= 0 ? String(row[idxCode] ?? "").trim() : "";
+    if (inv.amount == null || rowAmount == null) return;
+    if (!inv.invoiceDate || !rowDate) return;
 
-    if (invCreditorTokens.length > 0) {
-      const haystack = rowCreditor + " " +
-        norm(row.map((c) => (typeof c === "string" ? c : "")).join(" "));
-      const hitTokens = invCreditorTokens.filter((t) => haystack.includes(t));
-      if (hitTokens.length > 0) {
-        score += 3;
-        reasons.push(`créditeur "${hitTokens.join(", ")}"`);
-      }
-    }
-    if (inv.amount != null && rowAmount != null) {
-      const absRow = Math.abs(rowAmount);
-      const diff = Math.abs(inv.amount - absRow);
-      const rel = diff / Math.max(inv.amount, absRow);
-      if (diff < 0.01) {
-        score += 3;
-        reasons.push("montant exact");
-      } else if (rel < 0.05) {
-        score += 2;
-        reasons.push("montant ±5%");
-      } else if (rel < 0.15) {
-        score += 1.3;
-        reasons.push("montant ±15%");
-      } else if (rel < 0.25) {
-        score += 0.8;
-        reasons.push("montant ±25%");
-      }
-    }
-    if (inv.invoiceDate && rowDate) {
-      const diffDays = Math.abs(
-        (new Date(inv.invoiceDate).getTime() - new Date(rowDate).getTime()) /
-          86_400_000,
-      );
-      if (diffDays === 0) {
-        score += 2;
-        reasons.push("date exacte");
-      } else if (diffDays <= 3) {
-        score += 1.5;
-        reasons.push("date ±3j");
-      } else if (diffDays <= 7) {
-        score += 1.2;
-        reasons.push("date ±7j");
-      }
-      // > 7j : 0 point
-    }
-    if (inv.folderCode && rowCode && rowCode === inv.folderCode) {
-      score += 1;
-      reasons.push(`code ${inv.folderCode}`);
-    }
+    const absRow = Math.abs(rowAmount);
+    const rel = Math.abs(inv.amount - absRow) / Math.max(inv.amount, absRow);
+    const diffDays = Math.abs(
+      (new Date(inv.invoiceDate).getTime() - new Date(rowDate).getTime()) /
+        86_400_000,
+    );
+    // Score = 1 / (1 + combinedDev) → plus élevé = plus proche.
+    const combinedDev = rel + diffDays / 10;
+    const score = 1 / (1 + combinedDev);
 
-    if (score > 0 && (!best || score > best.score)) {
+    if (!best || score > best.score) {
       best = {
         score,
         result: {
           rowIndex,
           invoice: inv,
-          confidence: score >= 6 ? "high" : score >= 5 ? "medium" : "low",
-          reasons,
+          confidence: "low",
+          reasons: [
+            `montant ${(rel * 100).toFixed(0)}%`,
+            `date ±${diffDays.toFixed(0)}j`,
+          ],
           excelAmount: rowAmount,
           excelDate: rowDate,
         },
