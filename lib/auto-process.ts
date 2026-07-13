@@ -503,6 +503,8 @@ async function autoProcessInvoiceInner(
     rowIndex: number;
     score: number;
     reasons: string[];
+    excelAmount: number | null;
+    excelDate: string | null;
   };
   let bestNearMiss: NearMiss | null = null;
 
@@ -564,6 +566,8 @@ async function autoProcessInvoiceInner(
               rowIndex: candidate.result.rowIndex + 2,
               score: candidate.score,
               reasons: candidate.result.reasons,
+              excelAmount: candidate.result.excelAmount,
+              excelDate: candidate.result.excelDate,
             };
           }
         }
@@ -577,15 +581,23 @@ async function autoProcessInvoiceInner(
   if (matchedCurrency) {
     patch.accountCurrency = matchedCurrency;
   } else if (bestNearMiss) {
-    // Pas de match mais on a une ligne "presque". On enregistre dans
-    // errors → finit dans last_error → diagnostic visible dans l'UI.
+    // Pas de match strict (règle amount ±20% + date ±2j) mais on a une
+    // ligne "presque". On affiche côte-à-côte les valeurs Excel vs facture
+    // pour que l'utilisateur voie direct pourquoi ça n'a pas passé la règle.
+    const excelAmtStr =
+      bestNearMiss.excelAmount != null
+        ? `${Math.abs(bestNearMiss.excelAmount).toFixed(2)} ${bestNearMiss.currency}`
+        : "—";
+    const invAmtStr =
+      extracted.amount != null
+        ? `${extracted.amount.toFixed(2)} ${extracted.currency ?? ""}`.trim()
+        : "—";
+    const excelDateStr = bestNearMiss.excelDate ?? "—";
+    const invDateStr = extracted.invoiceDate ?? "—";
     errors.push(
-      `match: meilleure ligne approchante = ${bestNearMiss.currency} #${bestNearMiss.rowIndex} ` +
-        `(score ${bestNearMiss.score.toFixed(1)}/4) — manque : ${
-          bestNearMiss.reasons.length > 0
-            ? bestNearMiss.reasons.join(", ")
-            : "aucun signal fort"
-        }`,
+      `match avec ligne ${bestNearMiss.rowIndex} ${bestNearMiss.currency} — ` +
+        `montant : ${excelAmtStr} (Excel) vs ${invAmtStr} (facture) · ` +
+        `date : ${excelDateStr} (Excel) vs ${invDateStr} (facture)`,
     );
   }
 
