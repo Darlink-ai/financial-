@@ -42,6 +42,17 @@ export async function updateSession(request: NextRequest) {
   // Sans config Supabase on laisse passer (dev local sans env vars).
   if (!env) return NextResponse.next({ request });
 
+  const { pathname } = request.nextUrl;
+  const isApi = pathname.startsWith("/api/");
+
+  // OPTIMISATION : pour les paths publics, on skip l'appel Supabase.auth
+  // qui peut prendre 20+ secondes en cas de latence transatlantique
+  // (Vercel Frankfurt → Supabase us-east-1) et faire timeout le middleware
+  // edge (25s de hard limit).
+  if (isPublic(pathname)) {
+    return NextResponse.next({ request });
+  }
+
   let supabaseResponse = NextResponse.next({ request });
 
   const supabase = createServerClient(env.url, env.anonKey, {
@@ -61,12 +72,21 @@ export async function updateSession(request: NextRequest) {
     },
   });
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  const { pathname } = request.nextUrl;
-  const isApi = pathname.startsWith("/api/");
+  // TIMEOUT sur getUser : si Supabase auth est lent (dégradé, cold start,
+  // rate-limited), on retombe sur "pas d'user" → redirect login. Sans ça,
+  // le middleware edge attend le retour Supabase et hit sa limite 25s.
+  const AUTH_TIMEOUT_MS = 4000;
+  let user: { email?: string | null } | null = null;
+  try {
+    const authPromise = supabase.auth.getUser();
+    const timeoutPromise = new Promise<null>((resolve) =>
+      setTimeout(() => resolve(null), AUTH_TIMEOUT_MS),
+    );
+    const result = await Promise.race([authPromise, timeoutPromise]);
+    if (result !== null) user = result.data.user;
+  } catch {
+    user = null;
+  }
 
   // Email connecté mais hors du domaine autorisé → signout + redirect.
   if (user && !isAllowedEmail(user.email)) {
