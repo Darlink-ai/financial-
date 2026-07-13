@@ -15,6 +15,9 @@ const PUBLIC_PATHS = [
   "/api/invoices/debug-match",
   // debug-list : liste read-only des invoices par mois/devise.
   "/api/invoices/debug-list",
+  // reprocess-manual : bulk re-traitement des invoices status='manual',
+  // authentifié via Bearer CRON_SECRET ou cookie Supabase (bouton UI).
+  "/api/invoices/reprocess-manual",
 ];
 
 function isPublic(pathname: string): boolean {

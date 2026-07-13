@@ -18,7 +18,17 @@ export const maxDuration = 300;
  * status="manual". Utile après une migration appliquée tardivement ou
  * un nouveau mapping comptable — redonne sa chance au pipeline.
  */
-export async function POST() {
+export async function POST(req: Request) {
+  // Auth : soit Bearer CRON_SECRET (trigger externe / script), soit cookie
+  // Supabase (bouton UI /manual). Middleware skip cette route (PUBLIC_PATHS).
+  const cronSecret = process.env.CRON_SECRET;
+  const authHeader = req.headers.get("authorization") ?? "";
+  const hasBearer = cronSecret && authHeader === `Bearer ${cronSecret}`;
+  const hasSessionCookie = (req.headers.get("cookie") ?? "").includes("sb-");
+  if (!hasBearer && !hasSessionCookie) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+
   try {
     const ids = await getManualInvoiceIds();
     if (ids.length === 0) {
