@@ -403,6 +403,67 @@ export default function ImportPage() {
     }
   };
 
+  /**
+   * Relance le match Excel avec les valeurs actuelles du form (date,
+   * créditeur, montant). Utile quand l'extraction PDF a raté un champ
+   * (typiquement la date) — l'user complète manuellement et clique ce
+   * bouton pour lancer la recherche Excel sans re-uploader le PDF.
+   */
+  const rematchItem = async (it: DraftItem) => {
+    if (!it.invoice?.id) return;
+    try {
+      const r = await fetch(
+        `/api/invoices/${it.invoice.id}/rematch-with-overrides`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            creditor: it.creditorInput.trim() || undefined,
+            invoiceDate: it.invoiceDateInput.trim() || undefined,
+            amount: it.invoice.amount ?? undefined,
+            currency: it.invoice.currency ?? undefined,
+          }),
+        },
+      );
+      const data = (await r.json().catch(() => null)) as
+        | {
+            ok?: boolean;
+            invoice?: Invoice;
+            outcome?: {
+              matchedExcelRow?: number | null;
+              nearMiss?: DraftItem["nearMiss"];
+              errors?: string[];
+            };
+            message?: string;
+          }
+        | null;
+      if (!r.ok || !data?.ok) {
+        alert(`Relance match : ${data?.message ?? `HTTP ${r.status}`}`);
+        return;
+      }
+      const inv = data.invoice ?? it.invoice;
+      const strictRow = data.outcome?.matchedExcelRow ?? null;
+      const nearMiss = data.outcome?.nearMiss ?? null;
+      const rowToDisplay = strictRow ?? nearMiss?.row ?? null;
+      const currencyToDisplay =
+        (strictRow ? inv.accountCurrency : nearMiss?.currency) ??
+        inv.accountCurrency ??
+        it.currencyInput;
+      setItemByKey(it.key, {
+        invoice: inv,
+        proposedRow: strictRow,
+        proposedCurrency: (inv.accountCurrency ?? it.currencyInput) as AccountCurrency,
+        rowInput: rowToDisplay != null ? String(rowToDisplay) : it.rowInput,
+        currencyInput: currencyToDisplay as AccountCurrency,
+        nearMiss,
+        errors: data.outcome?.errors,
+      });
+      await reloadFromDb();
+    } catch (e) {
+      alert(`Erreur réseau : ${(e as Error).message}`);
+    }
+  };
+
   const deleteItem = async (it: DraftItem) => {
     if (
       !confirm(
@@ -858,6 +919,7 @@ export default function ImportPage() {
                     onValidate={() => validateItem(it)}
                     onDelete={() => deleteItem(it)}
                     onDismiss={() => dismissItem(it.key)}
+                    onRematch={() => rematchItem(it)}
                   />
                 );
               })}
@@ -882,22 +944,30 @@ function DraftRow({
   onValidate,
   onDelete,
   onDismiss,
+  onRematch,
 }: {
   item: DraftItem;
-  /** Noms des autres drafts qui ciblent la même ligne Excel (collision).
-   *  Quand non-vide → badge ⚠️ + warning visible dans la review. */
   siblingNames: string[];
-  /** Facture déjà rapprochée à la même ligne (verte dans Excel). Quand
-   *  présente → badge rouge "ligne déjà prise" + confirm à la validation. */
   occupier: Invoice | null;
-  /** Cochée pour bulk-delete via header. */
   selected: boolean;
   onToggleSelect: () => void;
   onChange: (patch: Partial<DraftItem>) => void;
   onValidate: () => void;
   onDelete: () => void;
   onDismiss: () => void;
+  /** Relance le match Excel avec les valeurs actuelles du form (date /
+   *  créditeur / montant édités par l'utilisateur). */
+  onRematch: () => void;
 }) {
+  const [rematching, setRematching] = useState(false);
+  const doRematch = async () => {
+    setRematching(true);
+    try {
+      await onRematch();
+    } finally {
+      setRematching(false);
+    }
+  };
   const inv = item.invoice;
   const accentBorder =
     item.status === "validated"
@@ -1006,6 +1076,27 @@ function DraftRow({
               {item.errors.join(" · ")}
             </div>
           )}
+          {/* Diagnostic pour draft SANS nearMiss et SANS proposedRow : on
+              indique ce qui manque pour lancer le match Excel. Cas
+              typique : l'extraction PDF a raté la date. */}
+          {item.status === "drafted" &&
+            inv &&
+            !item.nearMiss &&
+            !item.proposedRow &&
+            (() => {
+              const missing: string[] = [];
+              if (!item.invoiceDateInput) missing.push("date");
+              if (!inv.amount) missing.push("montant");
+              if (!item.creditorInput) missing.push("créditeur");
+              if (missing.length === 0) return null;
+              return (
+                <div className="text-[10.5px] text-warn mt-0.5">
+                  ⚠ Pas de match Excel — {missing.join(" + ")} manque
+                  {missing.length > 1 ? "nt" : ""} dans l&apos;extraction PDF.
+                  Édite les champs à droite puis clique « Relancer le match ».
+                </div>
+              );
+            })()}
         </div>
       </div>
 
@@ -1048,6 +1139,27 @@ function DraftRow({
               auto : ligne {item.proposedRow} ({item.proposedCurrency})
             </span>
           )}
+          <button
+            onClick={doRematch}
+            disabled={
+              rematching ||
+              !item.invoiceDateInput ||
+              !inv?.amount ||
+              !item.creditorInput
+            }
+            className="btn !py-1 !px-2 text-[11px] disabled:opacity-50"
+            title="Relance le match Excel avec les valeurs actuelles du formulaire (date, créditeur, montant). Utile quand l'extraction PDF a raté."
+          >
+            {rematching ? (
+              <>
+                <RefreshCw size={11} className="animate-spin" /> Match…
+              </>
+            ) : (
+              <>
+                <RefreshCw size={11} /> Relancer le match
+              </>
+            )}
+          </button>
           <button
             onClick={onValidate}
             disabled={!item.rowInput.trim()}
