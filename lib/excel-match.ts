@@ -200,19 +200,24 @@ export function detectColumns(sheet: ParsedSheet): {
 
   function scanRow(row: (string | number | null)[]) {
     const cells = row.map((c) => norm(String(c ?? "")));
-    // skipDate : ignore les en-têtes qui commencent par "date" pour les
-    // catégories non-date. Sinon "Date de transaction" matche "transaction"
-    // dans la liste creditor, "Date de valeur" matche "valeur" dans amount,
-    // etc. → on choppe par erreur une colonne date pour autre chose.
     const find = (alts: string[], skipDate = true) =>
       cells.findIndex((c) => {
         if (!c) return false;
         if (skipDate && c.startsWith("date")) return false;
         return alts.some((a) => c.includes(a));
       });
-    // Pour debit/credit on cherche un startsWith — distingue "debit" de
-    // "credit" (aucun des deux n'est préfixe de l'autre) tout en couvrant
-    // "Débit", "Débit CHF", "Débit(CHF)", "Débits", etc.
+    // Comme find, mais retourne TOUS les indices qui matchent. Sert pour
+    // creditor où un fichier peut avoir "Description" (heures) ET
+    // "Description1" (vrais noms) — on veut ensuite scorer par contenu.
+    const findAll = (alts: string[], skipDate = true) => {
+      const out: number[] = [];
+      cells.forEach((c, i) => {
+        if (!c) return;
+        if (skipDate && c.startsWith("date")) return;
+        if (alts.some((a) => c.includes(a))) out.push(i);
+      });
+      return out;
+    };
     const findStrict = (alts: string[]) =>
       cells.findIndex((c) => {
         if (!c) return false;
@@ -220,8 +225,9 @@ export function detectColumns(sheet: ParsedSheet): {
       });
     return {
       creditor: find(KW.creditor),
+      creditorCandidates: findAll(KW.creditor),
       amount: find(KW.amount),
-      date: find(KW.date, false), // on autorise "date" dans le header date
+      date: find(KW.date, false),
       code: find(KW.code),
       debit: findStrict(DEBIT_KW),
       credit: findStrict(CREDIT_KW),
@@ -233,6 +239,45 @@ export function detectColumns(sheet: ParsedSheet): {
       (s.amount >= 0 ? 1 : 0) +
       (s.date >= 0 ? 1 : 0)
     );
+  }
+
+  /**
+   * Score une colonne par son CONTENU sur les 30 premières lignes de data.
+   * Sert à départager plusieurs colonnes matchant le keyword "description"
+   * — ex. Description = heures, Description1 = vrais noms.
+   * Points :
+   *   +3 : contient un suffixe corporate (SA, AG, GMBH, LTD, INC, LLC…)
+   *   +1 : chaîne longue (>= 8 chars) avec des lettres — vrai texte
+   *   -2 : ressemble à une date/heure/ID (via shouldSkipForVendor)
+   *   -1 : vide
+   * Retourne le score total.
+   */
+  function scoreColumnContent(colIdx: number, startRow: number): number {
+    if (colIdx < 0) return -Infinity;
+    const CORPORATE = /\b(SA|AG|GMBH|GmbH|SARL|SAS|SASU|Inc|Ltd|LLC|Corp|Co|BV|OY|SPA|SRL|PLC|PBC|LIMITED|LLP)\b/i;
+    let score = 0;
+    const sampleEnd = Math.min(startRow + 30, sheet.rows.length);
+    let sampled = 0;
+    for (let r = startRow; r < sampleEnd; r++) {
+      const cell = sheet.rows[r]?.[colIdx];
+      if (cell == null || cell === "") {
+        score -= 1;
+        continue;
+      }
+      const s = String(cell).trim();
+      if (!s) {
+        score -= 1;
+        continue;
+      }
+      sampled++;
+      if (shouldSkipForVendor(s)) {
+        score -= 2;
+        continue;
+      }
+      if (CORPORATE.test(s)) score += 3;
+      if (s.length >= 8 && /[A-Za-z]/.test(s)) score += 1;
+    }
+    return sampled === 0 ? -Infinity : score;
   }
 
   // Candidat 1 : sheet.headers (row 0 du fichier)
@@ -253,8 +298,25 @@ export function detectColumns(sheet: ParsedSheet): {
     }
   }
 
+  // Si plusieurs colonnes matchent le keyword créditeur, on choisit celle
+  // dont le CONTENU ressemble le plus à des noms d'entreprise (via
+  // scoreColumnContent). Cas typique : "Description" contient l'heure,
+  // "Description1" contient le vrai débiteur — les 2 matchent "description"
+  // mais seule Description1 a des noms.
+  let idxCreditorFinal = best.creditor;
+  if (best.creditorCandidates.length > 1) {
+    let bestContentScore = -Infinity;
+    for (const col of best.creditorCandidates) {
+      const s = scoreColumnContent(col, best.dataStartRow);
+      if (s > bestContentScore) {
+        bestContentScore = s;
+        idxCreditorFinal = col;
+      }
+    }
+  }
+
   return {
-    idxCreditor: best.creditor,
+    idxCreditor: idxCreditorFinal,
     idxAmount: best.amount,
     idxDate: best.date,
     idxCode: best.code,
