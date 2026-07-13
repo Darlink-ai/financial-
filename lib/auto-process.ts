@@ -550,31 +550,39 @@ async function autoProcessInvoiceInner(
   let bestNearMiss: NearMiss | null = null;
 
   if (month) {
+    // On scanne TOUS les sheets (EUR, CHF, USD) et on accumule les
+    // candidats de chacun avec leur devise. Sinon quand le user demande
+    // "ligne suivante", il ne voit que les candidats d'UN seul sheet
+    // alors que la vraie ligne peut être dans une autre devise (courant
+    // avec les cartes multi-devises).
+    type PooledCandidate = {
+      currency: AccountCurrency;
+      rowIndex: number;
+      match: {
+        rowIndex: number;
+        reasons: string[];
+        excelAmount: number | null;
+        excelDate: string | null;
+        excelRowText?: string;
+      };
+    };
+    const allCandidatesPool: PooledCandidate[] = [];
+
     for (const currency of EXCEL_SEARCH_ORDER) {
       try {
         const sheet = await getExcelSheet(month, currency);
         if (!sheet) continue;
-        // Lignes déjà revendiquées dans ce mois/devise par d'autres factures
-        // (matched OU drafts /import avec une ligne proposée). Sert à éviter
-        // que 2 reçus Runpod du 28/01 tombent tous les deux sur la ligne 14
-        // alors que la 15 existe pour la 2e transaction.
         const excludeRowIndices = await getOccupiedExcelRows({
           invoiceMonth: month,
           accountCurrency: currency,
           excludeInvoiceId: input.invoiceId,
         });
 
-        // RÈGLE STRICTE : match SI amount ±20% ET date ±2j. On récupère
-        // tous les candidats strict + un pool "loose" (±40% + ±5j) pour
-        // enrichir otherCandidates — sinon quand le LLM refuse le nom
-        // du seul candidat strict, l'utilisateur n'a pas de bouton
-        // "chercher ligne suivante" et est bloqué.
         const strictMatches = matchInvoicesAgainstSheet(
           { headers: sheet.headers, rows: sheet.rows },
           [dummy],
           { excludeRowIndices, returnAllCandidates: true },
         );
-        // Loose : plus large. On dédup contre les strict (par rowIndex).
         const looseMatches = matchInvoicesAgainstSheet(
           { headers: sheet.headers, rows: sheet.rows },
           [dummy],
@@ -584,54 +592,85 @@ async function autoProcessInvoiceInner(
         const extraLoose = looseMatches.filter(
           (m) => !strictRowSet.has(m.rowIndex),
         );
-        // Pool : strict d'abord (priorité), puis loose. Cap à 15 pour
-        // limiter la taille de la réponse HTTP.
-        const allMatches = [...strictMatches, ...extraLoose].slice(0, 15);
-
-        if (allMatches.length > 0) {
-          // Priorité : premier candidat avec créditeur qui matche via alias.
-          let picked = allMatches.find((m) =>
-            creditorMatchesRow(extracted.creditor, m.excelRowText ?? null),
-          );
-          if (!picked) picked = allMatches[0];
-
-          matchedRow = picked.rowIndex + 2;
-          matchedCurrency = currency;
-          const excelAmount = picked.excelAmount;
-          const excelDate = picked.excelDate;
-          if (excelAmount != null && Number.isFinite(excelAmount)) {
-            patch.amount = Math.abs(excelAmount);
-          }
-
-          // On expose les autres candidats (déviation croissante) pour que
-          // le client puisse proposer "chercher ligne suivante" si l'IA
-          // dit que le créditeur ne matche pas. Cap à 5 pour ne pas
-          // gonfler la réponse.
-          const others = allMatches
-            .filter((m) => m.rowIndex !== picked!.rowIndex)
-            .slice(0, 5)
-            .map((m) => ({
-              row: m.rowIndex + 2,
-              currency,
-              excelAmount: m.excelAmount,
-              excelDate: m.excelDate,
-              excelRowText: m.excelRowText ?? null,
-            }));
-
-          bestNearMiss = {
+        // Marque les strict comme priorité 0, les loose comme priorité 1
+        // (via l'ordre dans le pool — les strict passent en premier).
+        for (const m of strictMatches) {
+          allCandidatesPool.push({
             currency,
-            rowIndex: matchedRow,
-            score: 1,
-            reasons: picked.reasons,
-            excelAmount,
-            excelDate,
-            excelRowText: picked.excelRowText ?? null,
-            otherCandidates: others,
-          };
-          break;
-        } else {
-          // Aucune ligne ne respecte la règle stricte → on note la ligne
-          // la plus proche pour info (diagnostic seulement).
+            rowIndex: m.rowIndex,
+            match: m,
+          });
+        }
+        for (const m of extraLoose) {
+          allCandidatesPool.push({
+            currency,
+            rowIndex: m.rowIndex,
+            match: m,
+          });
+        }
+      } catch (e) {
+        errors.push(`excel(${currency}): ${(e as Error).message}`);
+      }
+    }
+
+    if (allCandidatesPool.length > 0) {
+      // Priorité 1 : premier candidat dont le créditeur matche statiquement
+      // via alias (Sendinblue → Brevo, etc.), toutes devises confondues.
+      // Priorité 2 : le top du pool (strict d'abord, EUR d'abord dans l'ordre
+      // EXCEL_SEARCH_ORDER, déviation croissante).
+      let picked = allCandidatesPool.find((p) =>
+        creditorMatchesRow(extracted.creditor, p.match.excelRowText ?? null),
+      );
+      if (!picked) picked = allCandidatesPool[0];
+
+      matchedRow = picked.match.rowIndex + 2;
+      matchedCurrency = picked.currency;
+      const excelAmount = picked.match.excelAmount;
+      const excelDate = picked.match.excelDate;
+      if (excelAmount != null && Number.isFinite(excelAmount)) {
+        patch.amount = Math.abs(excelAmount);
+      }
+
+      // Expose les autres candidats (toutes devises confondues, cap à 10)
+      // pour que le client puisse itérer sur "ligne suivante" et couvrir
+      // aussi CHF/USD si le vrai match est là-bas.
+      const others = allCandidatesPool
+        .filter(
+          (p) =>
+            !(p.rowIndex === picked!.rowIndex && p.currency === picked!.currency),
+        )
+        .slice(0, 10)
+        .map((p) => ({
+          row: p.match.rowIndex + 2,
+          currency: p.currency,
+          excelAmount: p.match.excelAmount,
+          excelDate: p.match.excelDate,
+          excelRowText: p.match.excelRowText ?? null,
+        }));
+
+      bestNearMiss = {
+        currency: picked.currency,
+        rowIndex: matchedRow,
+        score: 1,
+        reasons: picked.match.reasons,
+        excelAmount,
+        excelDate,
+        excelRowText: picked.match.excelRowText ?? null,
+        otherCandidates: others,
+      };
+    } else {
+      // Aucun candidat strict ni loose dans aucune devise → on note la
+      // "closest" (near-miss diagnostic) de chaque sheet pour que l'UI
+      // puisse afficher au moins la ligne la plus proche.
+      for (const currency of EXCEL_SEARCH_ORDER) {
+        try {
+          const sheet = await getExcelSheet(month, currency);
+          if (!sheet) continue;
+          const excludeRowIndices = await getOccupiedExcelRows({
+            invoiceMonth: month,
+            accountCurrency: currency,
+            excludeInvoiceId: input.invoiceId,
+          });
           const candidate = findBestCandidate(
             { headers: sheet.headers, rows: sheet.rows },
             dummy,
@@ -651,9 +690,9 @@ async function autoProcessInvoiceInner(
               excelRowText: candidate.result.excelRowText ?? null,
             };
           }
+        } catch (e) {
+          errors.push(`excel(${currency}): ${(e as Error).message}`);
         }
-      } catch (e) {
-        errors.push(`excel(${currency}): ${(e as Error).message}`);
       }
     }
   }
