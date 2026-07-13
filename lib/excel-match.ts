@@ -20,21 +20,42 @@ export type MatchResult = {
   excelRowText?: string;
 };
 
-/** True si la chaîne ressemble à une date/heure ISO ou timestamp brut —
- *  ne doit PAS être incluse dans le "excelRowText" utilisé pour identifier
- *  le créditeur (sinon on se retrouve avec "2026-05-24T00:00:00.000Z" à
- *  la place du nom du débiteur). */
-function looksLikeDateOrTime(s: string): boolean {
+/** True si la chaîne ne doit PAS être incluse dans le "excelRowText"
+ *  utilisé pour identifier le créditeur. Filtre :
+ *   - dates/heures/timestamps ISO
+ *   - codes devise 3 lettres (EUR, USD, CHF, GBP…)
+ *   - identifiants de transaction (long alphanumérique mixte sans espace)
+ *   - fragments numériques isolés
+ *
+ * L'objectif : ne garder que les chaînes qui ressemblent à un vrai nom
+ * de contrepartie (créditeur/débiteur bancaire). Sinon on se retrouve
+ * avec "EUR 9930588BN9051844 LE MANHATTAN SA" que le LLM peut mal
+ * interpréter. */
+function shouldSkipForVendor(s: string): boolean {
   const trimmed = s.trim();
   if (!trimmed) return true;
-  // ISO date/datetime: 2026-05-24, 2026-05-24T00:00:00.000Z
+  // ISO date/datetime
   if (/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}[\d:.Z]*)?$/.test(trimmed)) return true;
-  // Heure seule : 10:48:36, 10:48
+  // Heure seule
   if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(trimmed)) return true;
-  // "2026-0", "2026-05" fragmentés
+  // Fragments date/année
   if (/^\d{4}-\d{1,2}$/.test(trimmed)) return true;
-  // Année seule
   if (/^\d{4}$/.test(trimmed)) return true;
+  // Codes devise 3 lettres uppercase (EUR, USD, CHF, GBP…)
+  if (/^[A-Z]{3}$/.test(trimmed)) return true;
+  // Identifiants de transaction : ≥12 chars, majoritairement alphanumériques
+  // sans espace (ex: "9930588BN9051844"). Regex : que des lettres/chiffres,
+  // au moins un chiffre ET au moins une lettre (pour éviter de filtrer des
+  // vrais noms courts).
+  if (
+    trimmed.length >= 12 &&
+    /^[A-Za-z0-9]+$/.test(trimmed) &&
+    /\d/.test(trimmed) &&
+    /[A-Za-z]/.test(trimmed)
+  )
+    return true;
+  // Nombre pur ou avec ; (ex ";000")
+  if (/^[\d;.,\s]+$/.test(trimmed)) return true;
   return false;
 }
 
@@ -55,16 +76,26 @@ function rowStringText(
   // 1. Si on connaît la colonne créditeur, on la prend en priorité.
   if (idxCreditor != null && idxCreditor >= 0) {
     const cell = row[idxCreditor];
-    if (typeof cell === "string" && cell.trim() && !looksLikeDateOrTime(cell)) {
+    if (typeof cell === "string" && cell.trim() && !shouldSkipForVendor(cell)) {
       return cell.trim();
     }
   }
-  // 2. Fallback : concat toutes les cellules string qui ne sont ni vides
-  //    ni des dates/heures.
-  return row
-    .map((c) => (typeof c === "string" ? c : ""))
-    .filter((s) => s && !looksLikeDateOrTime(s))
-    .join(" ");
+  // 2. Fallback : concat les cellules string qui ne sont ni vides ni des
+  //    dates/heures/currencies/IDs. On rank aussi par "corporate suffix"
+  //    présent (SA, AG, GMBH, SARL, Inc, Ltd) pour prioriser ce qui
+  //    ressemble le plus à un nom d'entreprise.
+  const CORPORATE_SUFFIXES =
+    /\b(SA|AG|GMBH|GmbH|SARL|SAS|SASU|Inc|Ltd|LLC|Corp|Co|BV|OY|SPA|SRL|PLC|PBC)\b/i;
+  const kept = row
+    .map((c) => (typeof c === "string" ? c.trim() : ""))
+    .filter((s) => s && !shouldSkipForVendor(s));
+  // Prefer cells with corporate suffix — les mettre en premier.
+  kept.sort((a, b) => {
+    const aHit = CORPORATE_SUFFIXES.test(a) ? 1 : 0;
+    const bHit = CORPORATE_SUFFIXES.test(b) ? 1 : 0;
+    return bHit - aHit;
+  });
+  return kept.join(" ");
 }
 
 const norm = (s: unknown) =>
@@ -141,10 +172,14 @@ export function detectColumns(sheet: ParsedSheet): {
       // FR / UBS bancaire
       "texte", "designation", "désignation", "communication", "memo",
       "mémo", "raison", "motif", "reference", "référence",
+      "contrepartie", "beneficiaire", "bénéficiaire", "partenaire",
+      "debiteur", "débiteur", "donneur", "ordre",
       // DE / Suisse alémanique
       "buchungstext", "verwendungszweck", "bezeichnung", "text",
+      "gegenpartei", "empfanger", "empfänger", "auftraggeber",
       // EN
-      "purpose", "remittance",
+      "purpose", "remittance", "counterparty", "payee", "payer",
+      "beneficiary", "merchant",
     ],
     amount: [
       "montant", "amount", "ttc", "total", "debit", "débit", "credit",

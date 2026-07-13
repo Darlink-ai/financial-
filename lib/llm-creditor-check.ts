@@ -40,16 +40,32 @@ export async function checkCreditorMatch(
   if (cached) return cached;
 
   const client = new Anthropic({ apiKey });
-  const prompt = `On veut savoir si ces deux noms désignent la MÊME entité commerciale (même société, ou filiale/rebrand/subsidiary évidents).
+  const prompt = `Tu dois déterminer si deux noms désignent la MÊME entité commerciale.
+
+RÈGLE STRICTE : réponds OUI uniquement si tu es CERTAIN qu'il s'agit de la même société. En cas de doute, réponds NON.
+
+Cas où répondre OUI :
+- Rebrand/renommage confirmé (ex: Sendinblue → Brevo, Twitter → X Corp)
+- Filiale évidente ou même groupe (ex: Google et Alphabet, Meta et Facebook)
+- Simple différence orthographique/casse (ex: "MICROSOFT" vs "Microsoft Corp.")
+- Nom commercial vs raison sociale de la MÊME entité (ex: "OpenAI, L.L.C." vs "OpenAI")
+
+Cas où répondre NON :
+- Sociétés indépendantes, même si dans le même secteur
+- Deux noms qui n'ont pas de rapport commercial connu
+- Tu n'as pas d'information claire → NON (défaut)
+- Coïncidence sur des mots communs ("Group", "Tech", "SA")
 
 Nom sur la facture PDF : "${pdfCreditor}"
 Nom sur le relevé bancaire : "${bankVendor}"
 
+Note : le nom bancaire peut contenir du bruit (codes, IDs) — ignore-le et concentre-toi sur le nom de la société.
+
 Réponds STRICTEMENT au format :
 VERDICT: OUI ou NON
-RAISON: <une phrase courte, ex. "Brevo est le nouveau nom de Sendinblue" ou "Anthropic et Sendinblue sont des sociétés distinctes">
+RAISON: <une phrase courte factuelle>
 
-Ne mets rien d'autre.`;
+Rien d'autre. Défaut = NON.`;
 
   try {
     const controller = new AbortController();
