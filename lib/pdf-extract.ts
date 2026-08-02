@@ -294,17 +294,56 @@ function collectDateCandidates(text: string): DateCandidate[] {
 }
 
 /**
- * Cherche une date dans le PDF en privilégiant celles proches d'un
- * mot-clé "invoice date", "facture du", "billed on", "rechnung", etc.
- * À défaut, retourne la première date trouvée.
+ * Extrait le PREMIER jour d'une plage de dates type "1–31 mars 2026",
+ * "1-31 janvier 2026", "01/03/2026 - 31/03/2026". Ces plages sont typiques
+ * des factures d'abonnement (Google Workspace, SaaS mensuel…) où c'est
+ * la PÉRIODE facturée qu'on veut, pas la date d'extraction du récap.
+ */
+function collectPeriodStarts(text: string): DateCandidate[] {
+  const out: DateCandidate[] = [];
+  // "1–31 mars 2026", "1-31 mars 2026", "01–31 mars 2026"
+  const re1 = /\b(\d{1,2})\s?[–\-]\s?(\d{1,2})\s+([A-Za-zéèêûâôÉÈÊÛÂÔ]{3,12})[.,]?\s+(\d{4})\b/g;
+  let m: RegExpExecArray | null;
+  while ((m = re1.exec(text)) !== null) {
+    const month = normalizeMonthName(m[3]);
+    if (!month) continue;
+    const iso = isoIfValid(parseInt(m[4], 10), month, parseInt(m[1], 10));
+    if (iso) out.push({ iso, index: m.index, format: "dmy-text" });
+  }
+  // "01/03/2026 - 31/03/2026" ou "01.03.2026 au 31.03.2026"
+  const re2 =
+    /\b(\d{1,2})[./\-](\d{1,2})[./\-](\d{2,4})\s?(?:[-–]|au|to)\s?(\d{1,2})[./\-](\d{1,2})[./\-](\d{2,4})\b/g;
+  while ((m = re2.exec(text)) !== null) {
+    const iso = isoIfValid(
+      parseInt(m[3], 10),
+      parseInt(m[2], 10),
+      parseInt(m[1], 10),
+    );
+    if (iso) out.push({ iso, index: m.index, format: "numeric" });
+  }
+  return out;
+}
+
+/**
+ * Cherche la date d'invoice dans le PDF. Système de score qui :
+ *   + boost les dates proches de mots-clés "invoice date", "période",
+ *     "billing period", "facturation", "usage period" (dates utiles)
+ *   + boost fort les PLAGES de dates ("1–31 mars 2026") — vraie période
+ *     facturée sur les récaps type Google Workspace
+ *   - pénalise les dates proches de "date de création", "récapitulatif",
+ *     "extraction", "printed", "generated on" (dates parasites)
+ *
+ * À défaut, retourne la première date "positive" trouvée (pas près
+ * d'un mot négatif).
  */
 function findInvoiceDate(text: string): string | null {
-  const candidates = collectDateCandidates(text);
-  if (candidates.length === 0) return null;
+  const regular = collectDateCandidates(text);
+  const periods = collectPeriodStarts(text);
+  const all = [...regular, ...periods];
+  if (all.length === 0) return null;
 
-  // Recherche d'un mot-clé pour scorer la proximité.
   const lower = text.toLowerCase();
-  const keywords = [
+  const POSITIVE_KW = [
     "invoice date",
     "date of invoice",
     "billing date",
@@ -316,29 +355,76 @@ function findInvoiceDate(text: string): string | null {
     "facture du",
     "facture émise",
     "rechnungsdatum",
-    "datum",
+    "période",
+    "periode",
+    "billing period",
+    "usage period",
+    "facturation",
+    "période de facturation",
+    "période concernée",
+    "période couverte",
+    "utilisation",
+    "abonnement",
   ];
-  const keywordIndexes = keywords
-    .map((k) => lower.indexOf(k))
-    .filter((i) => i >= 0);
-
-  if (keywordIndexes.length > 0) {
-    // Pour chaque candidat, distance au keyword le plus proche. Plus c'est
-    // petit, mieux c'est. On accepte jusqu'à 80 chars de distance.
-    let best: { c: DateCandidate; distance: number } | null = null;
-    for (const c of candidates) {
-      const distance = Math.min(
-        ...keywordIndexes.map((ki) => Math.abs(c.index - ki)),
-      );
-      if (distance > 80) continue;
-      if (!best || distance < best.distance) best = { c, distance };
+  const NEGATIVE_KW = [
+    "date de création",
+    "created on",
+    "created at",
+    "creation date",
+    "récapitulatif",
+    "recapitulatif",
+    "extract",
+    "extraction",
+    "generated on",
+    "generated at",
+    "printed on",
+    "printed at",
+    "date d'impression",
+    "impression",
+    "download",
+    "téléchargé",
+    "exported",
+  ];
+  const findAllPositions = (kw: string): number[] => {
+    const out: number[] = [];
+    let idx = 0;
+    while ((idx = lower.indexOf(kw, idx)) >= 0) {
+      out.push(idx);
+      idx += kw.length;
     }
-    if (best) return best.c.iso;
-  }
+    return out;
+  };
+  const positivePositions = POSITIVE_KW.flatMap(findAllPositions);
+  const negativePositions = NEGATIVE_KW.flatMap(findAllPositions);
 
-  // Pas de mot-clé exploitable → on prend la première candidate dans le
-  // PDF (souvent en en-tête).
-  return candidates[0].iso;
+  const scored = all.map((c) => {
+    let score = 0;
+    // Boost pour plages de dates (typiquement la vraie période).
+    if (periods.some((p) => p.index === c.index && p.iso === c.iso)) {
+      score += 20;
+    }
+    // Positif : proximité à un keyword invoice/période (dégressif sur 100 chars).
+    for (const p of positivePositions) {
+      const d = Math.abs(c.index - p);
+      if (d <= 100) score += Math.round(15 - d / 8);
+    }
+    // Négatif : proximité à un keyword création/extraction (dégressif fort).
+    for (const p of negativePositions) {
+      const d = Math.abs(c.index - p);
+      if (d <= 100) score -= Math.round(20 - d / 6);
+    }
+    return { c, score };
+  });
+
+  // Trie par score desc ; à égalité, garde l'ordre naturel (première apparition).
+  scored.sort((a, b) => b.score - a.score);
+  const top = scored[0];
+  // Si le top est négatif, ça veut dire que TOUTES les dates sont près
+  // d'un mot négatif — dernier recours, on prend quand même la 1re
+  // sans mot négatif.
+  if (top.score >= 0) return top.c.iso;
+  const first = scored.find((s) => s.score >= 0);
+  return first?.c.iso ?? all[0].iso;
 }
 
 /**
