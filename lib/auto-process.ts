@@ -518,6 +518,41 @@ async function autoProcessInvoiceInner(
     );
   }
 
+  /** Retourne les mois adjacents à scanner en plus du mois courant.
+   *  - Facture en fin de mois (jour ≥ 25) → banque peut avoir enregistré
+   *    la tx sur le mois SUIVANT → scanne aussi ce mois-là.
+   *  - Facture en début de mois (jour ≤ 5) → tx peut être enregistrée
+   *    sur le mois PRÉCÉDENT (rare, mais existe).
+   *  Sans ça, une facture 28/01 dont le débit tombe 01/02 n'est jamais
+   *  matchée automatiquement. */
+  function adjacentMonths(m: string, dateIso: string): string[] {
+    const day = parseInt(dateIso.slice(8, 10), 10);
+    if (!Number.isFinite(day)) return [];
+    const out: string[] = [];
+    const [y, mo] = m.split("-").map((v) => parseInt(v, 10));
+    if (day >= 25) {
+      // mois suivant
+      const nextY = mo === 12 ? y + 1 : y;
+      const nextM = mo === 12 ? 1 : mo + 1;
+      out.push(`${nextY}-${String(nextM).padStart(2, "0")}`);
+    } else if (day <= 5) {
+      // mois précédent
+      const prevY = mo === 1 ? y - 1 : y;
+      const prevM = mo === 1 ? 12 : mo - 1;
+      out.push(`${prevY}-${String(prevM).padStart(2, "0")}`);
+    }
+    return out;
+  }
+
+  // Liste des mois à scanner : courant + adjacent(s) si la date frôle un
+  // bord de mois. On préfère le mois courant (mis en premier dans la
+  // liste des candidats via l'ordre du pool serveur), les adjacents sont
+  // un fallback.
+  const monthsToScan =
+    month && extracted.invoiceDate
+      ? [month, ...adjacentMonths(month, extracted.invoiceDate)]
+      : [];
+
   const dummy: Invoice = {
     id: input.invoiceId,
     subject: input.subject,
@@ -558,6 +593,10 @@ async function autoProcessInvoiceInner(
     // avec les cartes multi-devises).
     type PooledCandidate = {
       currency: AccountCurrency;
+      /** Mois du sheet Excel où la ligne est trouvée (peut différer du
+       *  mois de la facture — cas des tx enregistrées fin/début de mois
+       *  qui tombent sur le sheet du mois adjacent). */
+      sheetMonth: string;
       rowIndex: number;
       match: {
         rowIndex: number;
@@ -569,48 +608,52 @@ async function autoProcessInvoiceInner(
     };
     const allCandidatesPool: PooledCandidate[] = [];
 
-    for (const currency of EXCEL_SEARCH_ORDER) {
-      try {
-        const sheet = await getExcelSheet(month, currency);
-        if (!sheet) continue;
-        const excludeRowIndices = await getOccupiedExcelRows({
-          invoiceMonth: month,
-          accountCurrency: currency,
-          excludeInvoiceId: input.invoiceId,
-        });
+    // Scanne le mois courant PUIS les mois adjacents (fin/début de mois
+    // → tx peut être enregistrée sur mois suivant/précédent par la banque).
+    for (const scanMonth of monthsToScan) {
+      for (const currency of EXCEL_SEARCH_ORDER) {
+        try {
+          const sheet = await getExcelSheet(scanMonth, currency);
+          if (!sheet) continue;
+          const excludeRowIndices = await getOccupiedExcelRows({
+            invoiceMonth: scanMonth,
+            accountCurrency: currency,
+            excludeInvoiceId: input.invoiceId,
+          });
 
-        const strictMatches = matchInvoicesAgainstSheet(
-          { headers: sheet.headers, rows: sheet.rows },
-          [dummy],
-          { excludeRowIndices, returnAllCandidates: true },
-        );
-        const looseMatches = matchInvoicesAgainstSheet(
-          { headers: sheet.headers, rows: sheet.rows },
-          [dummy],
-          { excludeRowIndices, returnAllCandidates: true, loose: true },
-        );
-        const strictRowSet = new Set(strictMatches.map((m) => m.rowIndex));
-        const extraLoose = looseMatches.filter(
-          (m) => !strictRowSet.has(m.rowIndex),
-        );
-        // Marque les strict comme priorité 0, les loose comme priorité 1
-        // (via l'ordre dans le pool — les strict passent en premier).
-        for (const m of strictMatches) {
-          allCandidatesPool.push({
-            currency,
-            rowIndex: m.rowIndex,
-            match: m,
-          });
+          const strictMatches = matchInvoicesAgainstSheet(
+            { headers: sheet.headers, rows: sheet.rows },
+            [dummy],
+            { excludeRowIndices, returnAllCandidates: true },
+          );
+          const looseMatches = matchInvoicesAgainstSheet(
+            { headers: sheet.headers, rows: sheet.rows },
+            [dummy],
+            { excludeRowIndices, returnAllCandidates: true, loose: true },
+          );
+          const strictRowSet = new Set(strictMatches.map((m) => m.rowIndex));
+          const extraLoose = looseMatches.filter(
+            (m) => !strictRowSet.has(m.rowIndex),
+          );
+          for (const m of strictMatches) {
+            allCandidatesPool.push({
+              currency,
+              sheetMonth: scanMonth,
+              rowIndex: m.rowIndex,
+              match: m,
+            });
+          }
+          for (const m of extraLoose) {
+            allCandidatesPool.push({
+              currency,
+              sheetMonth: scanMonth,
+              rowIndex: m.rowIndex,
+              match: m,
+            });
+          }
+        } catch (e) {
+          errors.push(`excel(${scanMonth}/${currency}): ${(e as Error).message}`);
         }
-        for (const m of extraLoose) {
-          allCandidatesPool.push({
-            currency,
-            rowIndex: m.rowIndex,
-            match: m,
-          });
-        }
-      } catch (e) {
-        errors.push(`excel(${currency}): ${(e as Error).message}`);
       }
     }
 
@@ -630,6 +673,17 @@ async function autoProcessInvoiceInner(
       const excelDate = picked.match.excelDate;
       if (excelAmount != null && Number.isFinite(excelAmount)) {
         patch.amount = Math.abs(excelAmount);
+      }
+      // Si le match est trouvé dans un mois DIFFÉRENT de celui de la
+      // facture (cas typique : facture 28/01, débit bancaire 01/02),
+      // on aligne invoice_date sur la date Excel. Sinon /excel scope
+      // par mois de invoice_date et la row matched dans le sheet
+      // suivant ne serait plus retrouvable.
+      if (picked.sheetMonth !== month && excelDate) {
+        patch.invoiceDate = excelDate;
+        errors.push(
+          `match: ligne ${matchedRow} trouvée sur sheet ${picked.sheetMonth} (facture datée ${month}, banque a enregistré le ${excelDate}) — invoice_date aligné.`,
+        );
       }
 
       // Expose les autres candidats (toutes devises confondues, cap à 10)
@@ -662,13 +716,15 @@ async function autoProcessInvoiceInner(
     } else {
       // Aucun candidat strict ni loose dans aucune devise → on note la
       // "closest" (near-miss diagnostic) de chaque sheet pour que l'UI
-      // puisse afficher au moins la ligne la plus proche.
+      // puisse afficher au moins la ligne la plus proche. On scanne les
+      // mêmes mois (courant + adjacents).
+      for (const scanMonth of monthsToScan) {
       for (const currency of EXCEL_SEARCH_ORDER) {
         try {
-          const sheet = await getExcelSheet(month, currency);
+          const sheet = await getExcelSheet(scanMonth, currency);
           if (!sheet) continue;
           const excludeRowIndices = await getOccupiedExcelRows({
-            invoiceMonth: month,
+            invoiceMonth: scanMonth,
             accountCurrency: currency,
             excludeInvoiceId: input.invoiceId,
           });
@@ -692,8 +748,9 @@ async function autoProcessInvoiceInner(
             };
           }
         } catch (e) {
-          errors.push(`excel(${currency}): ${(e as Error).message}`);
+          errors.push(`excel(${scanMonth}/${currency}): ${(e as Error).message}`);
         }
+      }
       }
     }
   }
