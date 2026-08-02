@@ -350,6 +350,10 @@ function findInvoiceDate(text: string): string | null {
     "billed on",
     "issue date",
     "issued",
+    "effective date",
+    "transaction date",
+    "date paid",
+    "paid on",
     "date de facture",
     "date facture",
     "facture du",
@@ -365,6 +369,8 @@ function findInvoiceDate(text: string): string | null {
     "période couverte",
     "utilisation",
     "abonnement",
+    "from",
+    "du",
   ];
   const NEGATIVE_KW = [
     "date de création",
@@ -397,11 +403,33 @@ function findInvoiceDate(text: string): string | null {
   const positivePositions = POSITIVE_KW.flatMap(findAllPositions);
   const negativePositions = NEGATIVE_KW.flatMap(findAllPositions);
 
+  // Détecte les dates numériques AMBIGUËS (jour ET mois ≤ 12) — ex.
+  // "3/12/2026" peut être 3 déc. (EU) ou 12 mars (US). On les pénalise
+  // pour préférer les dates textuelles ("March 12, 2026") qui sont
+  // non-ambiguës et souvent présentes plus bas dans les factures US.
+  const isAmbiguousNumeric = (c: DateCandidate): boolean => {
+    if (c.format !== "numeric") return false;
+    const m = c.iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return false;
+    const day = parseInt(m[3], 10);
+    const month = parseInt(m[2], 10);
+    return day <= 12 && month <= 12 && day !== month;
+  };
+
   const scored = all.map((c) => {
     let score = 0;
     // Boost pour plages de dates (typiquement la vraie période).
     if (periods.some((p) => p.index === c.index && p.iso === c.iso)) {
       score += 20;
+    }
+    // Boost fort pour formats TEXTUELS (mdy-text / dmy-text : "March 12,
+    // 2026", "12 mars 2026") — non-ambigus, l'utilisateur les lit facile.
+    if (c.format === "mdy-text" || c.format === "dmy-text") {
+      score += 10;
+    }
+    // Pénalité pour formats numériques ambigus (3/12/2026).
+    if (isAmbiguousNumeric(c)) {
+      score -= 8;
     }
     // Positif : proximité à un keyword invoice/période (dégressif sur 100 chars).
     for (const p of positivePositions) {
