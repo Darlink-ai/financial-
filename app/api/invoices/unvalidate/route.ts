@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import postgres from "postgres";
-import { getInvoiceWithAttachment } from "@/lib/db";
+import { getDriveWithTokens, getInvoiceWithAttachment } from "@/lib/db";
 import { getDriveAccessToken } from "@/lib/upload-to-drive";
 import { deleteDriveFile, findFileByName, findFolder } from "@/lib/drive-api";
 
@@ -75,19 +75,30 @@ export async function POST(req: Request) {
     if (inv.drivePath) {
       try {
         const token = await getDriveAccessToken();
-        if (!token) {
+        const cfg = await getDriveWithTokens();
+        if (!token || !cfg) {
           driveMessage = "Drive non configuré (skip suppression)";
         } else {
+          // drive_path = "/Comptabilité/02_Février/28.02.26 - Vendor - 6400.pdf"
+          // On skip le 1er segment (nom root — utilisé pour display) et
+          // on part du rootFolderId stocké en DB (peut être un shared drive
+          // ou un dossier custom). Sinon findFolder("root", "Comptabilité")
+          // échoue quand l'utilisateur a un rootFolder ailleurs.
           const parts = inv.drivePath.split("/").filter(Boolean);
           const filename = parts.pop();
+          // Retire le 1er segment (rootFolderName) pour ne garder que les
+          // sous-dossiers ; on descend depuis rootFolderId.
+          if (parts[0] === cfg.rootFolderName) parts.shift();
           if (!filename) {
             driveMessage = "drive_path invalide";
+          } else if (!cfg.rootFolderId) {
+            driveMessage = "root_folder_id Drive non configuré";
           } else {
-            let currentParent = "root";
+            let currentParent = cfg.rootFolderId;
             for (const folder of parts) {
               const found = await findFolder(token, currentParent, folder);
               if (!found) {
-                driveMessage = `dossier "${folder}" introuvable sur Drive`;
+                driveMessage = `dossier "${folder}" introuvable sous rootFolderId ${cfg.rootFolderId}`;
                 break;
               }
               currentParent = found.id;
