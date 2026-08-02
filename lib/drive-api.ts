@@ -84,6 +84,21 @@ export async function findFileByName(
   return data.files[0] ?? null;
 }
 
+/** Supprime un fichier Drive par ID. Utilisé pour dévalider une facture
+ *  (retrait du fichier PDF pushé par erreur). */
+export async function deleteDriveFile(
+  accessToken: string,
+  fileId: string,
+): Promise<void> {
+  const r = await fetch(`${DRIVE_BASE}/files/${fileId}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!r.ok && r.status !== 404) {
+    throw new Error(`drive delete ${fileId}: ${r.status} ${await r.text()}`);
+  }
+}
+
 /** Crée un sous-dossier dans un parent donné. */
 export async function createFolder(
   accessToken: string,

@@ -20,6 +20,8 @@ const PUBLIC_PATHS = [
   "/api/invoices/reprocess-manual",
   // unmatch : retire le vert sur des rows Excel, auth Bearer CRON_SECRET.
   "/api/invoices/unmatch",
+  // unvalidate : dévalide + supprime le fichier Drive, auth Bearer.
+  "/api/invoices/unvalidate",
 ];
 
 function isPublic(pathname: string): boolean {
