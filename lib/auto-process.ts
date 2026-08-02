@@ -674,15 +674,27 @@ async function autoProcessInvoiceInner(
       if (excelAmount != null && Number.isFinite(excelAmount)) {
         patch.amount = Math.abs(excelAmount);
       }
-      // Si le match est trouvé dans un mois DIFFÉRENT de celui de la
-      // facture (cas typique : facture 28/01, débit bancaire 01/02),
-      // on aligne invoice_date sur la date Excel. Sinon /excel scope
-      // par mois de invoice_date et la row matched dans le sheet
-      // suivant ne serait plus retrouvable.
-      if (picked.sheetMonth !== month && excelDate) {
-        patch.invoiceDate = excelDate;
+      // Si le match est trouvé sur un sheet DIFFÉRENT du mois de la
+      // facture, on aligne invoice_date pour que /excel retrouve la row
+      // dans le bon sheet.
+      //
+      // /excel scope par mois de invoice_date pour charger le sheet.
+      // La row X du sheet Fév ≠ row X du sheet Mars — il faut donc
+      // que invoice_date pointe vers le mois du SHEET où on a matché,
+      // pas juste vers excelDate (qui peut avoir un mois différent :
+      // UBS met parfois des tx fin-de-mois au début du sheet suivant,
+      // avec une excelDate encore dans le mois précédent).
+      if (picked.sheetMonth !== month) {
+        // Priorité : excelDate si elle tombe dans picked.sheetMonth
+        // (cas normal). Sinon on prend le 1er du picked.sheetMonth
+        // pour au moins être dans le bon mois.
+        if (excelDate && excelDate.startsWith(picked.sheetMonth)) {
+          patch.invoiceDate = excelDate;
+        } else {
+          patch.invoiceDate = `${picked.sheetMonth}-01`;
+        }
         errors.push(
-          `match: ligne ${matchedRow} trouvée sur sheet ${picked.sheetMonth} (facture datée ${month}, banque a enregistré le ${excelDate}) — invoice_date aligné.`,
+          `match: ligne ${matchedRow} trouvée sur sheet ${picked.sheetMonth} (facture datée ${month}${excelDate ? `, tx bancaire ${excelDate}` : ""}) — invoice_date aligné sur ${patch.invoiceDate}.`,
         );
       }
 
