@@ -18,6 +18,8 @@ const PUBLIC_PATHS = [
   // reprocess-manual : bulk re-traitement des invoices status='manual',
   // authentifié via Bearer CRON_SECRET ou cookie Supabase (bouton UI).
   "/api/invoices/reprocess-manual",
+  // unmatch : retire le vert sur des rows Excel, auth Bearer CRON_SECRET.
+  "/api/invoices/unmatch",
 ];
 
 function isPublic(pathname: string): boolean {
