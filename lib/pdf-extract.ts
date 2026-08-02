@@ -566,6 +566,14 @@ const KNOWN_VENDORS = [
   "Amplitude",
   "Intercom",
   "Zendesk",
+  "Atlas Cloud",
+  "Lovable",
+  "Multilogin",
+  "Verbatik",
+  "Hubstaff",
+  "Apify",
+  "PIPIADS",
+  "Google Payments",
 ];
 
 /**
@@ -642,36 +650,60 @@ function guessCreditorFromPdfText(text: string): string | null {
     return counts[0].name;
   }
 
-  // 2. Fallback heuristique : les 1ers tokens du texte, jusqu'à ce qu'on
-  // tombe sur un digit, une virgule, ou un mot-clé d'adresse (rue, str,
-  // avenue…). Fonctionne aussi bien avec des retours à la ligne qu'avec
-  // du texte one-liner (unpdf mergePages=true produit tout sur une ligne).
-  //
-  // Ex.: "Sendinblue 17 rue Salneuve..." → stop au "17" → "Sendinblue"
-  // Ex.: "Infomaniak Network SA Rue Eugène-Marziano" → stop à "Rue" →
-  //      "Infomaniak Network SA"
+  // 2. Fallback heuristique : cherche la 1re séquence de 1-4 tokens
+  // qui ressemblent à un nom d'entreprise (lettres uniquement, ≥3 chars,
+  // pas un mot boilerplate). Skip toute la boilerplate initiale
+  // (Page 1 of 1, Invoice number XXX, Date of issue June 2, 2026, etc.)
+  // jusqu'à trouver la vraie séquence "Atlas Cloud" ou "Sendinblue" etc.
   const ADDRESS_STOPWORDS =
     /^(rue|route|avenue|av|boulevard|blvd|street|str|strasse|straße|via|c\/|calle|road|rd|place|plaza|chaussée|impasse|allée|chemin|ch|quai|voie|passage|square)\.?$/i;
-  const GENERIC_STOPWORDS =
-    /^(facture|invoice|reçu|receipt|client|page|date|total|amount|montant|payé|paid)$/i;
+  // Mots boilerplate qu'on skip pendant qu'on cherche le nom :
+  // - Facture/invoice/receipt boilerplate
+  // - Éléments de métadonnées (number, issue, due, of, from, to, at, by)
+  // - Noms de mois (January…December, janvier…décembre, abbrev)
+  // - "Bill to", "Billed to", "Purchaser", etc.
+  const BOILERPLATE_STOPWORDS =
+    /^(facture|invoice|reçu|receipt|client|page|of|for|to|from|at|by|and|or|the|le|la|les|un|une|des|du|de|d|s|date|due|issued?|number|no|nr|total|amount|montant|payé|paid|tax|billed?|bill|purchaser|customer|amount|sub|subtotal|balance|method|frequency|threshold|january|february|march|april|may|june|july|august|september|october|november|december|janvier|février|mars|avril|mai|juin|juillet|août|septembre|octobre|novembre|décembre|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec|janv|févr|avr|juill|sept|déc)$/i;
 
   const cleaned = text.trim();
-  const tokens = cleaned.split(/\s+/).slice(0, 20);
+  const tokens = cleaned.split(/\s+/).slice(0, 60);
   const nameTokens: string[] = [];
   for (const t of tokens) {
-    // Digit dans le token → probablement N° de rue ou de facture, on stop.
-    if (/\d/.test(t)) break;
-    // Ponctuation isolée
-    if (/^[.,;:—–\-]+$/.test(t)) break;
-    // Mot-clé d'adresse (rue, avenue…) → on stop, on est passé à l'adresse.
-    if (ADDRESS_STOPWORDS.test(t.replace(/[.,;:]$/, ""))) break;
-    // Mots-clés génériques (facture, invoice, etc.) → skip token isolé
-    if (GENERIC_STOPWORDS.test(t.replace(/[.,;:]$/, ""))) {
+    const strip = t.replace(/[.,;:—–]+$/, "").replace(/^[.,;:—–]+/, "");
+    if (!strip) continue;
+
+    // Adresse → on stop, on est déjà passé au bloc adresse
+    if (ADDRESS_STOPWORDS.test(strip)) break;
+
+    // Digit dans le token → si on a déjà commencé un nom, c'est le N° de
+    // rue → stop. Sinon c'est du boilerplate (N° facture, page…) → skip.
+    if (/\d/.test(t)) {
       if (nameTokens.length > 0) break;
       continue;
     }
-    nameTokens.push(t.replace(/[,;:]$/, "")); // trim trailing punct
-    if (nameTokens.length >= 5) break; // borne haute : max 5 mots
+    // Ponctuation isolée
+    if (/^[.,;:—–\-]+$/.test(t)) {
+      if (nameTokens.length > 0) break;
+      continue;
+    }
+    // Boilerplate/mois : si on cherche encore le nom, skip et continue.
+    if (BOILERPLATE_STOPWORDS.test(strip)) {
+      if (nameTokens.length > 0) break;
+      continue;
+    }
+    // ID alphanumérique tout majuscule (TDCFVEG2, ABCD1234) → skip aussi.
+    if (/^[A-Z]{2,}[0-9]+[A-Z0-9]*$/.test(t) || /^[0-9]+[A-Z]+[A-Z0-9]*$/.test(t)) {
+      if (nameTokens.length > 0) break;
+      continue;
+    }
+    // Token trop court (1-2 chars) → skip
+    if (strip.length < 3) {
+      if (nameTokens.length > 0) break;
+      continue;
+    }
+
+    nameTokens.push(strip);
+    if (nameTokens.length >= 4) break;
   }
 
   const candidate = nameTokens.join(" ").trim();
