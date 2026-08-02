@@ -402,6 +402,8 @@ const KNOWN_VENDORS = [
   "PayPal",
   "AWS",
   "Google Cloud",
+  "Google Workspace",
+  "Google",
   "Cloudflare",
   "Notion",
   "Linear",
@@ -435,7 +437,72 @@ const KNOWN_VENDORS = [
   "Warp",
   "Loom",
   "Slack",
+  "LinkedIn",
+  "Featurebase",
+  "Zoho",
+  "Atlassian",
+  "Jira",
+  "Confluence",
+  "Dropbox",
+  "Zoom",
+  "Twilio",
+  "Datadog",
+  "Segment",
+  "Mixpanel",
+  "Amplitude",
+  "Intercom",
+  "Zendesk",
 ];
+
+/**
+ * Alias filename → vendor. Pour les cas où le fichier PDF est nommé avec
+ * une abréviation ou un pseudo commercial différent du nom légal
+ * (ex: LNKD = LinkedIn, GWS = Google Workspace).
+ */
+const FILENAME_ALIASES: Record<string, string> = {
+  lnkd: "LinkedIn",
+  gws: "Google Workspace",
+  fb: "Facebook",
+  msft: "Microsoft",
+  aws: "AWS",
+};
+
+/**
+ * Fallback : cherche un nom de vendor dans le NOM DU FICHIER (utile
+ * quand l'extraction PDF échoue ou que le PDF est un scan).
+ * Ex: "LNKD_INVOICE_78123.pdf" → LinkedIn (via alias)
+ * Ex: "Receipt-2953-1185 - fEATUREBASE.pdf" → Featurebase (via KNOWN_VENDORS)
+ * Ex: "google-workspace-facture.pdf" → Google Workspace
+ */
+function guessCreditorFromFilename(filename: string | null): string | null {
+  if (!filename) return null;
+  // Nettoie : retire extension, remplace underscores/tirets par espaces,
+  // lowercase pour matching insensible à la casse.
+  const clean = filename
+    .replace(/\.[^.]+$/, "")
+    .replace(/[-_]+/g, " ")
+    .toLowerCase();
+  if (!clean.trim()) return null;
+
+  // 1. KNOWN_VENDORS — cherche le nom entier (word boundary) dans le
+  //    filename nettoyé. Préfère les plus longs (plus spécifiques).
+  const sorted = [...KNOWN_VENDORS].sort((a, b) => b.length - a.length);
+  for (const vendor of sorted) {
+    const re = new RegExp(
+      `\\b${vendor.toLowerCase().replace(/\s+/g, "\\s+")}\\b`,
+      "i",
+    );
+    if (re.test(clean)) return vendor;
+  }
+
+  // 2. Alias filename (LNKD → LinkedIn, GWS → Google Workspace)
+  for (const [abbr, full] of Object.entries(FILENAME_ALIASES)) {
+    const re = new RegExp(`\\b${abbr}\\b`, "i");
+    if (re.test(clean)) return full;
+  }
+
+  return null;
+}
 
 function guessCreditorFromPdfText(text: string): string | null {
   if (!text) return null;
@@ -502,13 +569,17 @@ function guessCreditorFromPdfText(text: string): string | null {
 
 /**
  * Point d'entrée principal — buffer du PDF + headers Gmail en entrée.
+ * `filename` sert de fallback pour deviner le créditeur quand ni le PDF
+ * texte ni l'email ne donnent de résultat exploitable.
  */
 export async function extractInvoiceFromPdf({
   pdfBuffer,
   fromEmail,
+  filename,
 }: {
   pdfBuffer: Buffer;
   fromEmail: string;
+  filename?: string;
 }): Promise<ExtractedInvoice> {
   let text = "";
   try {
@@ -530,12 +601,16 @@ export async function extractInvoiceFromPdf({
   const amountInfo = findAmountWithCurrency(text);
   const invoiceDate = findInvoiceDate(text);
 
-  // Créancier : on combine email + PDF, on garde la meilleure source.
-  const fromEmailCreditor = guessCreditorFromEmail(fromEmail);
+  // Créancier : plusieurs sources, on prend la plus fiable :
+  //   1. KNOWN_VENDORS dans le texte PDF (le plus fiable — vrai nom légal)
+  //   2. Nom déduit du texte via heuristique (1ers tokens avant l'adresse)
+  //   3. Nom du fichier (filename) — fallback quand PDF illisible ou scan
+  //   4. Domaine du From email (Gmail sync)
   const pdfCreditor = guessCreditorFromPdfText(text);
-  // Préférence : le PDF si disponible (souvent le vrai nom légal),
-  // sinon le From email.
-  const creditor = pdfCreditor ?? fromEmailCreditor ?? null;
+  const filenameCreditor = guessCreditorFromFilename(filename ?? null);
+  const fromEmailCreditor = guessCreditorFromEmail(fromEmail);
+  const creditor =
+    pdfCreditor ?? filenameCreditor ?? fromEmailCreditor ?? null;
 
   return {
     text,

@@ -417,6 +417,7 @@ async function autoProcessInvoiceInner(
   let extracted;
   try {
     extracted = await extractInvoiceFromPdf({
+      filename: input.subject,
       pdfBuffer,
       fromEmail: input.fromEmail,
     });
