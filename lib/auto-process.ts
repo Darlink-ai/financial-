@@ -289,6 +289,10 @@ export type AutoProcessInput = {
    *  Utilisé par /import pour laisser l'utilisateur valider chaque facture
    *  manuellement avant de pousser sur Drive. */
   skipDrive?: boolean;
+  /** Reçu (crédit) au lieu de facture (débit) : le matcher cherche dans
+   *  la colonne Crédit du sheet Excel au lieu de Débit. Cas typique :
+   *  reçus mensuels du processeur de paiement (entrées d'argent). */
+  isReceipt?: boolean;
 };
 
 export type NearMissCandidate = {
@@ -624,12 +628,21 @@ async function autoProcessInvoiceInner(
           const strictMatches = matchInvoicesAgainstSheet(
             { headers: sheet.headers, rows: sheet.rows },
             [dummy],
-            { excludeRowIndices, returnAllCandidates: true },
+            {
+              excludeRowIndices,
+              returnAllCandidates: true,
+              matchCreditColumn: input.isReceipt,
+            },
           );
           const looseMatches = matchInvoicesAgainstSheet(
             { headers: sheet.headers, rows: sheet.rows },
             [dummy],
-            { excludeRowIndices, returnAllCandidates: true, loose: true },
+            {
+              excludeRowIndices,
+              returnAllCandidates: true,
+              loose: true,
+              matchCreditColumn: input.isReceipt,
+            },
           );
           const strictRowSet = new Set(strictMatches.map((m) => m.rowIndex));
           const extraLoose = looseMatches.filter(

@@ -34,6 +34,8 @@ export async function POST(req: Request) {
     const file = form.get("file");
     const draftFlag = form.get("draft");
     const draft = draftFlag === "1" || draftFlag === "true";
+    const typeFlag = form.get("type");
+    const isReceipt = typeFlag === "receipt";
 
     if (!file || !(file instanceof File)) {
       return NextResponse.json(
@@ -68,7 +70,9 @@ export async function POST(req: Request) {
       sourceMessageId: invoiceId, // unique par construction
       subject: file.name,
       fromEmail: "",
-      mailbox: "Ajout manuel",
+      // Mailbox = discriminant Facture vs Reçu — persistant en DB sans
+      // migration schema. persistedDrafts sur /import doit filtrer les 2.
+      mailbox: isReceipt ? "Reçu manuel" : "Ajout manuel",
       receivedAt,
       attachmentName: file.name,
       attachmentBytes: file.size,
@@ -84,6 +88,7 @@ export async function POST(req: Request) {
       pdfBase64: base64,
       mappings,
       skipDrive: draft,
+      isReceipt,
     });
 
     // Récupère l'invoice fraîche en DB pour la renvoyer au client

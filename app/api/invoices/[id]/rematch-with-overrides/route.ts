@@ -109,15 +109,25 @@ export async function POST(
           accountCurrency: currency,
           excludeInvoiceId: id,
         });
+        const isReceipt = inv.mailbox === "Reçu manuel";
         const strictMatches = matchInvoicesAgainstSheet(
           { headers: sheet.headers, rows: sheet.rows },
           [inv as Invoice],
-          { excludeRowIndices, returnAllCandidates: true },
+          {
+            excludeRowIndices,
+            returnAllCandidates: true,
+            matchCreditColumn: isReceipt,
+          },
         );
         const looseMatches = matchInvoicesAgainstSheet(
           { headers: sheet.headers, rows: sheet.rows },
           [inv as Invoice],
-          { excludeRowIndices, returnAllCandidates: true, loose: true },
+          {
+            excludeRowIndices,
+            returnAllCandidates: true,
+            loose: true,
+            matchCreditColumn: isReceipt,
+          },
         );
         const strictRowSet = new Set(strictMatches.map((m) => m.rowIndex));
         const extraLoose = looseMatches.filter(

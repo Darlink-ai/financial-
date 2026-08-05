@@ -108,7 +108,10 @@ export async function POST(req: Request) {
           receivedAt: before.invoice.receivedAt,
           pdfBase64: before.attachmentB64,
           mappings,
-          skipDrive: true, // mode draft : on ne valide pas, on propose
+          skipDrive: true,
+          // Discriminant Facture vs Reçu via mailbox — matcher regarde
+          // colonne Crédit si "Reçu manuel".
+          isReceipt: before.invoice.mailbox === "Reçu manuel",
         });
         const newRow = outcome.matchedExcelRow;
         if (oldRow == null && newRow == null) {

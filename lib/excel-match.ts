@@ -792,17 +792,36 @@ export function matchInvoicesAgainstSheet(
      *  d'autres factures — skip pour éviter les collisions. */
     excludeRowIndices?: Set<number>;
     /** Si true, retourne TOUS les candidats valides pour chaque facture
-     *  (triés par déviation croissante), pas juste le meilleur. Utile
-     *  pour l'itération créditeur côté auto-process. */
+     *  (triés par déviation croissante), pas juste le meilleur. */
     returnAllCandidates?: boolean;
-    /** Si true, utilise les tolérances larges (±40% montant, ±5j date)
-     *  au lieu des strictes (±20% / ±2j). Sert à peupler otherCandidates
-     *  avec plus d'options quand le LLM refuse le nom du strict. */
+    /** Si true, tolérances larges (±40% montant, ±5j date) au lieu des
+     *  strictes (±20% / ±2j). */
     loose?: boolean;
+    /** Si true, cherche dans la colonne Crédit (idxCredit) au lieu de
+     *  la colonne Débit/Amount (idxAmount). Sert aux REÇUS qui sont
+     *  des entrées d'argent, pas des sorties. */
+    matchCreditColumn?: boolean;
   },
 ): MatchResult[] {
-  const { idxCreditor, idxAmount, idxDate, dataStartRow } =
-    detectColumns(sheet);
+  const {
+    idxCreditor,
+    idxAmount,
+    idxDate,
+    idxDebit,
+    idxCredit,
+    dataStartRow,
+  } = detectColumns(sheet);
+  // Pour les REÇUS (matchCreditColumn=true) : on privilégie idxCredit s'il
+  // est détecté (fichier UBS avec Débit/Crédit séparés), sinon fallback
+  // sur idxAmount. Pour les FACTURES : on préfère idxDebit s'il est
+  // détecté, sinon idxAmount.
+  const amountColIdx = opts?.matchCreditColumn
+    ? idxCredit >= 0
+      ? idxCredit
+      : idxAmount
+    : idxDebit >= 0
+      ? idxDebit
+      : idxAmount;
   const excludeRows = opts?.excludeRowIndices ?? new Set<number>();
   const results: MatchResult[] = [];
 
@@ -816,7 +835,7 @@ export function matchInvoicesAgainstSheet(
       if (rowIndex < dataStartRow) return;
       if (excludeRows.has(rowIndex + 2)) return;
 
-      const rowAmount = idxAmount >= 0 ? parseAmount(row[idxAmount]) : null;
+      const rowAmount = amountColIdx >= 0 ? parseAmount(row[amountColIdx]) : null;
       const rowDate = idxDate >= 0 ? parseDate(row[idxDate]) : null;
 
       const check = isStrictMatch(inv, rowAmount, rowDate, {
@@ -868,14 +887,20 @@ export function matchInvoicesAgainstSheet(
 export function findBestCandidate(
   sheet: ParsedSheet,
   inv: Invoice,
-  opts?: { excludeRowIndices?: Set<number> },
+  opts?: {
+    excludeRowIndices?: Set<number>;
+    matchCreditColumn?: boolean;
+  },
 ): { result: MatchResult; score: number } | null {
-  // Diagnostic uniquement : renvoie la ligne la PLUS PROCHE en combinant
-  // écart montant + écart date, MÊME si en dehors des tolérances strictes.
-  // Sert à afficher à l'utilisateur "closest thing was line X with 30%
-  // amount diff, 5j date diff" quand aucun match strict n'a été trouvé.
-  const { idxCreditor, idxAmount, idxDate, dataStartRow } =
+  const { idxCreditor, idxAmount, idxDate, idxDebit, idxCredit, dataStartRow } =
     detectColumns(sheet);
+  const amountColIdx = opts?.matchCreditColumn
+    ? idxCredit >= 0
+      ? idxCredit
+      : idxAmount
+    : idxDebit >= 0
+      ? idxDebit
+      : idxAmount;
   const excludeRows = opts?.excludeRowIndices ?? new Set<number>();
   let best: { result: MatchResult; score: number } | null = null;
 
@@ -883,7 +908,7 @@ export function findBestCandidate(
     if (rowIndex < dataStartRow) return;
     if (excludeRows.has(rowIndex + 2)) return;
 
-    const rowAmount = idxAmount >= 0 ? parseAmount(row[idxAmount]) : null;
+    const rowAmount = amountColIdx >= 0 ? parseAmount(row[amountColIdx]) : null;
     const rowDate = idxDate >= 0 ? parseDate(row[idxDate]) : null;
     if (inv.amount == null || rowAmount == null) return;
     if (!inv.invoiceDate || !rowDate) return;

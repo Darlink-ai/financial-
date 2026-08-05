@@ -87,6 +87,7 @@ export default function ImportPage() {
   const { reloadFromDb, invoices } = useStore();
   const [items, setItems] = useState<DraftItem[]>([]);
   const [dragOver, setDragOver] = useState(false);
+  const [uploadType, setUploadType] = useState<"invoice" | "receipt">("invoice");
   const [rematchingAll, setRematchingAll] = useState(false);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [deletingSelected, setDeletingSelected] = useState(false);
@@ -125,7 +126,7 @@ export default function ImportPage() {
     return invoices
       .filter(
         (inv) =>
-          inv.mailbox === "Ajout manuel" &&
+          (inv.mailbox === "Ajout manuel" || inv.mailbox === "Reçu manuel") &&
           (inv.status === "renamed" || inv.status === "manual"),
       )
       .map<DraftItem>((inv) => ({
@@ -238,6 +239,7 @@ export default function ImportPage() {
       const fd = new FormData();
       fd.append("file", file);
       fd.append("draft", "1");
+      fd.append("type", uploadType);
       const r = await fetch("/api/invoices/upload", {
         method: "POST",
         body: fd,
@@ -765,6 +767,34 @@ export default function ImportPage() {
       />
 
       <div className="p-8 space-y-4">
+        {/* Toggle Type : Facture (débit) vs Reçu (crédit).
+            Le type sélectionné s'applique aux prochains uploads — matcher
+            regarde soit la colonne Débit soit la colonne Crédit du sheet. */}
+        <div className="card p-1.5 flex items-center gap-1 w-fit">
+          <button
+            onClick={() => setUploadType("invoice")}
+            className={`px-4 py-1.5 rounded-md text-[12px] font-medium transition-colors ${
+              uploadType === "invoice"
+                ? "bg-panel2 text-text border border-border"
+                : "text-muted hover:text-text border border-transparent"
+            }`}
+            title="Facture = sortie d'argent. Matcher regarde la colonne Débit du sheet."
+          >
+            📄 Facture (débit)
+          </button>
+          <button
+            onClick={() => setUploadType("receipt")}
+            className={`px-4 py-1.5 rounded-md text-[12px] font-medium transition-colors ${
+              uploadType === "receipt"
+                ? "bg-panel2 text-text border border-border"
+                : "text-muted hover:text-text border border-transparent"
+            }`}
+            title="Reçu = entrée d'argent (ex: reçus mensuels processeur). Matcher regarde la colonne Crédit du sheet."
+          >
+            💰 Reçu (crédit)
+          </button>
+        </div>
+
         {/* Dropzone */}
         <div
           onDragOver={(e) => {
@@ -789,7 +819,9 @@ export default function ImportPage() {
             Glisse tes PDFs ici ou clique pour parcourir
           </div>
           <div className="text-[12px] text-muted mt-1">
-            Plusieurs fichiers acceptés. Le traitement démarre dès le drop.
+            {uploadType === "receipt"
+              ? "Mode reçu (crédit) — matcher cherchera dans la colonne Crédit du sheet Excel."
+              : "Plusieurs fichiers acceptés. Le traitement démarre dès le drop."}
           </div>
         </div>
 
