@@ -352,6 +352,11 @@ function findInvoiceDate(text: string): string | null {
     "issued",
     "effective date",
     "transaction date",
+    "value date",
+    "date de valeur",
+    "date valeur",
+    "settlement date",
+    "settlement",
     "date paid",
     "paid on",
     "date de facture",
@@ -574,6 +579,11 @@ const KNOWN_VENDORS = [
   "Apify",
   "PIPIADS",
   "Google Payments",
+  "emerchantpay",
+  "Centrobill",
+  "Segpay",
+  "CCBill",
+  "Epoch",
 ];
 
 /**
@@ -596,6 +606,48 @@ const FILENAME_ALIASES: Record<string, string> = {
  * Ex: "Receipt-2953-1185 - fEATUREBASE.pdf" → Featurebase (via KNOWN_VENDORS)
  * Ex: "google-workspace-facture.pdf" → Google Workspace
  */
+/**
+ * Extrait une date d'un nom de fichier — utile quand l'user nomme
+ * "Billing_Statement_14.01.2026.pdf" pour tracer la vraie date de valeur.
+ * Formats supportés :
+ *   - DD.MM.YYYY, DD-MM-YYYY, DD_MM_YYYY (jour-mois-année, europe)
+ *   - YYYY-MM-DD, YYYY_MM_DD (ISO)
+ *   - YYYYMMDD
+ */
+function guessDateFromFilename(filename: string | null): string | null {
+  if (!filename) return null;
+  const name = filename.replace(/\.[^.]+$/, ""); // strip ext
+  // ISO YYYY-MM-DD
+  let m = name.match(/(\d{4})[-_/.](\d{1,2})[-_/.](\d{1,2})/);
+  if (m) {
+    const iso = isoIfValid(
+      parseInt(m[1], 10),
+      parseInt(m[2], 10),
+      parseInt(m[3], 10),
+    );
+    if (iso) return iso;
+  }
+  // DD.MM.YYYY / DD-MM-YYYY / DD_MM_YYYY (europe, jour-first)
+  m = name.match(/(\d{1,2})[-_/.](\d{1,2})[-_/.](\d{2,4})/);
+  if (m) {
+    let y = parseInt(m[3], 10);
+    if (y < 100) y = y > 50 ? 1900 + y : 2000 + y;
+    const iso = isoIfValid(y, parseInt(m[2], 10), parseInt(m[1], 10));
+    if (iso) return iso;
+  }
+  // YYYYMMDD compact
+  m = name.match(/(\d{4})(\d{2})(\d{2})/);
+  if (m) {
+    const iso = isoIfValid(
+      parseInt(m[1], 10),
+      parseInt(m[2], 10),
+      parseInt(m[3], 10),
+    );
+    if (iso) return iso;
+  }
+  return null;
+}
+
 function guessCreditorFromFilename(filename: string | null): string | null {
   if (!filename) return null;
   // Nettoie : retire extension, remplace underscores/tirets par espaces,
@@ -745,7 +797,14 @@ export async function extractInvoiceFromPdf({
   }
 
   const amountInfo = findAmountWithCurrency(text);
-  const invoiceDate = findInvoiceDate(text);
+  const pdfDate = findInvoiceDate(text);
+  const filenameDate = guessDateFromFilename(filename ?? null);
+  // Priorité date : filename gagne si présent (typiquement l'user y met
+  // la vraie value date qu'il connaît) — sinon la date extraite du PDF.
+  // Cas typique : "Billing_Statement_14.01.2026.pdf" → 2026-01-14 même
+  // si le PDF contient plein d'autres dates (processing period, maturity,
+  // released dates…) qui pourraient tromper le scoring.
+  const invoiceDate = filenameDate ?? pdfDate;
 
   // Créancier : plusieurs sources, on prend la plus fiable :
   //   1. KNOWN_VENDORS dans le texte PDF (le plus fiable — vrai nom légal)

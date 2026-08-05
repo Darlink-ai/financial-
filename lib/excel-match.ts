@@ -764,7 +764,7 @@ function isStrictMatch(
   inv: Invoice,
   rowAmount: number | null,
   rowDate: string | null,
-  opts?: { loose?: boolean },
+  opts?: { loose?: boolean; extendedDateTolerance?: boolean },
 ): { ok: false } | { ok: true; amountRel: number; dateDiffDays: number } {
   if (inv.amount == null || rowAmount == null) return { ok: false };
   if (!inv.invoiceDate || !rowDate) return { ok: false };
@@ -777,9 +777,14 @@ function isStrictMatch(
     (new Date(inv.invoiceDate).getTime() - new Date(rowDate).getTime()) /
       86_400_000,
   );
+  // extendedDateTolerance = ±5j (au lieu du strict ±2j) — utilisé pour
+  // les REÇUS où le settlement bancaire peut prendre plusieurs jours après
+  // la value date du statement.
   const dateTol = opts?.loose
     ? DATE_TOLERANCE_DAYS_LOOSE
-    : DATE_TOLERANCE_DAYS;
+    : opts?.extendedDateTolerance
+      ? 5
+      : DATE_TOLERANCE_DAYS;
   if (diffDays > dateTol) return { ok: false };
   return { ok: true, amountRel: rel, dateDiffDays: diffDays };
 }
@@ -840,6 +845,7 @@ export function matchInvoicesAgainstSheet(
 
       const check = isStrictMatch(inv, rowAmount, rowDate, {
         loose: opts?.loose,
+        extendedDateTolerance: opts?.matchCreditColumn,
       });
       if (!check.ok) return;
 
