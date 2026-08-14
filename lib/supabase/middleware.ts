@@ -24,6 +24,8 @@ const PUBLIC_PATHS = [
   "/api/invoices/unvalidate",
   // debug-search : recherche full-text sur creditor/subject/drive_path.
   "/api/invoices/debug-search",
+  // force-match : force status='matched' + row + currency, auth Bearer.
+  "/api/invoices/force-match",
 ];
 
 function isPublic(pathname: string): boolean {
