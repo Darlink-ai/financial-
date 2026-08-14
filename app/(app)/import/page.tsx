@@ -48,6 +48,10 @@ type DraftItem = {
   rowInput: string;
   /** Devise sélectionnée pour le rapprochement (modifiable). */
   currencyInput: AccountCurrency;
+  /** Mois sélectionné pour le rapprochement (modifiable — override
+   *  utile quand l'auto-detect de invoiceDate se trompe de mois).
+   *  Format YYYY-MM. Default = mois de invoiceDate. */
+  monthInput: string;
   /** Overrides éditables (pré-remplis depuis l'auto-extract, modifiables
    *  par l'utilisateur avant Valider). */
   creditorInput: string;
@@ -140,6 +144,7 @@ export default function ImportPage() {
         rowInput:
           inv.excelRowMatched != null ? String(inv.excelRowMatched) : "",
         currencyInput: inv.accountCurrency,
+        monthInput: inv.invoiceDate ? inv.invoiceDate.slice(0, 7) : "",
         creditorInput: inv.creditor ?? "",
         folderCodeInput: inv.folderCode ?? "",
         invoiceDateInput: inv.invoiceDate ?? "",
@@ -213,6 +218,7 @@ export default function ImportPage() {
       status: "uploading",
       rowInput: "",
       currencyInput: "USD",
+      monthInput: "",
       creditorInput: "",
       folderCodeInput: "",
       invoiceDateInput: "",
@@ -282,6 +288,7 @@ export default function ImportPage() {
         proposedCurrency: inv?.accountCurrency ?? "USD",
         rowInput: rowToDisplay != null ? String(rowToDisplay) : "",
         currencyInput: currencyToDisplay as AccountCurrency,
+        monthInput: inv?.invoiceDate ? inv.invoiceDate.slice(0, 7) : "",
         // Pré-remplit les champs éditables avec ce que l'auto-extract
         // a trouvé. L'utilisateur peut corriger avant de Valider.
         creditorInput: inv?.creditor ?? "",
@@ -337,11 +344,21 @@ export default function ImportPage() {
       if (creditor) payload.creditor = creditor;
       if (folderCode) {
         payload.folderCode = folderCode;
-        // On envoie aussi folderLabel si on l'a (depuis l'invoice originale,
-        // sinon on déduit du code).
         payload.folderLabel = it.invoice.folderLabel ?? folderCode;
       }
-      if (invoiceDate) payload.invoiceDate = invoiceDate;
+      // Force le mois via monthInput si l'user l'a overridé. On construit
+      // une invoice_date au 1er du mois cible + jour de l'invoiceDate
+      // extrait (pour conserver le jour). Si le mois override diffère
+      // du mois auto-détecté, on utilise le 15 du mois cible par défaut.
+      const monthOverride = it.monthInput.trim();
+      const detectedMonth = invoiceDate.slice(0, 7);
+      if (monthOverride && monthOverride !== detectedMonth) {
+        // User a forcé un autre mois → aligne invoice_date sur ce mois.
+        const day = invoiceDate.slice(8, 10) || "15";
+        payload.invoiceDate = `${monthOverride}-${day}`;
+      } else if (invoiceDate) {
+        payload.invoiceDate = invoiceDate;
+      }
       if (finalName) payload.finalName = finalName;
 
       const r = await fetch(`/api/invoices/${it.invoice.id}/assign-row`, {
@@ -457,6 +474,7 @@ export default function ImportPage() {
         proposedCurrency: (inv.accountCurrency ?? it.currencyInput) as AccountCurrency,
         rowInput: rowToDisplay != null ? String(rowToDisplay) : it.rowInput,
         currencyInput: currencyToDisplay as AccountCurrency,
+        monthInput: inv.invoiceDate ? inv.invoiceDate.slice(0, 7) : it.monthInput,
         nearMiss,
         errors: data.outcome?.errors,
       });
@@ -1166,6 +1184,13 @@ function DraftRow({
             <option value="EUR">EUR</option>
             <option value="CHF">CHF</option>
           </select>
+          <input
+            type="month"
+            className="input !py-1 !px-2 text-[11px] !w-32"
+            value={item.monthInput}
+            onChange={(e) => onChange({ monthInput: e.target.value })}
+            title="Mois du sheet Excel. Auto-détecté depuis la date de la facture, mais overridable si le mois auto est faux."
+          />
           {item.proposedRow != null && (
             <span className="text-[10px] text-muted">
               auto : ligne {item.proposedRow} ({item.proposedCurrency})
