@@ -145,12 +145,29 @@ export default function ExcelPage() {
     [sheet],
   );
 
+  // Liste "Factures sans ligne correspondante" : on inclut aussi les
+  // factures des AUTRES devises du même mois, avec un badge visible.
+  // Contexte : quand une facture est en USD mais que la ligne banque
+  // correspondante est en EUR (cas conversion), la facture n'apparaissait
+  // pas sur /excel EUR → impossible à valider depuis là. On l'affiche
+  // maintenant, et cliquer "Valider" bascule automatiquement son
+  // accountCurrency vers la devise du fichier Excel courant.
+  //
+  // On exclut aussi celles déjà en 'matched' (peu importe leur row/currency
+  // actuels) pour ne pas les proposer une deuxième fois.
   const unmatchedInvoices = useMemo<Invoice[]>(() => {
     const matchedIds = new Set(matches.map((m) => m.invoice.id));
-    return invoices
+    return allMonthInvoices
       .filter((i) => i.creditor && ["classified", "renamed", "uploaded"].includes(i.status))
-      .filter((i) => !matchedIds.has(i.id));
-  }, [matches, invoices]);
+      .filter((i) => !matchedIds.has(i.id))
+      // Tri : d'abord même devise que le compte affiché, puis autres.
+      .sort((a, b) => {
+        const aSame = (a.accountCurrency ?? "USD") === currency;
+        const bSame = (b.accountCurrency ?? "USD") === currency;
+        if (aSame !== bSame) return aSame ? -1 : 1;
+        return 0;
+      });
+  }, [matches, allMonthInvoices, currency]);
 
   const loadSheet = (wb: XLSX.WorkBook, name: string) => {
     const ws = wb.Sheets[name];
@@ -481,6 +498,7 @@ export default function ExcelPage() {
                     <UnmatchedRow
                       key={i.id}
                       invoice={i}
+                      currentCurrency={currency}
                       onAssign={async (rowNumber) => {
                         // Match manuel → update DB + upload Drive
                         // (règle : pas de match = pas de drive).
@@ -560,21 +578,38 @@ export default function ExcelPage() {
  */
 function UnmatchedRow({
   invoice,
+  currentCurrency,
   onAssign,
   onDelete,
 }: {
   invoice: Invoice;
+  /** Devise du compte affiché sur /excel — pour détecter le cross-currency. */
+  currentCurrency: AccountCurrency;
   onAssign: (rowNumber: number) => Promise<void>;
   onDelete: () => Promise<void>;
 }) {
   const [row, setRow] = useState("");
   const [busy, setBusy] = useState(false);
+  const invoiceAccount = invoice.accountCurrency ?? "USD";
+  const crossCurrency = invoiceAccount !== currentCurrency;
 
   const submit = async () => {
     const n = parseInt(row.trim(), 10);
     if (!Number.isFinite(n) || n < 2) {
       alert("Entre un n° de ligne valide (≥ 2 — la ligne 1 étant l'en-tête).");
       return;
+    }
+    if (crossCurrency) {
+      if (
+        !confirm(
+          `Cette facture est actuellement rattachée au compte ${invoiceAccount}. ` +
+            `Valider ici la basculera sur le compte ${currentCurrency} ` +
+            `(utile quand tu as payé une facture ${invoiceAccount} depuis ton compte ${currentCurrency}).\n\n` +
+            `Continuer ?`,
+        )
+      ) {
+        return;
+      }
     }
     setBusy(true);
     try {
@@ -605,6 +640,14 @@ function UnmatchedRow({
       <span className="font-medium truncate max-w-[180px]" title={invoice.creditor ?? undefined}>
         {invoice.creditor}
       </span>
+      {crossCurrency && (
+        <span
+          className="text-[10px] px-1.5 py-0.5 rounded border border-warn/40 text-warn bg-warn/10 shrink-0"
+          title={`Facture rattachée au compte ${invoiceAccount}. Valider ici la basculera sur ${currentCurrency}.`}
+        >
+          compte {invoiceAccount} → {currentCurrency}
+        </span>
+      )}
       <span className="text-muted truncate flex-1 min-w-0" title={invoice.subject}>
         — {invoice.subject}
       </span>
