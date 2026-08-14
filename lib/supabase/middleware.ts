@@ -22,6 +22,8 @@ const PUBLIC_PATHS = [
   "/api/invoices/unmatch",
   // unvalidate : dévalide + supprime le fichier Drive, auth Bearer.
   "/api/invoices/unvalidate",
+  // debug-search : recherche full-text sur creditor/subject/drive_path.
+  "/api/invoices/debug-search",
 ];
 
 function isPublic(pathname: string): boolean {
