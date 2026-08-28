@@ -17,6 +17,32 @@ import { formatAmount, buildFinalName } from "@/lib/format";
 import { creditorMatchesRow } from "@/lib/creditor-aliases";
 
 /**
+ * Combine la date de facture extraite avec le mois override choisi par
+ * l'utilisateur. Sert de "date effective" pour le nom Drive et pour tous
+ * les checks (occupation de ligne, siblings…).
+ *
+ *  - monthInput vide            → invoiceDateInput tel quel
+ *  - invoiceDateInput vide      → 15 du mois override
+ *  - même mois                  → invoiceDateInput inchangé (jour préservé)
+ *  - mois différent             → jour de invoiceDateInput sur monthInput
+ *
+ * Cohérent avec /assign-row côté serveur (même règle jour préservé).
+ */
+function effectiveInvoiceDate(
+  invoiceDateInput: string,
+  monthInput: string,
+): string {
+  const m = monthInput.trim();
+  const d = invoiceDateInput.trim();
+  if (!m) return d;
+  if (!d) return `${m}-15`;
+  const dm = d.slice(0, 7);
+  if (m === dm) return d;
+  const day = d.slice(8, 10) || "15";
+  return `${m}-${day}`;
+}
+
+/**
  * État de chaque brouillon :
  *  - uploading : POST en cours vers /api/invoices/upload?draft=1
  *  - drafted   : pipeline terminé, en attente de validation user
@@ -319,7 +345,8 @@ export default function ImportPage() {
     // (= verte dans le rapprochement Excel), on demande confirmation.
     const occupier = findOccupier(it);
     if (occupier) {
-      const month = (it.invoiceDateInput || "").slice(0, 7);
+      const month =
+        it.monthInput.trim() || (it.invoiceDateInput || "").slice(0, 7);
       if (
         !confirm(
           `⚠ La ligne #${n} ${it.currencyInput} de ${month} est déjà rapprochée par :\n\n${occupier.finalName ?? occupier.creditor ?? occupier.id}\n\nValider cette facture va déplacer le match vers elle. L'ancienne facture rapprochée sera dégradée (status "renamed"). Continuer ?`,
@@ -652,11 +679,18 @@ export default function ImportPage() {
   }, [invoices]);
 
   /** Renvoie la facture déjà rapprochée à la cible d'un draft donné, ou
-   *  null si la ligne est libre. */
+   *  null si la ligne est libre.
+   *
+   *  IMPORTANT : on utilise monthInput (override user) en priorité, sinon
+   *  le mois de la date extraite. Sans ça, changer le sélecteur "mois"
+   *  en bas de la carte ne recalculait pas le badge "Ligne déjà prise"
+   *  → l'utilisateur voyait un warning basé sur l'ancien mois et se
+   *  faisait bloquer à Valider alors que la vraie cible était libre. */
   const findOccupier = (it: DraftItem): Invoice | null => {
     const row = parseInt(it.rowInput.trim(), 10);
     if (!Number.isFinite(row) || row < 2) return null;
-    const month = it.invoiceDateInput.slice(0, 7);
+    const month =
+      it.monthInput.trim() || it.invoiceDateInput.slice(0, 7);
     if (!month) return null;
     const occupier = occupiedRows.get(
       `${it.currencyInput}|${row}|${month}`,
@@ -1019,6 +1053,48 @@ function DraftRow({
     }
   };
   const inv = item.invoice;
+
+  // Recalcul auto du nom Drive quand l'un des inputs qui le compose change
+  // (créditeur, date, code, MOIS override). Sans ça, changer le sélecteur
+  // "mois" en bas gardait le nom drive basé sur l'ancienne date → l'utilisateur
+  // devait le corriger à la main.
+  //
+  // On respecte un override manuel : si l'utilisateur a tapé un nom
+  // différent du dernier auto-calculé, on ne l'écrase pas.
+  const lastAutoNameRef = useRef<string | null>(null);
+  useEffect(() => {
+    const autoName = buildFinalName(
+      effectiveInvoiceDate(item.invoiceDateInput, item.monthInput),
+      item.creditorInput,
+      item.folderCodeInput,
+    );
+    if (!autoName) return;
+    // 1er run : on note le calcul actuel comme référence sans toucher au
+    // finalNameInput (qui vient du serveur / d'un persisted draft).
+    if (lastAutoNameRef.current === null) {
+      lastAutoNameRef.current = autoName;
+      // Si le champ était vide, on le remplit avec l'auto pour donner
+      // une valeur de départ visible.
+      if (!item.finalNameInput.trim()) {
+        onChange({ finalNameInput: autoName });
+      }
+      return;
+    }
+    const wasEdited =
+      item.finalNameInput.trim() !== "" &&
+      item.finalNameInput !== lastAutoNameRef.current;
+    lastAutoNameRef.current = autoName;
+    if (!wasEdited && item.finalNameInput !== autoName) {
+      onChange({ finalNameInput: autoName });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    item.monthInput,
+    item.invoiceDateInput,
+    item.creditorInput,
+    item.folderCodeInput,
+  ]);
+
   const accentBorder =
     item.status === "validated"
       ? "border-l-2 border-l-ok"
@@ -1064,7 +1140,7 @@ function DraftRow({
             {occupier && item.status === "drafted" && (
               <span
                 className="badge err inline-flex items-center gap-1 text-[10px]"
-                title={`La ligne Excel #${item.rowInput} ${item.currencyInput} ${item.invoiceDateInput.slice(0, 7)} est déjà prise par ${occupier.finalName ?? occupier.creditor ?? occupier.id}. Valider va remplacer ce match — l'ancienne facture sera dégradée.`}
+                title={`La ligne Excel #${item.rowInput} ${item.currencyInput} ${item.monthInput || item.invoiceDateInput.slice(0, 7)} est déjà prise par ${occupier.finalName ?? occupier.creditor ?? occupier.id}. Valider va remplacer ce match — l'ancienne facture sera dégradée.`}
               >
                 <AlertCircle size={10} /> Ligne déjà prise par{" "}
                 {occupier.creditor ?? "une autre facture"}
@@ -1513,9 +1589,10 @@ function NearMissDisplay({
 
 /**
  * Champs éditables pour Créditeur / Date / Code dossier / Nom Drive.
- * Pré-remplis depuis l'auto-extract. Si l'utilisateur modifie un des 3
- * premiers, on recalcule automatiquement le finalName (sauf s'il a
- * déjà été édité manuellement, auquel cas on respecte son override).
+ * Pré-remplis depuis l'auto-extract. Le recalcul auto du finalName est
+ * géré au niveau DraftRow via useEffect — comme ça le mois override
+ * (input en bas de la carte) trigger aussi le recalcul, pas juste les
+ * 3 champs de ce composant.
  */
 function EditableExtractedFields({
   item,
@@ -1524,30 +1601,11 @@ function EditableExtractedFields({
   item: DraftItem;
   onChange: (patch: Partial<DraftItem>) => void;
 }) {
-  // Si l'utilisateur a édité le finalName manuellement, on ne le réécrase
-  // pas en changeant créditeur/date/code. Heuristique : si finalName diffère
-  // du calcul auto à partir des champs courants, c'est qu'il a été modifié.
-  const autoName = buildFinalName(
-    item.invoiceDateInput,
+  const autoNamePlaceholder = buildFinalName(
+    effectiveInvoiceDate(item.invoiceDateInput, item.monthInput),
     item.creditorInput,
     item.folderCodeInput,
   );
-  const finalNameWasEdited =
-    item.finalNameInput.trim() !== "" &&
-    item.finalNameInput !== autoName;
-
-  const recompute = (patch: Partial<DraftItem>) => {
-    const next: DraftItem = { ...item, ...patch };
-    if (!finalNameWasEdited) {
-      const newAuto = buildFinalName(
-        next.invoiceDateInput,
-        next.creditorInput,
-        next.folderCodeInput,
-      );
-      if (newAuto) next.finalNameInput = newAuto;
-    }
-    onChange(next);
-  };
 
   return (
     <div className="space-y-1.5">
@@ -1557,7 +1615,7 @@ function EditableExtractedFields({
           <input
             type="text"
             value={item.creditorInput}
-            onChange={(e) => recompute({ creditorInput: e.target.value })}
+            onChange={(e) => onChange({ creditorInput: e.target.value })}
             placeholder="Nom du fournisseur"
             className="input !py-1 !px-2 text-[11px] flex-1"
             title="Modifie si le nom extrait du PDF est faux. Le mapping créditeur → code sera sauvé pour le prochain upload du même fournisseur."
@@ -1568,7 +1626,7 @@ function EditableExtractedFields({
           <input
             type="date"
             value={item.invoiceDateInput}
-            onChange={(e) => recompute({ invoiceDateInput: e.target.value })}
+            onChange={(e) => onChange({ invoiceDateInput: e.target.value })}
             className="input !py-1 !px-2 text-[11px] flex-1"
             title="Date de la facture (YYYY-MM-DD)"
           />
@@ -1578,7 +1636,7 @@ function EditableExtractedFields({
           <input
             type="text"
             value={item.folderCodeInput}
-            onChange={(e) => recompute({ folderCodeInput: e.target.value })}
+            onChange={(e) => onChange({ folderCodeInput: e.target.value })}
             placeholder="6100"
             className="input !py-1 !px-2 text-[11px] font-mono flex-1"
             title="Code comptable (ex. 6100). Sera utilisé pour le mapping créditeur → code en cache."
@@ -1592,10 +1650,10 @@ function EditableExtractedFields({
           value={item.finalNameInput}
           onChange={(e) => onChange({ finalNameInput: e.target.value })}
           placeholder={
-            autoName ?? "Sera construit depuis date / créditeur / code"
+            autoNamePlaceholder ?? "Sera construit depuis date / créditeur / code"
           }
           className="input !py-1 !px-2 text-[11px] font-mono flex-1"
-          title="Nom final sur Drive (sans .pdf). Édite si la composition auto ne te convient pas."
+          title="Nom final sur Drive (sans .pdf). Édite si la composition auto ne te convient pas. Recalculé auto quand tu changes créditeur / date / code / mois."
         />
         <span className="text-[10px] text-muted shrink-0">.pdf</span>
       </label>
