@@ -28,6 +28,8 @@ const PUBLIC_PATHS = [
   "/api/invoices/force-match",
   // tva-audit : audit read-only TVA sur fenetre de mois, auth Bearer.
   "/api/invoices/tva-audit",
+  // flow-summary : totaux debit/credit par mois × devise, auth Bearer.
+  "/api/invoices/flow-summary",
 ];
 
 function isPublic(pathname: string): boolean {
