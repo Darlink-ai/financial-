@@ -26,6 +26,8 @@ const PUBLIC_PATHS = [
   "/api/invoices/debug-search",
   // force-match : force status='matched' + row + currency, auth Bearer.
   "/api/invoices/force-match",
+  // tva-audit : audit read-only TVA sur fenetre de mois, auth Bearer.
+  "/api/invoices/tva-audit",
 ];
 
 function isPublic(pathname: string): boolean {
