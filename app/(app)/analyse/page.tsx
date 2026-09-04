@@ -18,7 +18,6 @@ import {
 } from "@/lib/analyse-data";
 import { useFinancials, type MonthlyPnl } from "@/lib/analyse-financials";
 import { RollingReserveChart } from "@/components/analyse/RollingReserveChart";
-import { PnlWaterfall } from "@/components/analyse/PnlWaterfall";
 import { formatAmount } from "@/lib/format";
 import { formatMonthLabel } from "@/lib/store";
 import {
@@ -128,10 +127,9 @@ export default function AnalysePage() {
     },
   ];
 
-  // KPIs réels CA — somme capturedAmount sur la période, convertie en CHF
-  // via taux moyens mensuels. 4 tuiles : CA total, Net, Volume EMP, Volume Centrobill.
-  const volumeEmp = agg.byProcessor["EMP"] ?? 0;
-  const volumeCentrobill = agg.byProcessor["Centrobill"] ?? 0;
+  // KPIs CA — 2 tuiles simples : CA total et Net. Les tuiles 'Volume EMP'
+  // et 'Volume Centrobill' ont ete retirees (bruitage inutile — la
+  // repartition par processeur est deja visible plus bas).
   const caKpis: KPI[] = [
     {
       label: "Chiffre d'affaires",
@@ -146,20 +144,6 @@ export default function AnalysePage() {
       value: agg.totals.net,
       currency: DISPLAY_CURRENCY,
       hint: "CA − dépenses (somme des débits des 3 rapprochements Excel, le tout en CHF).",
-    },
-    {
-      label: "Volume EMP",
-      value: volumeEmp,
-      currency: DISPLAY_CURRENCY,
-      hint: "Captured EMP (CHF), hors fees.",
-    },
-    {
-      label: "Volume Centrobill",
-      value: volumeCentrobill,
-      currency: DISPLAY_CURRENCY,
-      hint: volumeCentrobill > 0
-        ? "Captured Centrobill (CHF), hors fees."
-        : "Pas encore de revenus Centrobill saisis.",
     },
   ];
 
@@ -199,16 +183,6 @@ export default function AnalysePage() {
               }))}
             />
           </div>
-        </Section>
-
-        <Section
-          icon={Coins}
-          title="Cascade P&L — du CA au Bénéfice net"
-          subtitle="Waterfall des marches comptables et ventilation détaillée par poste de dépense (Marketing, IT, Loyer, Salaires…). Chaque marche déduit les postes listés en dessous."
-          titleTooltip="Vue synthétique du compte de résultat : CA → −COGS = Bénéfice brut → −Personnel −Autres charges = EBITDA → −Amortissements = EBIT → −Charges financières −Impôts = Bénéfice net. Les postes détaillés (Marketing, IT, Salaires…) sont extraits automatiquement du folder_code de chaque facture validée."
-          live
-        >
-          <PnlWaterfall totals={pnl.totals} subCategories={pnl.subCategories} />
         </Section>
 
         <Section
@@ -511,8 +485,16 @@ function KpiGrid({
   countAt?: number[];
 }) {
   const counts = new Set(countAt ?? []);
+  // Grille adaptative selon le nombre de KPI pour eviter les cases vides
+  // (ex: la section CA n'a que 2 tuiles depuis la suppression de Volume EMP/Centrobill).
+  const cols =
+    kpis.length <= 2
+      ? "grid-cols-1 md:grid-cols-2"
+      : kpis.length === 3
+      ? "grid-cols-1 md:grid-cols-3"
+      : "grid-cols-2 md:grid-cols-4";
   return (
-    <div className="grid grid-cols-4 gap-4">
+    <div className={`grid gap-4 ${cols}`}>
       {kpis.map((k, i) => (
         <KpiCard
           key={k.label}
