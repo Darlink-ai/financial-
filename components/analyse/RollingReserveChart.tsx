@@ -8,30 +8,30 @@ import { getRateToChf, DEFAULT_FX_TO_CHF } from "@/lib/fx";
 import type { AccountCurrency } from "@/lib/types";
 
 /**
- * Graphique du STOCK cumulé de rolling reserve retenu par EMP.
+ * Graphique du STOCK cumulé de rolling reserve retenu par EMP,
+ * ventilé en SOUS-BANDES par mois d'origine.
  *
- * Modèle EMP : chaque mois, EMP retient `rollingReservePercent`% du capturé
- * (= créance immobilisée, pas une charge), et libère un montant de reserves
- * d'une période plus ancienne (`txCounts.releasedReserveAmount`).
+ * Modèle EMP : chaque mois, EMP retient rollingReservePercent% du capturé,
+ * qu'il libère rollingReserveMonths plus tard (typiquement 6 mois).
+ * Chaque bande d'un mois M = les retentions d'un mois X (X ≤ M) qui ne
+ * sont pas encore libérées (X + reserveMonths > M).
  *
- * Stock cumulé[m] = Σ(retenu - libéré) depuis le début, borné au mois m.
- *
- * On considère TOUT l'historique (pas juste la période visible) pour que
- * le stock initial de janvier reflète bien ce qui traîne des mois précédents.
+ * Tooltip au survol d'un segment : mois d'origine + date de libération +
+ * montant CHF de ce segment.
  */
 export function RollingReserveChart({
   months,
   processorFilter = "EMP",
 }: {
-  /** Liste de mois YYYY-MM à afficher sur le graphe (subset de tout l'historique). */
   months: string[];
-  /** Filtre processeur (par défaut EMP — celui qui applique un rolling). */
   processorFilter?: string;
 }) {
   const { revenues } = useStore();
-  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  const [hover, setHover] = useState<
+    | { monthIdx: number; segIdx: number; label: string; from: string; release: string; amount: number }
+    | null
+  >(null);
 
-  // Convertit un montant local en CHF au taux du mois donné.
   const toChf = (amount: number, currency: string, month: string) => {
     const c = (currency || "CHF").toUpperCase();
     if (!(c in DEFAULT_FX_TO_CHF)) return amount;
@@ -39,52 +39,61 @@ export function RollingReserveChart({
   };
 
   const chartData = useMemo(() => {
-    // 1) Récupère TOUS les revenus EMP triés par mois croissant.
+    // 1) Filtre les revenus du processeur (EMP par défaut) triés par mois.
     const empRevenues = revenues
-      .filter(
-        (r) => r.processor.toLowerCase() === processorFilter.toLowerCase(),
-      )
+      .filter((r) => r.processor.toLowerCase() === processorFilter.toLowerCase())
       .slice()
       .sort((a, b) => a.month.localeCompare(b.month));
     if (empRevenues.length === 0) return null;
 
-    // 2) Agrège par mois : retenu + libéré (converti CHF).
-    const perMonth = new Map<
-      string,
-      { withheld: number; released: number }
-    >();
+    // 2) Agrège les retentions par mois d'origine (converti CHF), avec la
+    //    durée de retention (rollingReserveMonths). Si plusieurs revenus
+    //    au même mois ont des durées différentes, on prend le max (plus
+    //    prudent — les fonds les plus tardifs restent bloqués).
+    type Origin = { month: string; withheld: number; reserveMonths: number };
+    const originMap = new Map<string, Origin>();
     for (const r of empRevenues) {
-      const withheld =
-        (r.capturedAmount * (r.rollingReservePercent ?? 0)) / 100;
-      const released = r.txCounts?.releasedReserveAmount ?? 0;
-      const cur = perMonth.get(r.month) ?? { withheld: 0, released: 0 };
-      cur.withheld += toChf(withheld, r.currency, r.month);
-      cur.released += toChf(released, r.currency, r.month);
-      perMonth.set(r.month, cur);
+      const withheld = (r.capturedAmount * (r.rollingReservePercent ?? 0)) / 100;
+      if (withheld <= 0) continue;
+      const withheldChf = toChf(withheld, r.currency, r.month);
+      const reserveMonths = r.rollingReserveMonths || 6;
+      const existing = originMap.get(r.month) ?? {
+        month: r.month,
+        withheld: 0,
+        reserveMonths,
+      };
+      existing.withheld += withheldChf;
+      existing.reserveMonths = Math.max(existing.reserveMonths, reserveMonths);
+      originMap.set(r.month, existing);
     }
+    const origins = [...originMap.values()].sort((a, b) =>
+      a.month.localeCompare(b.month),
+    );
 
-    // 3) Calcule le stock cumulé mois par mois. On part du premier mois
-    //    présent en base et on parcourt jusqu'au dernier mois affiché.
-    const allMonths = [...perMonth.keys()].sort();
-    const lastVisible = months[months.length - 1];
-    const firstDataMonth = allMonths[0];
-    const stockByMonth = new Map<string, number>();
-    let cumulated = 0;
-    // Enumere du premier data jusqu'au dernier visible (bornes inclusives).
-    const cur = enumerateMonths(firstDataMonth, lastVisible ?? firstDataMonth);
-    for (const m of cur) {
-      const flow = perMonth.get(m) ?? { withheld: 0, released: 0 };
-      cumulated += flow.withheld - flow.released;
-      stockByMonth.set(m, cumulated);
-    }
-
-    // 4) Ne garde que les mois de la période visible.
-    return months.map((m) => ({
-      month: m,
-      stock: stockByMonth.get(m) ?? cumulated, // futur : reste au niveau actuel
-      withheld: (perMonth.get(m)?.withheld ?? 0),
-      released: (perMonth.get(m)?.released ?? 0),
-    }));
+    // 3) Pour chaque mois visible M, liste les segments encore actifs :
+    //    origine X, released_at = X + reserveMonths, X ≤ M ET released_at > M.
+    return months.map((m) => {
+      const segments: {
+        from: string;
+        release: string;
+        amount: number;
+      }[] = [];
+      for (const o of origins) {
+        if (compareMonth(o.month, m) > 0) continue; // origine future — pas encore
+        const release = addMonths(o.month, o.reserveMonths);
+        // Segment actif si release > m (pas encore libéré au mois m)
+        if (compareMonth(release, m) <= 0) continue;
+        segments.push({
+          from: o.month,
+          release,
+          amount: o.withheld,
+        });
+      }
+      // Ordre du bas vers le haut : plus ancien en bas (bientôt libéré).
+      segments.sort((a, b) => a.from.localeCompare(b.from));
+      const stock = segments.reduce((s, seg) => s + seg.amount, 0);
+      return { month: m, segments, stock };
+    });
   }, [revenues, months, processorFilter]);
 
   if (!chartData || chartData.length === 0) {
@@ -98,15 +107,16 @@ export function RollingReserveChart({
 
   // ------- Rendu SVG -------
   const width = 720;
-  const height = 240;
-  const padX = 40;
+  const height = 260;
+  const padLeft = 60;
+  const padRight = 20;
   const padY = 24;
-  const innerW = width - padX * 2;
+  const innerW = width - padLeft - padRight;
   const innerH = height - padY * 2;
 
   const maxStock = Math.max(...chartData.map((d) => d.stock)) * 1.15 || 1;
   const yOf = (v: number) => padY + innerH - (v / maxStock) * innerH;
-  const xOf = (i: number) => padX + (i + 0.5) * (innerW / chartData.length);
+  const xOf = (i: number) => padLeft + (i + 0.5) * (innerW / chartData.length);
   const colW = innerW / chartData.length;
   const barW = colW * 0.6;
 
@@ -114,10 +124,28 @@ export function RollingReserveChart({
   const startStock = chartData[0].stock;
   const delta = currentStock - startStock;
 
-  const hovered = hoverIdx != null ? chartData[hoverIdx] : null;
-  const tooltipLeftPct =
-    hoverIdx != null ? (xOf(hoverIdx) / width) * 100 : 0;
-  const tooltipOnRight = tooltipLeftPct > 60;
+  // Labels axe Y (5 crans)
+  const fmtShort = (n: number): string => {
+    const abs = Math.abs(n);
+    if (abs >= 1_000_000) return `${(n / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1)}M`;
+    if (abs >= 1_000) return `${(n / 1_000).toFixed(abs >= 10_000 ? 0 : 1)}k`;
+    return n.toFixed(0);
+  };
+  const yTicks = [0, 0.25, 0.5, 0.75, 1].map((t) => ({
+    y: padY + innerH * t,
+    v: maxStock - maxStock * t,
+  }));
+
+  // Palette : gradient jaune → orange selon l'ordre (plus ancien = plus foncé)
+  const segColor = (segIdx: number, total: number): string => {
+    if (total <= 1) return "#f59e0b";
+    const t = segIdx / (total - 1); // 0 = plus ancien (bas), 1 = plus recent (haut)
+    // interpole entre #d97706 (foncé) et #fcd34d (clair)
+    const r = Math.round(217 + (252 - 217) * t);
+    const g = Math.round(119 + (211 - 119) * t);
+    const b = Math.round(6 + (77 - 6) * t);
+    return `rgb(${r}, ${g}, ${b})`;
+  };
 
   return (
     <div className="card p-5">
@@ -127,15 +155,12 @@ export function RollingReserveChart({
             Stock cumulé chez {processorFilter}
           </div>
           <div className="text-[11px] text-muted mt-0.5">
-            Somme du rolling retenu, moins les libérations. Représente la
-            créance immobilisée chez le processeur à date.
+            Chaque bande = un mois de retention (empilée du plus ancien au
+            plus récent). Survole pour voir la date de libération.
           </div>
         </div>
         <div className="text-right">
-          <div
-            className="text-[10px] uppercase tracking-wider text-muted"
-            title="Montant bloqué chez EMP à la fin du dernier mois affiché."
-          >
+          <div className="text-[10px] uppercase tracking-wider text-muted">
             Bloqué à date
           </div>
           <div className="text-[18px] font-mono tabular-nums font-semibold">
@@ -144,7 +169,6 @@ export function RollingReserveChart({
           {delta !== 0 && (
             <div
               className={`text-[11px] font-mono tabular-nums ${delta > 0 ? "text-warn" : "text-ok"}`}
-              title="Variation sur la période visible."
             >
               {delta > 0 ? "+" : ""}
               {formatAmount(delta, "CHF")} sur la période
@@ -157,133 +181,117 @@ export function RollingReserveChart({
         <div className="relative">
           <svg
             viewBox={`0 0 ${width} ${height}`}
-            className="w-full h-[240px] block"
-            onMouseLeave={() => setHoverIdx(null)}
+            className="w-full h-[260px] block"
+            onMouseLeave={() => setHover(null)}
           >
-            {/* Grille */}
-            {[0, 0.25, 0.5, 0.75, 1].map((t) => {
-              const y = padY + innerH * t;
-              return (
+            {/* Grille horizontale + labels axe Y */}
+            {yTicks.map((tick, idx) => (
+              <g key={idx}>
                 <line
-                  key={t}
-                  x1={padX}
-                  x2={width - padX}
-                  y1={y}
-                  y2={y}
+                  x1={padLeft}
+                  x2={width - padRight}
+                  y1={tick.y}
+                  y2={tick.y}
                   stroke="#243049"
                   strokeWidth={1}
                   strokeDasharray="2 3"
                 />
-              );
-            })}
-
-            {/* Fil vertical du mois survolé */}
-            {hoverIdx != null && (
-              <line
-                x1={xOf(hoverIdx)}
-                x2={xOf(hoverIdx)}
-                y1={padY}
-                y2={height - padY}
-                stroke="#f59e0b"
-                strokeWidth={1}
-                strokeDasharray="3 3"
-                opacity={0.5}
-                pointerEvents="none"
-              />
-            )}
-
-            {/* Barres du stock cumulé */}
-            {chartData.map((d, i) => (
-              <g key={d.month}>
-                <rect
-                  x={xOf(i) - barW / 2}
-                  y={yOf(d.stock)}
-                  width={barW}
-                  height={yOf(0) - yOf(d.stock)}
-                  fill="url(#grad-rolling)"
-                  rx={3}
-                  opacity={hoverIdx == null || hoverIdx === i ? 1 : 0.35}
-                  style={{ transition: "opacity .15s" }}
-                />
                 <text
-                  x={xOf(i)}
-                  y={height - 6}
+                  x={padLeft - 8}
+                  y={tick.y + 3}
                   fontSize={10}
-                  textAnchor="middle"
-                  fill={hoverIdx === i ? "#e2e8f0" : "#94a3b8"}
-                  style={{ transition: "fill .15s" }}
+                  textAnchor="end"
+                  fill="#94a3b8"
+                  fontFamily="ui-monospace, SFMono-Regular, monospace"
                 >
-                  {d.month.slice(5)}/{d.month.slice(2, 4)}
+                  {fmtShort(tick.v)}
                 </text>
               </g>
             ))}
 
-            {/* Zone hover */}
-            {chartData.map((d, i) => (
-              <rect
-                key={`hit-${d.month}`}
-                x={padX + i * colW}
-                y={padY}
-                width={colW}
-                height={innerH}
-                fill="transparent"
-                onMouseEnter={() => setHoverIdx(i)}
-                style={{ cursor: "pointer" }}
-              />
-            ))}
-
-            <defs>
-              <linearGradient id="grad-rolling" x1="0" x2="0" y1="0" y2="1">
-                <stop offset="0%" stopColor="#fbbf24" />
-                <stop offset="100%" stopColor="#f59e0b" />
-              </linearGradient>
-            </defs>
+            {/* Barres empilées par segment (mois d'origine) */}
+            {chartData.map((d, i) => {
+              // Empile du bas vers le haut
+              let y0 = yOf(0);
+              return (
+                <g key={d.month}>
+                  {d.segments.map((seg, si) => {
+                    const y1 = yOf(
+                      d.segments.slice(0, si + 1).reduce((s, s2) => s + s2.amount, 0),
+                    );
+                    const h = y0 - y1;
+                    const isHover =
+                      hover?.monthIdx === i && hover?.segIdx === si;
+                    const rectY = y1;
+                    y0 = y1;
+                    const anyHover = hover?.monthIdx === i;
+                    return (
+                      <rect
+                        key={`${d.month}-${si}`}
+                        x={xOf(i) - barW / 2}
+                        y={rectY}
+                        width={barW}
+                        height={Math.max(0, h)}
+                        fill={segColor(si, d.segments.length)}
+                        opacity={anyHover && !isHover ? 0.45 : 1}
+                        stroke={isHover ? "#0f1525" : "#f7f5ee"}
+                        strokeWidth={isHover ? 1.5 : 0.5}
+                        style={{ transition: "opacity .15s" }}
+                        onMouseEnter={() =>
+                          setHover({
+                            monthIdx: i,
+                            segIdx: si,
+                            label: d.month,
+                            from: seg.from,
+                            release: seg.release,
+                            amount: seg.amount,
+                          })
+                        }
+                      />
+                    );
+                  })}
+                  <text
+                    x={xOf(i)}
+                    y={height - 6}
+                    fontSize={10}
+                    textAnchor="middle"
+                    fill="#94a3b8"
+                  >
+                    {d.month.slice(5)}/{d.month.slice(2, 4)}
+                  </text>
+                </g>
+              );
+            })}
           </svg>
 
-          {hovered && hoverIdx != null && (
+          {/* Tooltip HTML positionné selon le segment survolé */}
+          {hover && (
             <div
-              className="absolute pointer-events-none z-10 min-w-[220px]"
+              className="absolute pointer-events-none z-10 min-w-[240px]"
               style={{
-                left: tooltipOnRight ? "auto" : `${tooltipLeftPct}%`,
-                right: tooltipOnRight ? `${100 - tooltipLeftPct}%` : "auto",
+                left: `${(xOf(hover.monthIdx) / width) * 100}%`,
                 top: 8,
-                transform: tooltipOnRight ? "translateX(-10px)" : "translateX(10px)",
+                transform:
+                  (xOf(hover.monthIdx) / width) * 100 > 60
+                    ? "translateX(calc(-100% - 10px))"
+                    : "translateX(10px)",
               }}
             >
               <div className="bg-panel border border-border rounded-md shadow-lg px-3 py-2.5 text-[11.5px]">
                 <div className="font-medium text-text mb-1.5 pb-1.5 border-b border-border">
-                  {formatMonthLabel(hovered.month)}
+                  Segment du stock — {formatMonthLabel(hover.label)}
                 </div>
                 <div className="space-y-1">
+                  <TooltipRow label="Retenu au" value={formatMonthLabel(hover.from)} />
                   <TooltipRow
-                    color="#f59e0b"
-                    label="Stock cumulé bloqué"
-                    value={hovered.stock}
+                    label="Libéré au"
+                    value={formatMonthLabel(hover.release)}
                     strong
                   />
                   <TooltipRow
-                    color="#94a3b8"
-                    label="Retenu ce mois"
-                    value={hovered.withheld}
+                    label="Montant"
+                    value={formatAmount(hover.amount, "CHF")}
                   />
-                  <TooltipRow
-                    color="#22c55e"
-                    label="Libéré ce mois"
-                    value={hovered.released}
-                  />
-                  <div className="pt-1 mt-1 border-t border-border/50 text-muted text-[10.5px]">
-                    Flux net :{" "}
-                    <span
-                      className={
-                        hovered.withheld - hovered.released >= 0
-                          ? "text-warn font-mono"
-                          : "text-ok font-mono"
-                      }
-                    >
-                      {hovered.withheld - hovered.released >= 0 ? "+" : ""}
-                      {formatAmount(hovered.withheld - hovered.released, "CHF")}
-                    </span>
-                  </div>
                 </div>
               </div>
             </div>
@@ -293,11 +301,15 @@ export function RollingReserveChart({
 
       <div className="flex items-center gap-4 text-[11px] text-muted mt-3">
         <div className="flex items-center gap-1.5">
-          <div className="w-3 h-3 rounded-sm" style={{ background: "#f59e0b" }} />
-          <span>Stock cumulé (bloqué)</span>
+          <div className="w-3 h-3 rounded-sm" style={{ background: "#d97706" }} />
+          <span>Plus ancien (bientôt libéré)</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <div className="w-3 h-3 rounded-sm" style={{ background: "#fcd34d" }} />
+          <span>Plus récent</span>
         </div>
         <span className="ml-auto text-[10px] italic">
-          Survole pour voir le détail
+          Survole une bande pour voir sa date de libération
         </span>
       </div>
     </div>
@@ -305,47 +317,36 @@ export function RollingReserveChart({
 }
 
 function TooltipRow({
-  color,
   label,
   value,
   strong,
 }: {
-  color: string;
   label: string;
-  value: number;
+  value: string;
   strong?: boolean;
 }) {
   return (
     <div className="flex items-center justify-between gap-4">
-      <div className="flex items-center gap-1.5 text-muted">
-        <span
-          className="w-2 h-2 rounded-sm shrink-0"
-          style={{ background: color }}
-        />
-        <span>{label}</span>
-      </div>
+      <span className="text-muted">{label}</span>
       <span
-        className={`font-mono tabular-nums ${strong ? "text-text font-semibold" : "text-text"}`}
+        className={`font-mono tabular-nums ${strong ? "text-warn font-semibold" : "text-text"}`}
       >
-        {formatAmount(value, "CHF")}
+        {value}
       </span>
     </div>
   );
 }
 
-function enumerateMonths(start: string, end: string): string[] {
-  const [sy, sm] = start.split("-").map(Number);
-  const [ey, em] = end.split("-").map(Number);
-  const out: string[] = [];
-  let y = sy;
-  let m = sm;
-  while (y < ey || (y === ey && m <= em)) {
-    out.push(`${y}-${String(m).padStart(2, "0")}`);
-    m++;
-    if (m > 12) {
-      m = 1;
-      y++;
-    }
-  }
-  return out;
+/** "2026-01" + 6 → "2026-07" ; "2026-10" + 6 → "2027-04". */
+function addMonths(month: string, delta: number): string {
+  const [y, m] = month.split("-").map(Number);
+  const total = y * 12 + (m - 1) + delta;
+  const ny = Math.floor(total / 12);
+  const nm = (total % 12) + 1;
+  return `${ny}-${String(nm).padStart(2, "0")}`;
+}
+
+/** -1 if a < b, 0 equal, 1 if a > b. */
+function compareMonth(a: string, b: string): number {
+  return a.localeCompare(b);
 }
