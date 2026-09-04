@@ -207,12 +207,17 @@ function ExpensesByCategoryTable({
   vatByMonth: Record<string, number>;
   vatTotal: number;
 }) {
-  // Filtre : exclut la categorie 'C0' (Commission processeur) — les relevés
-  // emerchantpay sont des rentrees d'argent, pas des depenses de commission.
-  // Ils sont visibles a part dans la tuile 'Frais EMP' (source: Revenue.fees).
-  const filteredCategories = categories.filter(
-    (c) => c.code.toUpperCase() !== "C0",
-  );
+  // Filtre : exclut toute categorie 'Commission processeur' (code C0/CO ou
+  // label contenant 'commission'/'processeur'/'processor'/'emerchant').
+  // Les releves emerchantpay sont des rentrees d'argent, pas des depenses.
+  // Les vraies commissions sont dans la tuile 'Frais EMP' (Revenue.fees).
+  const filteredCategories = categories.filter((c) => {
+    const code = c.code.trim().toUpperCase().replace(/\s+/g, "");
+    if (code === "C0" || code === "CO") return false;
+    const lbl = (c.label || "").toLowerCase();
+    if (/(commission|processeur|processor|emerchant|payment\s+processor)/i.test(lbl)) return false;
+    return true;
+  });
   const monthTotals = months.map((m) =>
     filteredCategories.reduce((s, c) => s + (c.perMonth[m] ?? 0), 0),
   );
