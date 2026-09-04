@@ -179,7 +179,7 @@ export default function AnalysePage() {
           titleTooltip="Bénéfice brut = Chiffre d'affaires − Coûts directs (COGS). Les coûts directs sont ceux qu'on ne pourrait pas éviter en vendant plus : commissions processeur, infrastructure de prod (RunPod, DigitalOcean…), matières premières. Classification automatique : folder_codes commençant par 4."
           live
         >
-          <KpiGrid kpis={beneficeBrutKpis} percentAt={1} />
+          <KpiGrid kpis={beneficeBrutKpis} />
         </Section>
 
         <Section
