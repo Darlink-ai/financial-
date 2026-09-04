@@ -18,6 +18,7 @@ import {
 } from "@/lib/analyse-data";
 import { useFinancials, type MonthlyPnl } from "@/lib/analyse-financials";
 import { RollingReserveChart } from "@/components/analyse/RollingReserveChart";
+import { PnlWaterfall } from "@/components/analyse/PnlWaterfall";
 import { formatAmount } from "@/lib/format";
 import { formatMonthLabel } from "@/lib/store";
 import {
@@ -162,38 +163,6 @@ export default function AnalysePage() {
     },
   ];
 
-  // KPIs réels Bénéfice net = CA - dépenses (sommes des débits des 3 Excel,
-  // convertis en CHF).
-  const marginPct = agg.totals.revenue > 0
-    ? (agg.totals.net / agg.totals.revenue) * 100
-    : 0;
-  const netKpis: KPI[] = [
-    {
-      label: "Bénéfice net",
-      value: agg.totals.net,
-      currency: DISPLAY_CURRENCY,
-      hint: "CA − somme des débits des 3 rapprochements Excel (tout en CHF).",
-    },
-    {
-      label: "Marge nette",
-      value: marginPct,
-      currency: DISPLAY_CURRENCY,
-      hint: "Bénéfice net / CA.",
-    },
-    {
-      label: "Total dépenses",
-      value: agg.totals.expenses,
-      currency: DISPLAY_CURRENCY,
-      hint: "Somme des débits des 3 rapprochements Excel (convertis en CHF).",
-    },
-    {
-      label: "Nb de mois",
-      value: agg.months.length,
-      currency: DISPLAY_CURRENCY,
-      hint: "Période couverte par les calculs.",
-    },
-  ];
-
   return (
     <>
       <PageHeader
@@ -234,23 +203,18 @@ export default function AnalysePage() {
 
         <Section
           icon={Coins}
-          title="Bénéfice net"
-          subtitle="CA − dépenses (somme des débits des 3 rapprochements Excel, tout en CHF)."
+          title="Cascade P&L — du CA au Bénéfice net"
+          subtitle="Waterfall des marches comptables et ventilation détaillée par poste de dépense (Marketing, IT, Loyer, Salaires…). Chaque marche déduit les postes listés en dessous."
+          titleTooltip="Vue synthétique du compte de résultat : CA → −COGS = Bénéfice brut → −Personnel −Autres charges = EBITDA → −Amortissements = EBIT → −Charges financières −Impôts = Bénéfice net. Les postes détaillés (Marketing, IT, Salaires…) sont extraits automatiquement du folder_code de chaque facture validée."
           live
         >
-          <KpiGrid kpis={netKpis} percentAt={1} countAt={[3]} />
-          <SeriesChart
-            data={agg.series}
-            title="Évolution du résultat net (CHF)"
-            isLive
-          />
-          <ExpensesByCurrencyCard agg={agg} />
+          <PnlWaterfall totals={pnl.totals} subCategories={pnl.subCategories} />
         </Section>
 
         <Section
           icon={BarChart3}
           title="Bénéfice brut"
-          subtitle="CA − Coûts directs. Ventilation des dépenses depuis le folder_code des factures matched."
+          subtitle="CA − Coûts directs (COGS = folder_codes 4xxx). C'est ce que dégage l'activité avant frais généraux."
           titleTooltip="Bénéfice brut = Chiffre d'affaires − Coûts directs (COGS). Les coûts directs sont ceux qu'on ne pourrait pas éviter en vendant plus : commissions processeur, infrastructure de prod (RunPod, DigitalOcean…), matières premières. Classification automatique : folder_codes commençant par 4."
           live
         >
@@ -260,7 +224,7 @@ export default function AnalysePage() {
         <Section
           icon={Activity}
           title="EBITDA"
-          subtitle="Résultat opérationnel avant amortissements, intérêts et impôts."
+          subtitle="Résultat opérationnel avant amortissements, intérêts et impôts. Se calcule à partir du Bénéfice brut moins les charges d'exploitation courantes."
           titleTooltip="EBITDA = Earnings Before Interest, Taxes, Depreciation and Amortization. Calcul : Bénéfice brut − Charges de personnel (5xxx) − Autres charges d'exploitation (6xxx sauf 68xx). Mesure la performance opérationnelle brute de l'activité."
           live
         >
@@ -270,8 +234,8 @@ export default function AnalysePage() {
         <Section
           icon={LineChart}
           title="EBIT et Bénéfice net"
-          subtitle="Résultat d'exploitation après amortissements, puis après charges financières et impôts."
-          titleTooltip="EBIT = Earnings Before Interest and Taxes = EBITDA − Amortissements (68xx). Bénéfice net = EBIT − Charges financières (69xx) − Impôts (85xx). Si tu n'as pas encore saisi d'amortissements ou d'impôts dans les factures, EBIT ≈ EBITDA et Bénéfice net ≈ EBIT."
+          subtitle="EBIT = EBITDA − amortissements. Bénéfice net = EBIT − charges financières − impôts (donc généralement PLUS BAS que l'EBIT)."
+          titleTooltip="EBIT = Earnings Before Interest and Taxes = EBITDA − Amortissements (68xx). Bénéfice net = EBIT − Charges financières (69xx) − Impôts (85xx). Si tu n'as pas encore saisi d'amortissements ou d'impôts dans les factures, EBIT ≈ EBITDA et Bénéfice net ≈ EBIT — c'est ce qui explique pourquoi les 3 chiffres peuvent apparaître très proches actuellement."
           live
         >
           <KpiGrid kpis={ebitKpis} percentAt={1} />

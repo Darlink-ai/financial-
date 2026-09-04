@@ -63,12 +63,23 @@ export type CategoryBreakdown = {
   invoiceCount: number;
 };
 
+export type SubCategoryTotal = {
+  key: string;
+  label: string;
+  section: PnlSection;
+  amount: number;
+  invoiceCount: number;
+};
+
 export type FinancialsResult = {
   months: string[];
   byMonth: MonthlyPnl[];
   totals: PnlTotals;
   /** Répartition des charges par catégorie sur toute la période. */
   breakdown: CategoryBreakdown[];
+  /** Répartition fine par sous-catégorie (Marketing, IT, Loyer…). Triée
+   *  par montant décroissant. Sert au waterfall + à la vue "postes". */
+  subCategories: SubCategoryTotal[];
   /** Nombre de factures matched incluses dans le calcul. */
   matchedInvoiceCount: number;
   /** Factures matched sans folder_code (rangées dans "autres charges"). */
@@ -127,6 +138,67 @@ export function categoryLabel(cat: CategoryBreakdown["category"]): string {
   return CATEGORY_LABELS[cat];
 }
 
+/**
+ * Sous-catégorie plus fine, basée sur les 2 premiers chiffres du folder_code
+ * (plan comptable suisse PME). Permet de dire "Marketing", "IT", "Loyer"
+ * dans le waterfall — plus utile que juste "Autres charges".
+ *
+ * Retourne toujours un {label, section} — la section est la marche du
+ * waterfall (cogs, opex, amort, fin, tax) qui contient cette sous-catégorie.
+ */
+export type PnlSection = "cogs" | "opex" | "amort" | "fin" | "tax";
+
+export type SubCategoryInfo = {
+  key: string; // ex "61" pour IT, "66" pour marketing
+  label: string;
+  section: PnlSection;
+};
+
+const SUB_CATEGORIES: Record<string, SubCategoryInfo> = {
+  // 4xxx COGS
+  "40": { key: "40", label: "Matières premières", section: "cogs" },
+  "42": { key: "42", label: "Marchandises", section: "cogs" },
+  "44": { key: "44", label: "Prestations facturées (COGS)", section: "cogs" },
+  // 5xxx Personnel
+  "50": { key: "50", label: "Salaires", section: "opex" },
+  "51": { key: "51", label: "Salaires (bis)", section: "opex" },
+  "52": { key: "52", label: "Salaires (bis)", section: "opex" },
+  "53": { key: "53", label: "Salaires (bis)", section: "opex" },
+  "54": { key: "54", label: "Salaires (bis)", section: "opex" },
+  "55": { key: "55", label: "Salaires (bis)", section: "opex" },
+  "56": { key: "56", label: "Salaires (bis)", section: "opex" },
+  "57": { key: "57", label: "Charges sociales", section: "opex" },
+  "58": { key: "58", label: "Autres charges personnel", section: "opex" },
+  "59": { key: "59", label: "Prestations aux collaborateurs", section: "opex" },
+  // 6xxx Autres charges d'exploitation
+  "60": { key: "60", label: "Locaux (loyer, entretien)", section: "opex" },
+  "61": { key: "61", label: "IT & Infrastructure", section: "opex" },
+  "62": { key: "62", label: "Véhicules", section: "opex" },
+  "63": { key: "63", label: "Assurances & taxes", section: "opex" },
+  "64": { key: "64", label: "Énergie & évacuation", section: "opex" },
+  "65": { key: "65", label: "Administration & communication", section: "opex" },
+  "66": { key: "66", label: "Marketing & publicité", section: "opex" },
+  "67": { key: "67", label: "Autres charges d'exploit.", section: "opex" },
+  "68": { key: "68", label: "Amortissements", section: "amort" },
+  "69": { key: "69", label: "Frais financiers", section: "fin" },
+  // 85xx impôts
+  "85": { key: "85", label: "Impôts directs", section: "tax" },
+};
+
+export function classifySubCategory(code: string | null): SubCategoryInfo {
+  if (!code) return { key: "??", label: "Non classé", section: "opex" };
+  const c = code.trim();
+  if (c.length < 2) return { key: "??", label: "Non classé", section: "opex" };
+  const two = c.slice(0, 2);
+  return (
+    SUB_CATEGORIES[two] ?? {
+      key: two,
+      label: `Autre (${two}xxx)`,
+      section: "opex",
+    }
+  );
+}
+
 function toChf(amount: number, currency: string | null, month: string): number {
   const c = (currency || "CHF").toUpperCase();
   if (!(c in DEFAULT_FX_TO_CHF)) return amount;
@@ -179,6 +251,7 @@ export function useFinancials(period: Period): FinancialsResult {
     // Charges par mois × catégorie (converti CHF au taux du mois).
     let uncategorized = 0;
     const breakdownMap = new Map<CategoryBreakdown["category"], { amount: number; count: number }>();
+    const subMap = new Map<string, SubCategoryTotal>();
     for (const inv of matched) {
       const m = inv.invoiceDate!.slice(0, 7);
       const row = byMonthMap.get(m);
@@ -193,6 +266,18 @@ export function useFinancials(period: Period): FinancialsResult {
       b.amount += amt;
       b.count += 1;
       breakdownMap.set(cat, b);
+      // Sous-catégorie fine (pour waterfall détaillé).
+      const sub = classifySubCategory(inv.folderCode);
+      const existing = subMap.get(sub.key) ?? {
+        key: sub.key,
+        label: sub.label,
+        section: sub.section,
+        amount: 0,
+        invoiceCount: 0,
+      };
+      existing.amount += amt;
+      existing.invoiceCount += 1;
+      subMap.set(sub.key, existing);
     }
 
     // Calcul dérivés par mois.
@@ -252,11 +337,16 @@ export function useFinancials(period: Period): FinancialsResult {
       }))
       .sort((a, b) => b.amount - a.amount);
 
+    const subCategories: SubCategoryTotal[] = Array.from(subMap.values()).sort(
+      (a, b) => b.amount - a.amount,
+    );
+
     return {
       months,
       byMonth,
       totals,
       breakdown,
+      subCategories,
       matchedInvoiceCount: matched.length,
       uncategorizedCount: uncategorized,
     };
