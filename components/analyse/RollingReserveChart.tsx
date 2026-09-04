@@ -225,29 +225,55 @@ export function RollingReserveChart({
                     const rectY = y1;
                     y0 = y1;
                     const anyHover = hover?.monthIdx === i;
+                    // Choix couleur label : sombre sur fond clair (jaune),
+                    // clair sur fond fonce (orange). Basé sur l'index — les
+                    // segments proches du haut sont plus clairs.
+                    const t = d.segments.length > 1 ? si / (d.segments.length - 1) : 1;
+                    const labelColor = t > 0.5 ? "#7c2d12" : "#fef3c7";
+                    // Label mois d'origine formaté "MM/YY"
+                    const monthLabel = `${seg.from.slice(5)}/${seg.from.slice(2, 4)}`;
                     return (
-                      <rect
-                        key={`${d.month}-${si}`}
-                        x={xOf(i) - barW / 2}
-                        y={rectY}
-                        width={barW}
-                        height={Math.max(0, h)}
-                        fill={segColor(si, d.segments.length)}
-                        opacity={anyHover && !isHover ? 0.45 : 1}
-                        stroke={isHover ? "#0f1525" : "#f7f5ee"}
-                        strokeWidth={isHover ? 1.5 : 0.5}
-                        style={{ transition: "opacity .15s" }}
-                        onMouseEnter={() =>
-                          setHover({
-                            monthIdx: i,
-                            segIdx: si,
-                            label: d.month,
-                            from: seg.from,
-                            release: seg.release,
-                            amount: seg.amount,
-                          })
-                        }
-                      />
+                      <g key={`${d.month}-${si}`}>
+                        <rect
+                          x={xOf(i) - barW / 2}
+                          y={rectY}
+                          width={barW}
+                          height={Math.max(0, h)}
+                          fill={segColor(si, d.segments.length)}
+                          opacity={anyHover && !isHover ? 0.45 : 1}
+                          stroke={isHover ? "#0f1525" : "#f7f5ee"}
+                          strokeWidth={isHover ? 1.5 : 0.5}
+                          style={{ transition: "opacity .15s" }}
+                          onMouseEnter={() =>
+                            setHover({
+                              monthIdx: i,
+                              segIdx: si,
+                              label: d.month,
+                              from: seg.from,
+                              release: seg.release,
+                              amount: seg.amount,
+                            })
+                          }
+                        />
+                        {/* Label mois d'origine centré dans le segment, seulement
+                            si assez de place (hauteur >= 18px). */}
+                        {h >= 18 && (
+                          <text
+                            x={xOf(i)}
+                            y={rectY + h / 2 + 4}
+                            fontSize={11}
+                            fontWeight={600}
+                            textAnchor="middle"
+                            fill={labelColor}
+                            fontFamily="ui-monospace, SFMono-Regular, monospace"
+                            pointerEvents="none"
+                            opacity={anyHover && !isHover ? 0.5 : 1}
+                            style={{ transition: "opacity .15s" }}
+                          >
+                            {monthLabel}
+                          </text>
+                        )}
+                      </g>
                     );
                   })}
                   <text
