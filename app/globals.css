@@ -2,30 +2,100 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * SYSTÈME DE THÈMES — deux palettes complètes.
+ *
+ * Chaque couleur est déclarée en canaux HSL (sans hsl(…) wrapper) pour que
+ * Tailwind puisse composer des opacity modifiers via `hsl(var(--panel) / N)`.
+ *
+ * Sélecteurs :
+ *   :root                                → palette light par défaut
+ *   [data-theme="dark"]                  → force dark (préférence utilisateur)
+ *   [data-theme="light"]                 → force light
+ *   :root:not([data-theme])              → suit prefers-color-scheme du système
+ */
+
 :root {
+  color-scheme: light;
+  /* Fond + surfaces : blancs très légèrement teintés bleu */
+  --bg: 217 41% 98%;
+  --panel: 0 0% 100%;
+  --panel2: 214 45% 96%;
+  --panel3: 214 42% 94%;
+  --border: 215 27% 89%;
+  --border-hover: 215 22% 78%;
+  /* Accents : bleus plus sombres pour contraste sur fond clair */
+  --accent: 217 91% 53%;
+  --accent2: 217 91% 60%;
+  --accent3: 191 91% 36%;
+  /* Status */
+  --ok: 160 91% 32%;
+  --warn: 28 91% 37%;
+  --err: 0 74% 51%;
+  --muted: 215 16% 47%;
+  --text: 222 47% 11%;
+  /* Gradients / effets ambiants */
+  --ambient-1: 217 91% 60%;
+  --ambient-1-alpha: 0.06;
+  --ambient-2: 187 85% 53%;
+  --ambient-2-alpha: 0.05;
+}
+
+/* Auto : suit le système quand pas d'override utilisateur */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: 222 55% 6%;
+    --panel: 222 44% 10%;
+    --panel2: 220 38% 15%;
+    --panel3: 219 37% 20%;
+    --border: 219 33% 21%;
+    --border-hover: 219 30% 29%;
+    --accent: 213 94% 68%;
+    --accent2: 217 91% 60%;
+    --accent3: 187 85% 53%;
+    --ok: 156 64% 52%;
+    --warn: 43 96% 56%;
+    --err: 0 91% 71%;
+    --muted: 215 20% 65%;
+    --text: 217 100% 96%;
+    --ambient-1: 217 91% 60%;
+    --ambient-1-alpha: 0.08;
+    --ambient-2: 187 85% 53%;
+    --ambient-2-alpha: 0.05;
+  }
+}
+
+/* Override utilisateur explicite → gagne toujours contre le système */
+:root[data-theme="dark"] {
   color-scheme: dark;
-  /* Mêmes valeurs que tailwind.config.ts — gardées en CSS pour
-     les composants stylés à la main (cards, btn, badge, etc.) */
-  --bg: #070b16;
-  --panel: #0f1525;
-  --panel2: #172033;
-  --panel3: #1f2a44;
-  --border: #243049;
-  --border-hover: #33425f;
-  --accent: #60a5fa;
-  --accent2: #3b82f6;
-  --accent3: #22d3ee;
-  --text: #eaf1ff;
-  --muted: #94a3b8;
+  --bg: 222 55% 6%;
+  --panel: 222 44% 10%;
+  --panel2: 220 38% 15%;
+  --panel3: 219 37% 20%;
+  --border: 219 33% 21%;
+  --border-hover: 219 30% 29%;
+  --accent: 213 94% 68%;
+  --accent2: 217 91% 60%;
+  --accent3: 187 85% 53%;
+  --ok: 156 64% 52%;
+  --warn: 43 96% 56%;
+  --err: 0 91% 71%;
+  --muted: 215 20% 65%;
+  --text: 217 100% 96%;
+  --ambient-1: 217 91% 60%;
+  --ambient-1-alpha: 0.08;
+  --ambient-2: 187 85% 53%;
+  --ambient-2-alpha: 0.05;
 }
 
 html,
 body {
   background:
-    radial-gradient(1200px 600px at 100% -10%, rgba(59, 130, 246, 0.08), transparent 60%),
-    radial-gradient(900px 500px at -10% 110%, rgba(34, 211, 238, 0.05), transparent 60%),
-    var(--bg);
-  color: var(--text);
+    radial-gradient(1200px 600px at 100% -10%, hsl(var(--ambient-1) / var(--ambient-1-alpha)), transparent 60%),
+    radial-gradient(900px 500px at -10% 110%, hsl(var(--ambient-2) / var(--ambient-2-alpha)), transparent 60%),
+    hsl(var(--bg));
+  color: hsl(var(--text));
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   min-height: 100vh;
 }
@@ -42,20 +112,20 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--border);
+  background: hsl(var(--border));
   border-radius: 999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--border-hover);
+  background: hsl(var(--border-hover));
 }
 
 .card {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.015), transparent),
-    var(--panel);
-  border: 1px solid var(--border);
+  background: linear-gradient(180deg, hsl(var(--text) / 0.015), transparent),
+    hsl(var(--panel));
+  border: 1px solid hsl(var(--border));
   border-radius: 14px;
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset,
-    0 8px 24px -16px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 1px 0 hsl(var(--text) / 0.03) inset,
+    0 8px 24px -16px hsl(var(--bg) / 0.6);
 }
 
 .btn {
@@ -64,36 +134,35 @@ body {
   gap: 8px;
   padding: 8px 14px;
   border-radius: 10px;
-  border: 1px solid var(--border);
-  background: var(--panel2);
-  color: var(--text);
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--panel2));
+  color: hsl(var(--text));
   font-size: 13px;
   font-weight: 500;
   transition: background 120ms ease, border-color 120ms ease, transform 80ms ease;
   cursor: pointer;
 }
 .btn:hover {
-  background: var(--panel3);
-  border-color: var(--border-hover);
+  background: hsl(var(--panel3));
+  border-color: hsl(var(--border-hover));
 }
 .btn:active {
   transform: translateY(0.5px);
 }
 .btn-primary {
-  background: linear-gradient(180deg, #60a5fa 0%, #3b82f6 100%);
-  border-color: #3b82f6;
+  background: linear-gradient(180deg, hsl(var(--accent)) 0%, hsl(var(--accent2)) 100%);
+  border-color: hsl(var(--accent2));
   color: white;
-  box-shadow: 0 6px 18px -8px rgba(59, 130, 246, 0.6);
+  box-shadow: 0 6px 18px -8px hsl(var(--accent2) / 0.6);
 }
 .btn-primary:hover {
-  background: linear-gradient(180deg, #7eb6fb 0%, #4f93fa 100%);
-  border-color: #4f93fa;
+  filter: brightness(1.1);
 }
 
 .input {
-  background: #0a1020;
-  border: 1px solid var(--border);
-  color: var(--text);
+  background: hsl(var(--bg));
+  border: 1px solid hsl(var(--border));
+  color: hsl(var(--text));
   padding: 8px 12px;
   border-radius: 10px;
   font-size: 13px;
@@ -102,13 +171,13 @@ body {
   transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 .input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.15);
+  border-color: hsl(var(--accent));
+  box-shadow: 0 0 0 3px hsl(var(--accent) / 0.15);
 }
 .input:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-  background: #080d18;
+  background: hsl(var(--panel2) / 0.5);
 }
 .btn:disabled {
   cursor: not-allowed;
@@ -123,38 +192,38 @@ body {
   border-radius: 999px;
   font-size: 11px;
   font-weight: 500;
-  border: 1px solid var(--border);
-  background: #0a1020;
-  color: var(--muted);
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--bg));
+  color: hsl(var(--muted));
 }
 .badge.ok {
-  border-color: rgba(52, 211, 153, 0.35);
-  background: rgba(52, 211, 153, 0.12);
-  color: #6ee7b7;
+  border-color: hsl(var(--ok) / 0.35);
+  background: hsl(var(--ok) / 0.12);
+  color: hsl(var(--ok));
 }
 .badge.warn {
-  border-color: rgba(251, 191, 36, 0.35);
-  background: rgba(251, 191, 36, 0.12);
-  color: #fcd34d;
+  border-color: hsl(var(--warn) / 0.35);
+  background: hsl(var(--warn) / 0.12);
+  color: hsl(var(--warn));
 }
 .badge.err {
-  border-color: rgba(248, 113, 113, 0.35);
-  background: rgba(248, 113, 113, 0.12);
-  color: #fca5a5;
+  border-color: hsl(var(--err) / 0.35);
+  background: hsl(var(--err) / 0.12);
+  color: hsl(var(--err));
 }
 .badge.info {
-  border-color: rgba(96, 165, 250, 0.4);
-  background: rgba(96, 165, 250, 0.15);
-  color: #93c5fd;
+  border-color: hsl(var(--accent) / 0.4);
+  background: hsl(var(--accent) / 0.15);
+  color: hsl(var(--accent));
 }
 
 /* Surface "accentée" : panneau avec un léger glow bleu, pour mettre en avant
    les cartes KPI ou les sections d'analyse financière. */
 .card-accent {
   background:
-    linear-gradient(180deg, rgba(96, 165, 250, 0.08), transparent 60%),
-    var(--panel);
-  border: 1px solid rgba(96, 165, 250, 0.25);
+    linear-gradient(180deg, hsl(var(--accent) / 0.08), transparent 60%),
+    hsl(var(--panel));
+  border: 1px solid hsl(var(--accent) / 0.25);
   border-radius: 14px;
-  box-shadow: 0 10px 30px -18px rgba(59, 130, 246, 0.5);
+  box-shadow: 0 10px 30px -18px hsl(var(--accent2) / 0.5);
 }

@@ -34,6 +34,9 @@ const PUBLIC_PATHS = [
   "/api/invoices/archive-unmatched",
   // unarchive : restaure une facture archivée, auth Bearer ou cookie.
   "/api/invoices/unarchive",
+  // set-passwords : provisionne les mots de passe pour les emails autorises,
+  // auth Bearer.
+  "/api/admin/set-passwords",
 ];
 
 function isPublic(pathname: string): boolean {
