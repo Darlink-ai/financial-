@@ -30,6 +30,7 @@ export default function TvaPage() {
     availableMonths[0] ?? currentMonthIso(),
   );
   const [previewCountry, setPreviewCountry] = useState<VatCountry | null>(null);
+  const [showGlobal, setShowGlobal] = useState(false);
 
   const summary = useMemo(() => {
     return computeVatByCountry(revenues, selectedMonth);
@@ -160,13 +161,22 @@ export default function TvaPage() {
                       {formatAmount(totalCA + totalVat, "CHF")}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <button
-                        onClick={() => downloadCsv(summary.rows, selectedMonth)}
-                        className="btn !py-1 !px-2.5 text-[11px]"
-                        title="Exporter tout le tableau en CSV"
-                      >
-                        <Download size={11} /> CSV
-                      </button>
+                      <div className="flex justify-end gap-1.5">
+                        <button
+                          onClick={() => setShowGlobal(true)}
+                          className="btn btn-primary !py-1 !px-2.5 text-[11px]"
+                          title="Générer une facture recapitulative avec tous les pays et le total TVA du mois"
+                        >
+                          <FileText size={11} /> Facture globale
+                        </button>
+                        <button
+                          onClick={() => downloadCsv(summary.rows, selectedMonth)}
+                          className="btn !py-1 !px-2.5 text-[11px]"
+                          title="Exporter tout le tableau en CSV"
+                        >
+                          <Download size={11} /> CSV
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 </tbody>
@@ -193,6 +203,16 @@ export default function TvaPage() {
           month={selectedMonth}
           row={summary.rows.find((r) => r.country.iso === previewCountry.iso)!}
           onClose={() => setPreviewCountry(null)}
+        />
+      )}
+
+      {showGlobal && summary.rows.length > 0 && (
+        <GlobalInvoiceModal
+          month={selectedMonth}
+          rows={summary.rows}
+          totalCA={totalCA}
+          totalVat={totalVat}
+          onClose={() => setShowGlobal(false)}
         />
       )}
     </>
@@ -441,6 +461,192 @@ function InvoiceModal({
             module Revenus. Sert de justificatif interne pour la déclaration
             TVA {country.isUk ? "UK" : "OSS UE"}. À valider par la fiduciaire
             avant transmission officielle.
+          </div>
+        </div>
+
+        {/* Actions (non imprimées) */}
+        <div className="p-4 bg-gray-50 border-t border-gray-200 flex justify-end gap-2 rounded-b-lg print:hidden">
+          <button
+            onClick={onClose}
+            className="px-4 py-1.5 text-[12px] font-medium text-gray-700 hover:bg-gray-100 rounded"
+          >
+            Fermer
+          </button>
+          <button
+            onClick={() => window.print()}
+            className="px-4 py-1.5 text-[12px] font-medium bg-blue-600 text-white hover:bg-blue-700 rounded inline-flex items-center gap-1.5"
+          >
+            <Download size={12} /> Imprimer / PDF
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Modal facture GLOBALE : tous les pays UE+UK d'un mois dans un seul
+ *  document, avec ligne récap par pays et total TVA à collecter en bas.
+ *  Sert de justificatif consolidé pour la déclaration mensuelle. */
+function GlobalInvoiceModal({
+  month,
+  rows,
+  totalCA,
+  totalVat,
+  onClose,
+}: {
+  month: string;
+  rows: VatRow[];
+  totalCA: number;
+  totalVat: number;
+  onClose: () => void;
+}) {
+  const monthLabel = formatMonthLabel(month);
+  const today = new Date().toLocaleDateString("fr-CH", {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  });
+  const invoiceNumber = `VAT-${month.replace("-", "")}-GLOBAL`;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4 overflow-auto"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white text-black rounded-lg shadow-2xl max-w-3xl w-full my-8 print:my-0 print:shadow-none print:max-w-full"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="p-8 print:p-6" style={{ fontFamily: "Inter, system-ui, sans-serif" }}>
+          {/* Header */}
+          <div className="flex justify-between items-start mb-8 pb-4 border-b border-gray-300">
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-gray-500 mb-1">
+                Justificatif TVA — Récapitulatif mensuel
+              </div>
+              <div className="text-[22px] font-semibold">FameLink SA</div>
+              <div className="text-[11px] text-gray-600 mt-1">Suisse · Assujettie TVA CH</div>
+            </div>
+            <div className="text-right">
+              <div className="text-[11px] text-gray-500">N° {invoiceNumber}</div>
+              <div className="text-[11px] text-gray-500 mt-1">Émis le {today}</div>
+            </div>
+          </div>
+
+          {/* Période */}
+          <div className="mb-6">
+            <div className="text-[10px] uppercase tracking-wider text-gray-500 mb-1">
+              Période de déclaration
+            </div>
+            <div className="text-[18px] font-semibold">{monthLabel}</div>
+            <div className="text-[11px] text-gray-600 mt-1">
+              Ventes B2C aux consommateurs UE + UK sur {rows.length} territoire{rows.length > 1 ? "s" : ""} fiscal{rows.length > 1 ? "" : ""}
+            </div>
+          </div>
+
+          {/* Tableau récap par pays */}
+          <div className="mb-6">
+            <div className="text-[10px] uppercase tracking-wider text-gray-500 mb-2">
+              Ventilation par pays
+            </div>
+            <table className="w-full text-[11.5px] border-collapse">
+              <thead>
+                <tr className="border-b border-gray-300 text-gray-600">
+                  <th className="text-left py-2 font-medium">Territoire</th>
+                  <th className="text-right py-2 font-medium">CA HT (CHF)</th>
+                  <th className="text-right py-2 font-medium">Taux</th>
+                  <th className="text-right py-2 font-medium">TVA (CHF)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.country.iso} className="border-b border-gray-100">
+                    <td className="py-1.5">
+                      <span className="font-mono text-[10px] text-gray-500 mr-2">
+                        {r.country.iso}
+                      </span>
+                      {r.country.name}
+                      {r.country.isUk && (
+                        <span className="text-[9.5px] text-gray-500 ml-2">
+                          (hors UE)
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-1.5 text-right font-mono tabular-nums">
+                      {r.amountChf.toFixed(2)}
+                    </td>
+                    <td className="py-1.5 text-right font-mono tabular-nums text-blue-700">
+                      {r.country.rate}%
+                    </td>
+                    <td className="py-1.5 text-right font-mono tabular-nums text-amber-700 font-medium">
+                      {r.vatChf.toFixed(2)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="border-t-2 border-gray-400 font-semibold">
+                  <td className="py-2">Total {rows.length} pays</td>
+                  <td className="py-2 text-right font-mono tabular-nums">
+                    {totalCA.toFixed(2)} CHF
+                  </td>
+                  <td className="py-2 text-right text-gray-500 text-[10px]">
+                    {totalCA > 0 ? `${((totalVat / totalCA) * 100).toFixed(1)}% eff.` : "—"}
+                  </td>
+                  <td className="py-2 text-right font-mono tabular-nums text-amber-700">
+                    {totalVat.toFixed(2)} CHF
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          {/* Montant final dû — bloc mis en avant */}
+          <div className="border-2 border-amber-500 bg-amber-50 rounded-md p-5 mt-6">
+            <div className="flex justify-between items-baseline">
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-amber-700 font-medium mb-1">
+                  Montant TVA à collecter et reverser
+                </div>
+                <div className="text-[11px] text-gray-700">
+                  Pour la période {monthLabel} · Régime OSS UE
+                  {rows.some((r) => r.country.isUk) ? " + UK" : ""}
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-[28px] font-bold font-mono tabular-nums text-amber-800">
+                  {totalVat.toFixed(2)} CHF
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Sous-totaux CA HT / TTC */}
+          <div className="mt-6 grid grid-cols-2 gap-4 text-[12px]">
+            <div className="border border-gray-200 rounded p-3">
+              <div className="text-[10px] uppercase tracking-wider text-gray-500 mb-1">
+                Base imposable (CA HT)
+              </div>
+              <div className="font-mono tabular-nums font-semibold">
+                {totalCA.toFixed(2)} CHF
+              </div>
+            </div>
+            <div className="border border-gray-200 rounded p-3">
+              <div className="text-[10px] uppercase tracking-wider text-gray-500 mb-1">
+                Montant total TTC
+              </div>
+              <div className="font-mono tabular-nums font-semibold">
+                {(totalCA + totalVat).toFixed(2)} CHF
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-8 text-[10px] text-gray-500 border-t border-gray-200 pt-3">
+            Document consolidé généré automatiquement à partir du CA saisi
+            dans le module Revenus. Sert de justificatif interne pour la
+            déclaration TVA mensuelle. Taux appliqués = taux standard de
+            chaque pays au {today}. À valider par la fiduciaire avant
+            transmission officielle aux administrations fiscales.
           </div>
         </div>
 
