@@ -12,7 +12,14 @@ export type InvoiceStatus =
   | "renamed"
   | "uploaded"
   | "matched"
-  | "manual";
+  | "manual"
+  /**
+   * "Fichier 0" — la facture n'a pas été rapprochée et l'utilisateur a
+   * décidé de la mettre de côté (ne correspond à rien de traitable).
+   * Elle sort de la vue "à traiter" et affiche un badge jaune sur /excel.
+   * Réversible : on peut la repasser en 'renamed' pour la retraiter.
+   */
+  | "archived";
 
 export type Invoice = {
   id: string;

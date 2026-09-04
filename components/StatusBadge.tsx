@@ -8,6 +8,7 @@ const map: Record<InvoiceStatus, { label: string; tone: "info" | "warn" | "ok" |
   uploaded: { label: "Sur Drive", tone: "ok" },
   matched: { label: "Excel ✓", tone: "ok" },
   manual: { label: "Manuel", tone: "warn" },
+  archived: { label: "Fichier 0", tone: "warn" },
 };
 
 export function StatusBadge({ status }: { status: InvoiceStatus }) {

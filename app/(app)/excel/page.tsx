@@ -169,6 +169,12 @@ export default function ExcelPage() {
       });
   }, [matches, allMonthInvoices, currency]);
 
+  // Factures archivées ("fichier 0") pour ce mois — toutes devises confondues.
+  // Elles sortent de la vue "à traiter" mais restent en DB, restaurables.
+  const archivedInvoices = useMemo<Invoice[]>(() => {
+    return allMonthInvoices.filter((i) => i.status === "archived");
+  }, [allMonthInvoices]);
+
   const loadSheet = (wb: XLSX.WorkBook, name: string) => {
     const ws = wb.Sheets[name];
     const rows: (string | number | null)[][] = XLSX.utils.sheet_to_json(ws, {
@@ -487,10 +493,36 @@ export default function ExcelPage() {
                 <div className="px-5 py-3 border-b border-border flex items-center gap-2">
                   <AlertCircle size={14} className="text-warn" />
                   <div className="text-[13px] font-medium">Factures sans ligne correspondante</div>
-                  <span className="text-[11px] text-muted ml-auto">
+                  <button
+                    onClick={async () => {
+                      if (
+                        !confirm(
+                          `Envoyer ${unmatchedInvoices.length} facture(s) non-validée(s) de ${formatMonthLabel(selectedMonth)} dans le « Fichier 0 » (archivées, sortent de cette vue) ?\n\nRéversible ligne par ligne via le bouton « Restaurer ».`,
+                        )
+                      )
+                        return;
+                      const r = await fetch(`/api/invoices/archive-unmatched`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          startMonth: selectedMonth,
+                          endMonth: selectedMonth,
+                        }),
+                      });
+                      if (!r.ok) {
+                        alert(`Archivage échoué (HTTP ${r.status}).`);
+                        return;
+                      }
+                      await reloadFromDb();
+                    }}
+                    className="btn !py-1 !px-2.5 text-[11px] ml-auto"
+                    title={`Passer les ${unmatchedInvoices.length} factures non-validées de ce mois dans le Fichier 0.`}
+                  >
+                    Tout envoyer au Fichier 0
+                  </button>
+                  <span className="text-[11px] text-muted">
                     Tape le n° de la ligne Excel à droite pour rapprocher
-                    manuellement, sinon elles iront dans « À traiter
-                    manuellement ».
+                    manuellement.
                   </span>
                 </div>
                 <div className="divide-y divide-border">
@@ -551,6 +583,53 @@ export default function ExcelPage() {
                 </div>
               </section>
             )}
+
+            {/* Section "Fichier 0" — factures archivées (non-traitables mais
+                gardées en DB). Badge jaune, restaurable au clic. */}
+            {archivedInvoices.length > 0 && (
+              <section className="card overflow-hidden">
+                <div className="px-5 py-3 border-b border-border flex items-center gap-2">
+                  <span
+                    className="inline-flex items-center gap-1.5 text-[11px] font-medium px-2 py-0.5 rounded border"
+                    style={{
+                      background: "rgba(234, 179, 8, 0.12)",
+                      borderColor: "rgba(234, 179, 8, 0.4)",
+                      color: "rgb(234, 179, 8)",
+                    }}
+                    title="Fichier 0 : dépôt des factures que l'utilisateur a mises de côté (ne correspondent à rien de traitable). Restaurable ligne par ligne."
+                  >
+                    Fichier 0
+                  </span>
+                  <div className="text-[13px] font-medium">
+                    Factures archivées ({archivedInvoices.length})
+                  </div>
+                  <span className="text-[11px] text-muted ml-auto">
+                    Sorties de la vue « à traiter ». Clique « Restaurer » pour
+                    les renvoyer dans la liste normale.
+                  </span>
+                </div>
+                <div className="divide-y divide-border">
+                  {archivedInvoices.map((i) => (
+                    <ArchivedRow
+                      key={i.id}
+                      invoice={i}
+                      onRestore={async () => {
+                        const r = await fetch(`/api/invoices/unarchive`, {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ id: i.id }),
+                        });
+                        if (!r.ok) {
+                          alert(`Restauration échouée (HTTP ${r.status}).`);
+                          return;
+                        }
+                        await reloadFromDb();
+                      }}
+                    />
+                  ))}
+                </div>
+              </section>
+            )}
           </>
         )}
 
@@ -566,6 +645,54 @@ export default function ExcelPage() {
         />
       </div>
     </>
+  );
+}
+
+/**
+ * Ligne du bandeau "Fichier 0" — facture archivée (mise de côté par l'user).
+ * Affichage read-only avec un bouton "Restaurer" qui la repasse en 'renamed'
+ * pour la remettre dans la liste normale.
+ */
+function ArchivedRow({
+  invoice,
+  onRestore,
+}: {
+  invoice: Invoice;
+  onRestore: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const restore = async () => {
+    setBusy(true);
+    try {
+      await onRestore();
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="px-5 py-2.5 flex items-center gap-3 text-[12px] opacity-80">
+      <span className="w-1 h-4 rounded shrink-0" style={{ background: "rgb(234, 179, 8)" }} />
+      <span className="font-medium truncate max-w-[180px]" title={invoice.creditor ?? undefined}>
+        {invoice.creditor ?? "—"}
+      </span>
+      <span className="text-muted truncate flex-1 min-w-0" title={invoice.subject}>
+        — {invoice.subject}
+      </span>
+      <span className="font-mono text-muted text-right">
+        {invoice.amount != null ? `${invoice.amount} ${invoice.currency ?? ""}` : "—"}
+      </span>
+      <span className="text-[10px] text-muted">
+        {invoice.invoiceDate?.slice(0, 10) ?? "sans date"}
+      </span>
+      <button
+        onClick={restore}
+        disabled={busy}
+        className="btn !py-1 !px-2.5 text-[11px] disabled:opacity-50"
+        title="Repasser la facture dans la vue « à traiter »."
+      >
+        {busy ? "…" : "Restaurer"}
+      </button>
+    </div>
   );
 }
 

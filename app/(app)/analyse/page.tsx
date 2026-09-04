@@ -11,17 +11,14 @@ import {
   formatPeriodLabel,
   type Period,
 } from "@/components/AnalysePeriodPicker";
-import {
-  mockBeneficeBrut,
-  mockEbitda,
-  mockEbit,
-  type KPI,
-} from "@/lib/analyse-mock";
+import { type KPI } from "@/lib/analyse-mock";
 import {
   DISPLAY_CURRENCY,
   useAnalyseAggregates,
 } from "@/lib/analyse-data";
+import { useFinancials, type MonthlyPnl } from "@/lib/analyse-financials";
 import { formatAmount } from "@/lib/format";
+import { formatMonthLabel } from "@/lib/store";
 import {
   TrendingUp,
   BarChart3,
@@ -37,12 +34,96 @@ type IconType = typeof TrendingUp;
 export default function AnalysePage() {
   const [period, setPeriod] = useState<Period>(defaultPeriod());
   const agg = useAnalyseAggregates(period);
+  // P&L LIVE — recalcul auto à chaque validation de facture (les charges
+  // sont ventilées par folder_code via lib/analyse-financials).
+  const pnl = useFinancials(period);
 
-  // Pour les sections "Bénéfice brut", EBITDA et EBIT on garde des mocks
-  // tant qu'on n'a pas la donnée nécessaire (cogs, amortissements, etc.).
-  const brut = mockBeneficeBrut(period);
-  const ebitda = mockEbitda(period);
-  const ebit = mockEbit(period);
+  const beneficeBrutKpis: KPI[] = [
+    {
+      label: "Bénéfice brut",
+      value: pnl.totals.beneficeBrut,
+      currency: DISPLAY_CURRENCY,
+      hint: "CA − Coûts directs (COGS = folder_codes 4xxx). Ce que génère l'activité avant charges d'exploitation.",
+    },
+    {
+      label: "Marge brute",
+      value: pnl.totals.revenue > 0
+        ? (pnl.totals.beneficeBrut / pnl.totals.revenue) * 100
+        : 0,
+      currency: DISPLAY_CURRENCY,
+      hint: "Bénéfice brut / Chiffre d'affaires.",
+    },
+    {
+      label: "Chiffre d'affaires",
+      value: pnl.totals.revenue,
+      currency: DISPLAY_CURRENCY,
+      hint: "Somme des revenus saisis sur la période, convertie en CHF au taux du mois.",
+    },
+    {
+      label: "Coûts directs (COGS)",
+      value: pnl.totals.cogs,
+      currency: DISPLAY_CURRENCY,
+      hint: "Somme des factures matched avec folder_code commençant par 4 (achats de marchandises et prestations, commissions processeur, infrastructure de prod).",
+    },
+  ];
+
+  const ebitdaKpis: KPI[] = [
+    {
+      label: "EBITDA",
+      value: pnl.totals.ebitda,
+      currency: DISPLAY_CURRENCY,
+      hint: "Bénéfice brut − Charges de personnel − Autres charges d'exploitation. Résultat opérationnel avant amortissements, intérêts et impôts.",
+    },
+    {
+      label: "Marge EBITDA",
+      value: pnl.totals.revenue > 0
+        ? (pnl.totals.ebitda / pnl.totals.revenue) * 100
+        : 0,
+      currency: DISPLAY_CURRENCY,
+      hint: "EBITDA / Chiffre d'affaires.",
+    },
+    {
+      label: "Charges de personnel",
+      value: pnl.totals.personnel,
+      currency: DISPLAY_CURRENCY,
+      hint: "Somme des factures matched avec folder_code 5xxx (salaires, mandats indépendants, charges sociales).",
+    },
+    {
+      label: "Autres charges d'exploit.",
+      value: pnl.totals.autresCharges,
+      currency: DISPLAY_CURRENCY,
+      hint: "Somme des factures matched avec folder_code 6xxx sauf 68xx (loyer, marketing, IT, admin) + factures non classées.",
+    },
+  ];
+
+  const ebitKpis: KPI[] = [
+    {
+      label: "EBIT",
+      value: pnl.totals.ebit,
+      currency: DISPLAY_CURRENCY,
+      hint: "EBITDA − Amortissements et corrections de valeur. Résultat d'exploitation courant (Earnings Before Interest and Taxes).",
+    },
+    {
+      label: "Marge EBIT",
+      value: pnl.totals.revenue > 0
+        ? (pnl.totals.ebit / pnl.totals.revenue) * 100
+        : 0,
+      currency: DISPLAY_CURRENCY,
+      hint: "EBIT / Chiffre d'affaires.",
+    },
+    {
+      label: "Amortissements",
+      value: pnl.totals.amortissements,
+      currency: DISPLAY_CURRENCY,
+      hint: "Somme des factures matched avec folder_code 68xx. Généralement 0 côté factures — les amortissements sont saisis manuellement en compta.",
+    },
+    {
+      label: "Bénéfice net",
+      value: pnl.totals.beneficeNet,
+      currency: DISPLAY_CURRENCY,
+      hint: "EBIT − Charges financières (69xx) − Impôts (85xx). Ce qui reste après tout.",
+    },
+  ];
 
   // KPIs réels CA — somme capturedAmount sur la période, convertie en CHF
   // via taux moyens mensuels. 4 tuiles : CA total, Net, Volume EMP, Volume Centrobill.
@@ -167,34 +248,192 @@ export default function AnalysePage() {
         <Section
           icon={BarChart3}
           title="Bénéfice brut"
-          subtitle="CA − coûts directs (commissions processeur + infrastructure de prod) — à calculer."
+          subtitle="CA − Coûts directs. Ventilation des dépenses depuis le folder_code des factures matched."
+          titleTooltip="Bénéfice brut = Chiffre d'affaires − Coûts directs (COGS). Les coûts directs sont ceux qu'on ne pourrait pas éviter en vendant plus : commissions processeur, infrastructure de prod (RunPod, DigitalOcean…), matières premières. Classification automatique : folder_codes commençant par 4."
+          live
         >
-          <KpiGrid kpis={brut.kpis} percentAt={1} />
-          <div className="grid grid-cols-[2fr_1fr] gap-4">
-            <SeriesChart data={brut.series} title="Évolution mensuelle" />
-            <BreakdownList title="Coûts directs par catégorie" items={brut.byCategory} />
-          </div>
+          <KpiGrid kpis={beneficeBrutKpis} percentAt={1} />
         </Section>
 
         <Section
           icon={Activity}
           title="EBITDA"
-          subtitle="Résultat opérationnel avant intérêts, taxes, dépréciation & amortissement — à calculer."
+          subtitle="Résultat opérationnel avant amortissements, intérêts et impôts."
+          titleTooltip="EBITDA = Earnings Before Interest, Taxes, Depreciation and Amortization. Calcul : Bénéfice brut − Charges de personnel (5xxx) − Autres charges d'exploitation (6xxx sauf 68xx). Mesure la performance opérationnelle brute de l'activité."
+          live
         >
-          <KpiGrid kpis={ebitda.kpis} percentAt={1} />
-          <SeriesChart data={ebitda.series} title="Évolution EBITDA" />
+          <KpiGrid kpis={ebitdaKpis} percentAt={1} />
         </Section>
 
         <Section
           icon={LineChart}
-          title="EBIT"
-          subtitle="Résultat d'exploitation — avant intérêts et impôts, mais après amortissements — à calculer."
+          title="EBIT et Bénéfice net"
+          subtitle="Résultat d'exploitation après amortissements, puis après charges financières et impôts."
+          titleTooltip="EBIT = Earnings Before Interest and Taxes = EBITDA − Amortissements (68xx). Bénéfice net = EBIT − Charges financières (69xx) − Impôts (85xx). Si tu n'as pas encore saisi d'amortissements ou d'impôts dans les factures, EBIT ≈ EBITDA et Bénéfice net ≈ EBIT."
+          live
         >
-          <KpiGrid kpis={ebit.kpis} percentAt={1} />
-          <SeriesChart data={ebit.series} title="Évolution EBIT" />
+          <KpiGrid kpis={ebitKpis} percentAt={1} />
+        </Section>
+
+        <Section
+          icon={BarChart3}
+          title="Tableau mensuel — allocation revenus & charges"
+          subtitle={`${pnl.matchedInvoiceCount} factures validées incluses${pnl.uncategorizedCount > 0 ? ` · ${pnl.uncategorizedCount} sans code (comptées dans autres charges)` : ""}. Tout est recalculé au fur et à mesure des validations.`}
+          live
+        >
+          <PnlMonthlyTable byMonth={pnl.byMonth} totals={pnl.totals} />
         </Section>
       </div>
     </>
+  );
+}
+
+/** Tableau P&L mensuel : une colonne par mois + colonne "Total" à droite.
+ *  Chaque ligne = un poste (CA, COGS, Personnel, etc.) avec tooltip sur la
+ *  cellule label pour rappeler la définition. */
+function PnlMonthlyTable({
+  byMonth,
+  totals,
+}: {
+  byMonth: MonthlyPnl[];
+  totals: Omit<MonthlyPnl, "month">;
+}) {
+  type Row = {
+    label: string;
+    key: keyof Omit<MonthlyPnl, "month">;
+    tooltip: string;
+    kind: "revenue" | "charge" | "computed";
+    strong?: boolean;
+  };
+  const rows: Row[] = [
+    {
+      label: "Chiffre d'affaires",
+      key: "revenue",
+      kind: "revenue",
+      tooltip: "Somme des revenus saisis dans /revenues sur le mois (converti CHF).",
+      strong: true,
+    },
+    {
+      label: "− Coûts directs (4xxx)",
+      key: "cogs",
+      kind: "charge",
+      tooltip: "Factures matched dont folder_code commence par 4 : commissions processeur, infrastructure de prod, marchandises.",
+    },
+    {
+      label: "= Bénéfice brut",
+      key: "beneficeBrut",
+      kind: "computed",
+      tooltip: "CA − Coûts directs.",
+      strong: true,
+    },
+    {
+      label: "− Personnel (5xxx)",
+      key: "personnel",
+      kind: "charge",
+      tooltip: "Salaires, mandats indépendants, charges sociales.",
+    },
+    {
+      label: "− Autres charges (6xxx≠68)",
+      key: "autresCharges",
+      kind: "charge",
+      tooltip: "Loyer, marketing, IT, admin. Inclut aussi les factures matched sans folder_code.",
+    },
+    {
+      label: "= EBITDA",
+      key: "ebitda",
+      kind: "computed",
+      tooltip: "Bénéfice brut − Personnel − Autres charges d'exploitation.",
+      strong: true,
+    },
+    {
+      label: "− Amortissements (68xx)",
+      key: "amortissements",
+      kind: "charge",
+      tooltip: "Généralement 0 côté factures — saisis manuellement en compta.",
+    },
+    {
+      label: "= EBIT",
+      key: "ebit",
+      kind: "computed",
+      tooltip: "EBITDA − Amortissements.",
+      strong: true,
+    },
+    {
+      label: "− Charges financières (69xx)",
+      key: "chargesFinancieres",
+      kind: "charge",
+      tooltip: "Intérêts, frais bancaires.",
+    },
+    {
+      label: "− Impôts (85xx)",
+      key: "impots",
+      kind: "charge",
+      tooltip: "Impôts directs (sur bénéfice, capital).",
+    },
+    {
+      label: "= Bénéfice net",
+      key: "beneficeNet",
+      kind: "computed",
+      tooltip: "EBIT − Charges financières − Impôts. Ce qui reste au final.",
+      strong: true,
+    },
+  ];
+
+  const cellClass = (kind: Row["kind"], value: number, strong: boolean | undefined) => {
+    let cls = "px-3 py-2 text-right font-mono tabular-nums text-[12px] ";
+    if (strong) cls += "font-semibold ";
+    if (kind === "computed") cls += value >= 0 ? "text-ok " : "text-err ";
+    else if (kind === "charge") cls += "text-muted ";
+    return cls;
+  };
+
+  return (
+    <div className="card overflow-x-auto">
+      <table className="w-full text-[12px]">
+        <thead>
+          <tr className="border-b border-border">
+            <th className="text-left px-3 py-2.5 font-medium text-muted text-[11px] uppercase tracking-wider sticky left-0 bg-panel">
+              Poste
+            </th>
+            {byMonth.map((m) => (
+              <th
+                key={m.month}
+                className="text-right px-3 py-2.5 font-medium text-muted text-[11px] uppercase tracking-wider whitespace-nowrap"
+              >
+                {formatMonthLabel(m.month)}
+              </th>
+            ))}
+            <th className="text-right px-3 py-2.5 font-semibold text-text text-[11px] uppercase tracking-wider whitespace-nowrap border-l border-border">
+              Total
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr
+              key={r.key}
+              className={`border-b border-border/50 ${r.kind === "computed" ? "bg-panel2/40" : ""}`}
+            >
+              <td
+                className={`px-3 py-2 sticky left-0 whitespace-nowrap ${r.strong ? "font-semibold" : ""} ${r.kind === "computed" ? "bg-panel2/40 text-text" : "bg-panel"}`}
+                title={r.tooltip}
+              >
+                {r.label}
+                <span className="text-muted/60 ml-1 text-[10px]" aria-hidden>ⓘ</span>
+              </td>
+              {byMonth.map((m) => (
+                <td key={m.month} className={cellClass(r.kind, m[r.key] as number, r.strong)}>
+                  {formatAmount(m[r.key] as number, "CHF")}
+                </td>
+              ))}
+              <td className={cellClass(r.kind, totals[r.key] as number, true) + " border-l border-border"}>
+                {formatAmount(totals[r.key] as number, "CHF")}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -237,6 +476,7 @@ function Section({
   subtitle,
   children,
   live,
+  titleTooltip,
 }: {
   icon: IconType;
   title: string;
@@ -244,6 +484,9 @@ function Section({
   children: ReactNode;
   /** Si true, affiche un badge "Live" à côté du titre pour distinguer du mock. */
   live?: boolean;
+  /** Tooltip natif (title="…") sur le titre — utilisé pour expliquer la
+   *  définition d'un indicateur au survol (EBITDA, EBIT, Bénéfice brut). */
+  titleTooltip?: string;
 }) {
   return (
     <section className="space-y-4 scroll-mt-8">
@@ -253,7 +496,13 @@ function Section({
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <h2 className="text-[16px] font-semibold tracking-tight">{title}</h2>
+            <h2
+              className="text-[16px] font-semibold tracking-tight"
+              title={titleTooltip}
+              style={titleTooltip ? { cursor: "help", borderBottom: "1px dashed var(--border)" } : undefined}
+            >
+              {title}
+            </h2>
             {live ? (
               <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-ok/10 text-ok border border-ok/30">
                 Live

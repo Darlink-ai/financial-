@@ -30,6 +30,10 @@ const PUBLIC_PATHS = [
   "/api/invoices/tva-audit",
   // flow-summary : totaux debit/credit par mois × devise, auth Bearer.
   "/api/invoices/flow-summary",
+  // archive-unmatched : bulk archive des factures non-matched, auth Bearer.
+  "/api/invoices/archive-unmatched",
+  // unarchive : restaure une facture archivée, auth Bearer ou cookie.
+  "/api/invoices/unarchive",
 ];
 
 function isPublic(pathname: string): boolean {
