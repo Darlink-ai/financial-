@@ -98,34 +98,6 @@ export default function AnalysePage() {
     },
   ];
 
-  const ebitKpis: KPI[] = [
-    {
-      label: "EBIT",
-      value: pnl.totals.ebit,
-      currency: DISPLAY_CURRENCY,
-      hint: "EBITDA − Amortissements et corrections de valeur. Résultat d'exploitation courant (Earnings Before Interest and Taxes).",
-    },
-    {
-      label: "Marge EBIT",
-      value: pnl.totals.revenue > 0
-        ? (pnl.totals.ebit / pnl.totals.revenue) * 100
-        : 0,
-      currency: DISPLAY_CURRENCY,
-      hint: "EBIT / Chiffre d'affaires.",
-    },
-    {
-      label: "Amortissements",
-      value: pnl.totals.amortissements,
-      currency: DISPLAY_CURRENCY,
-      hint: "Somme des factures matched avec folder_code 68xx. Généralement 0 côté factures — les amortissements sont saisis manuellement en compta.",
-    },
-    {
-      label: "Bénéfice net",
-      value: pnl.totals.beneficeNet,
-      currency: DISPLAY_CURRENCY,
-      hint: "EBIT − Charges financières (69xx) − Impôts (85xx). Ce qui reste après tout.",
-    },
-  ];
 
   // KPIs CA — 2 tuiles simples : CA total et Net. Les tuiles 'Volume EMP'
   // et 'Volume Centrobill' ont ete retirees (bruitage inutile — la
@@ -203,16 +175,6 @@ export default function AnalysePage() {
           live
         >
           <KpiGrid kpis={ebitdaKpis} percentAt={1} />
-        </Section>
-
-        <Section
-          icon={LineChart}
-          title="EBIT et Bénéfice net"
-          subtitle="EBIT = EBITDA − amortissements. Bénéfice net = EBIT − charges financières − impôts (donc généralement PLUS BAS que l'EBIT)."
-          titleTooltip="EBIT = Earnings Before Interest and Taxes = EBITDA − Amortissements (68xx). Bénéfice net = EBIT − Charges financières (69xx) − Impôts (85xx). Si tu n'as pas encore saisi d'amortissements ou d'impôts dans les factures, EBIT ≈ EBITDA et Bénéfice net ≈ EBIT — c'est ce qui explique pourquoi les 3 chiffres peuvent apparaître très proches actuellement."
-          live
-        >
-          <KpiGrid kpis={ebitKpis} percentAt={1} />
         </Section>
 
         <Section
