@@ -167,6 +167,12 @@ export default function AnalysePage() {
             vatByMonth={Object.fromEntries(agg.series.map((m) => [m.month, m.vatDue]))}
             vatTotal={agg.totals.vatDue}
           />
+          <PnlSummaryPct
+            caBrut={agg.totals.revenue}
+            caNet={agg.totals.revenueNet}
+            depenses={pnl.expenseCategories.reduce((s, c) => s + c.total, 0)}
+            vatDue={agg.totals.vatDue}
+          />
         </Section>
 
         <Section
@@ -189,6 +195,114 @@ export default function AnalysePage() {
 /** Tableau des dépenses : une ligne par catégorie de dépense (folder_code
  *  complet + label du mapping utilisateur), une colonne par mois + total.
  *  Ligne "Total" en bas pour l'ensemble des catégories du mois. */
+/** Récap en 4 tuiles style KpiCard, avec le % face au CA brut sous la
+ *  valeur — placé sous le tableau des dépenses. Le CA brut sert de base 100. */
+function PnlSummaryPct({
+  caBrut,
+  caNet,
+  depenses,
+  vatDue,
+}: {
+  caBrut: number;
+  caNet: number;
+  depenses: number;
+  vatDue: number;
+}) {
+  const benefice = caBrut - vatDue - depenses;
+  const pct = (v: number) => (caBrut > 0 ? (v / caBrut) * 100 : 0);
+  const fmtPct = (v: number) => {
+    const p = pct(v);
+    if (Math.abs(p) < 10) return `${p.toFixed(1)} %`;
+    return `${p.toFixed(0)} %`;
+  };
+  return (
+    <div>
+      <div className="text-[11px] uppercase tracking-wider text-muted font-medium mb-3 mt-2">
+        Compte de résultat en %
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+        <SummaryTile
+          label="Chiffre d'affaires brut"
+          amount={caBrut}
+          pctLabel="100 %"
+          highlight
+          hint="Base de référence pour tous les % de cette ligne."
+        />
+        <SummaryTile
+          label="Chiffre d'affaires net"
+          amount={caNet}
+          pctLabel={fmtPct(caNet)}
+          hint={`CA brut − TVA (${formatAmount(vatDue, "CHF")}).`}
+        />
+        <SummaryTile
+          label="Dépenses"
+          amount={depenses}
+          pctLabel={fmtPct(depenses)}
+          hint="Total du tableau ci-dessus (catégories du /mappings, hors commission processeur)."
+          tone="warn"
+        />
+        <SummaryTile
+          label="Bénéfice avant impôt et amortissement"
+          amount={benefice}
+          pctLabel={fmtPct(benefice)}
+          hint="CA brut − TVA − Dépenses."
+          tone={benefice >= 0 ? "ok" : "err"}
+        />
+      </div>
+    </div>
+  );
+}
+
+/** Tuile légère pour PnlSummaryPct — montant + pill % dessous. */
+function SummaryTile({
+  label,
+  amount,
+  pctLabel,
+  hint,
+  highlight,
+  tone,
+}: {
+  label: string;
+  amount: number;
+  pctLabel: string;
+  hint?: string;
+  highlight?: boolean;
+  tone?: "ok" | "warn" | "err";
+}) {
+  const amountColor =
+    tone === "ok"
+      ? "text-ok"
+      : tone === "warn"
+      ? "text-warn"
+      : tone === "err"
+      ? "text-err"
+      : "text-text";
+  const pctBg =
+    tone === "ok"
+      ? "bg-ok/10 text-ok border-ok/30"
+      : tone === "warn"
+      ? "bg-warn/10 text-warn border-warn/30"
+      : tone === "err"
+      ? "bg-err/10 text-err border-err/30"
+      : "bg-accent/10 text-accent border-accent/30";
+  return (
+    <div className={highlight ? "card-accent p-4" : "card p-4"}>
+      <div className="text-[11px] text-muted mb-2">{label}</div>
+      <div className="flex items-baseline gap-2 mb-2">
+        <div className={`text-[22px] font-semibold tabular-nums leading-none ${amountColor}`}>
+          {formatAmount(amount, "CHF")}
+        </div>
+        <span
+          className={`text-[11px] font-medium px-2 py-0.5 rounded-full border ${pctBg} tabular-nums`}
+        >
+          {pctLabel}
+        </span>
+      </div>
+      {hint && <div className="text-[10.5px] text-muted">{hint}</div>}
+    </div>
+  );
+}
+
 function ExpensesByCategoryTable({
   categories,
   months,
