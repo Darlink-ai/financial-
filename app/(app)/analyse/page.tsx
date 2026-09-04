@@ -112,10 +112,16 @@ export default function AnalysePage() {
         : "Somme des revenus du mois, convertie en CHF via taux moyens.",
     },
     {
+      label: "Dépenses",
+      value: agg.totals.expenses,
+      currency: DISPLAY_CURRENCY,
+      hint: "Somme des débits des 3 rapprochements Excel (CHF + EUR + USD converti CHF au taux moyen du mois).",
+    },
+    {
       label: "Net",
       value: agg.totals.net,
       currency: DISPLAY_CURRENCY,
-      hint: "CA − dépenses (somme des débits des 3 rapprochements Excel, le tout en CHF).",
+      hint: "CA − Dépenses. Résultat brut avant ventilation par folder_code.",
     },
   ];
 
