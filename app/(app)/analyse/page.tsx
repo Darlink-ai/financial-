@@ -121,7 +121,7 @@ export default function AnalysePage() {
       label: "Bénéfice avant Impôts et Amortissements",
       value: agg.totals.net,
       currency: DISPLAY_CURRENCY,
-      hint: "CA − Dépenses (somme des débits des 3 rapprochements Excel). Proche de l'EBITDA en pratique — mesure la performance opérationnelle avant amortissements, charges financières et impôts.",
+      hint: "CA − Dépenses (Factures payées + TVA).",
     },
   ];
 
