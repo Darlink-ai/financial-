@@ -379,9 +379,22 @@ export function useFinancials(period: Period): FinancialsResult {
       (a, b) => b.amount - a.amount,
     );
 
+    // Exclut les 'commission processeur' — les relevés emerchantpay sont
+    // des rentrees d'argent, pas des depenses. Les vraies commissions
+    // sont deja dans la tuile 'Frais EMP' (Revenue.fees). Match par code
+    // ET par label pour couvrir toutes les variantes que l'utilisateur
+    // pourrait avoir saisies dans /mappings.
+    const isProcessorCommission = (ec: ExpenseCategory): boolean => {
+      const code = ec.code.trim().toUpperCase().replace(/\s+/g, "");
+      if (code === "C0" || code === "CO") return true;
+      const lbl = (ec.label || "").toLowerCase();
+      return /(commission|processeur|processor|emerchant|payment\s+processor)/i.test(lbl);
+    };
     const expenseCategories: ExpenseCategory[] = Array.from(
       expenseCatMap.values(),
-    ).sort((a, b) => b.total - a.total);
+    )
+      .filter((ec) => !isProcessorCommission(ec))
+      .sort((a, b) => b.total - a.total);
 
     return {
       months,
