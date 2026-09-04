@@ -17,6 +17,7 @@ import {
   useAnalyseAggregates,
 } from "@/lib/analyse-data";
 import { useFinancials, type MonthlyPnl } from "@/lib/analyse-financials";
+import { RollingReserveChart } from "@/components/analyse/RollingReserveChart";
 import { formatAmount } from "@/lib/format";
 import { formatMonthLabel } from "@/lib/store";
 import {
@@ -27,6 +28,7 @@ import {
   LineChart,
   Info,
   ArrowRightLeft,
+  Lock,
 } from "lucide-react";
 
 type IconType = typeof TrendingUp;
@@ -282,6 +284,16 @@ export default function AnalysePage() {
           live
         >
           <PnlMonthlyTable byMonth={pnl.byMonth} totals={pnl.totals} />
+        </Section>
+
+        <Section
+          icon={Lock}
+          title="Rolling reserve chez EMP"
+          subtitle="Montant retenu par le processeur en garantie, libéré 6 mois plus tard. C'est une créance immobilisée, PAS une charge — donc non déduit de la marge nette ci-dessus."
+          titleTooltip="EMP retient un % du capturé chaque mois (rollingReservePercent, typiquement 10%) et libère un montant équivalent d'une période d'il y a 6 mois. Le graphique montre le stock cumulé bloqué chez EMP mois par mois — calculé sur TOUT l'historique pour que la valeur initiale reflète les mois hors période visible."
+          live
+        >
+          <RollingReserveChart months={pnl.months} processorFilter="EMP" />
         </Section>
       </div>
     </>
