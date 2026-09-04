@@ -72,36 +72,6 @@ export default function AnalysePage() {
     },
   ];
 
-  const ebitdaKpis: KPI[] = [
-    {
-      label: "EBITDA",
-      value: pnl.totals.ebitda,
-      currency: DISPLAY_CURRENCY,
-      hint: "Bénéfice brut − Charges de personnel − Autres charges d'exploitation. Résultat opérationnel avant amortissements, intérêts et impôts.",
-    },
-    {
-      label: "Marge EBITDA",
-      value: pnl.totals.revenue > 0
-        ? (pnl.totals.ebitda / pnl.totals.revenue) * 100
-        : 0,
-      currency: DISPLAY_CURRENCY,
-      hint: "EBITDA / Chiffre d'affaires.",
-    },
-    {
-      label: "Charges de personnel",
-      value: pnl.totals.personnel,
-      currency: DISPLAY_CURRENCY,
-      hint: "Somme des factures matched avec folder_code 5xxx (salaires, mandats indépendants, charges sociales).",
-    },
-    {
-      label: "Autres charges d'exploit.",
-      value: pnl.totals.autresCharges,
-      currency: DISPLAY_CURRENCY,
-      hint: "Somme des factures matched avec folder_code 6xxx sauf 68xx (loyer, marketing, IT, admin) + factures non classées.",
-    },
-  ];
-
-
   // KPIs CA — 2 tuiles simples : CA total et Net. Les tuiles 'Volume EMP'
   // et 'Volume Centrobill' ont ete retirees (bruitage inutile — la
   // repartition par processeur est deja visible plus bas).
@@ -197,16 +167,6 @@ export default function AnalysePage() {
             vatByMonth={Object.fromEntries(agg.series.map((m) => [m.month, m.vatDue]))}
             vatTotal={agg.totals.vatDue}
           />
-        </Section>
-
-        <Section
-          icon={Activity}
-          title="EBITDA"
-          subtitle="Résultat opérationnel avant amortissements, intérêts et impôts. Se calcule à partir du Bénéfice brut moins les charges d'exploitation courantes."
-          titleTooltip="EBITDA = Earnings Before Interest, Taxes, Depreciation and Amortization. Calcul : Bénéfice brut − Charges de personnel (5xxx) − Autres charges d'exploitation (6xxx sauf 68xx). Mesure la performance opérationnelle brute de l'activité."
-          live
-        >
-          <KpiGrid kpis={ebitdaKpis} percentAt={1} />
         </Section>
 
         <Section
