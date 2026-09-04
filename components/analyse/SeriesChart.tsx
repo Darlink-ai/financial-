@@ -1,9 +1,17 @@
 "use client";
 
+import { useState } from "react";
 import type { MonthlyPoint } from "@/lib/analyse-mock";
+import { formatAmount } from "@/lib/format";
+import { formatMonthLabel } from "@/lib/store";
 
 /** Bar chart minimal en SVG : revenu vs dépenses, net en ligne overlay.
- *  Quand `isLive`, on retire la mention "Mock-up". */
+ *  Quand `isLive`, on retire la mention "Mock-up".
+ *
+ *  Tooltip au survol : une zone invisible par mois capture le hover et
+ *  affiche un cartouche flottant avec les 3 valeurs (revenus / dépenses /
+ *  net) + un fil vertical qui marque le mois sélectionné.
+ */
 export function SeriesChart({
   data,
   title,
@@ -13,6 +21,8 @@ export function SeriesChart({
   title?: string;
   isLive?: boolean;
 }) {
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+
   if (data.length === 0) return null;
 
   const width = 720;
@@ -24,15 +34,24 @@ export function SeriesChart({
 
   const maxVal = Math.max(...data.map((d) => Math.max(d.revenue, d.expenses, d.net))) * 1.1;
   const minVal = Math.min(0, ...data.map((d) => d.net)) * 1.1;
-  const range = maxVal - minVal;
+  const range = maxVal - minVal || 1;
 
   const yOf = (v: number) => padY + innerH - ((v - minVal) / range) * innerH;
   const xOf = (i: number) => padX + (i + 0.5) * (innerW / data.length);
   const barW = (innerW / data.length) * 0.32;
+  const colW = innerW / data.length;
 
   const netPath = data
     .map((d, i) => `${i === 0 ? "M" : "L"} ${xOf(i)} ${yOf(d.net)}`)
     .join(" ");
+
+  const hovered = hoverIdx != null ? data[hoverIdx] : null;
+  // Positionne le tooltip HTML en % (relatif au wrapper) pour rester
+  // aligné avec le SVG même quand celui-ci scale.
+  const tooltipLeftPct =
+    hoverIdx != null ? (xOf(hoverIdx) / width) * 100 : 0;
+  // Bascule à gauche si on est dans la moitié droite pour ne pas déborder.
+  const tooltipOnRight = tooltipLeftPct > 60;
 
   return (
     <div className="card p-5">
@@ -45,78 +64,191 @@ export function SeriesChart({
         </div>
       )}
       <div className="w-full overflow-x-auto">
-        <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-[240px] block">
-          {/* Grille horizontale */}
-          {[0, 0.25, 0.5, 0.75, 1].map((t) => {
-            const y = padY + innerH * t;
-            return (
+        <div className="relative">
+          <svg
+            viewBox={`0 0 ${width} ${height}`}
+            className="w-full h-[240px] block"
+            onMouseLeave={() => setHoverIdx(null)}
+          >
+            {/* Grille horizontale */}
+            {[0, 0.25, 0.5, 0.75, 1].map((t) => {
+              const y = padY + innerH * t;
+              return (
+                <line
+                  key={t}
+                  x1={padX}
+                  x2={width - padX}
+                  y1={y}
+                  y2={y}
+                  stroke="#243049"
+                  strokeWidth={1}
+                  strokeDasharray="2 3"
+                />
+              );
+            })}
+
+            {/* Fil vertical du mois survolé */}
+            {hoverIdx != null && (
               <line
-                key={t}
-                x1={padX}
-                x2={width - padX}
-                y1={y}
-                y2={y}
-                stroke="#243049"
+                x1={xOf(hoverIdx)}
+                x2={xOf(hoverIdx)}
+                y1={padY}
+                y2={height - padY}
+                stroke="#22d3ee"
                 strokeWidth={1}
-                strokeDasharray="2 3"
+                strokeDasharray="3 3"
+                opacity={0.5}
+                pointerEvents="none"
               />
-            );
-          })}
+            )}
 
-          {/* Barres revenue + expenses */}
-          {data.map((d, i) => (
-            <g key={d.month}>
+            {/* Barres revenue + expenses */}
+            {data.map((d, i) => (
+              <g key={d.month}>
+                <rect
+                  x={xOf(i) - barW - 1}
+                  y={yOf(d.revenue)}
+                  width={barW}
+                  height={yOf(0) - yOf(d.revenue)}
+                  fill="url(#grad-revenue)"
+                  rx={3}
+                  opacity={hoverIdx == null || hoverIdx === i ? 1 : 0.35}
+                  style={{ transition: "opacity .15s" }}
+                />
+                <rect
+                  x={xOf(i) + 1}
+                  y={yOf(d.expenses)}
+                  width={barW}
+                  height={yOf(0) - yOf(d.expenses)}
+                  fill="#1f2a44"
+                  stroke="#33425f"
+                  strokeWidth={1}
+                  rx={3}
+                  opacity={hoverIdx == null || hoverIdx === i ? 1 : 0.35}
+                  style={{ transition: "opacity .15s" }}
+                />
+                <text
+                  x={xOf(i)}
+                  y={height - 6}
+                  fontSize={10}
+                  textAnchor="middle"
+                  fill={hoverIdx === i ? "#e2e8f0" : "#94a3b8"}
+                  style={{ transition: "fill .15s" }}
+                >
+                  {d.month.slice(5)}/{d.month.slice(2, 4)}
+                </text>
+              </g>
+            ))}
+
+            {/* Ligne net */}
+            <path d={netPath} fill="none" stroke="#22d3ee" strokeWidth={2} pointerEvents="none" />
+            {data.map((d, i) => (
+              <circle
+                key={`p-${d.month}`}
+                cx={xOf(i)}
+                cy={yOf(d.net)}
+                r={hoverIdx === i ? 5 : 3}
+                fill="#22d3ee"
+                stroke={hoverIdx === i ? "#0891b2" : "none"}
+                strokeWidth={2}
+                style={{ transition: "r .15s" }}
+                pointerEvents="none"
+              />
+            ))}
+
+            {/* Zones de capture hover — une par mois, transparentes,
+                couvrent toute la colonne pour un pointage facile. */}
+            {data.map((d, i) => (
               <rect
-                x={xOf(i) - barW - 1}
-                y={yOf(d.revenue)}
-                width={barW}
-                height={yOf(0) - yOf(d.revenue)}
-                fill="url(#grad-revenue)"
-                rx={3}
+                key={`hit-${d.month}`}
+                x={padX + i * colW}
+                y={padY}
+                width={colW}
+                height={innerH}
+                fill="transparent"
+                onMouseEnter={() => setHoverIdx(i)}
+                style={{ cursor: "pointer" }}
               />
-              <rect
-                x={xOf(i) + 1}
-                y={yOf(d.expenses)}
-                width={barW}
-                height={yOf(0) - yOf(d.expenses)}
-                fill="#1f2a44"
-                stroke="#33425f"
-                strokeWidth={1}
-                rx={3}
-              />
-              <text
-                x={xOf(i)}
-                y={height - 6}
-                fontSize={10}
-                textAnchor="middle"
-                fill="#94a3b8"
-              >
-                {d.month.slice(5)}/{d.month.slice(2, 4)}
-              </text>
-            </g>
-          ))}
+            ))}
 
-          {/* Ligne net */}
-          <path d={netPath} fill="none" stroke="#22d3ee" strokeWidth={2} />
-          {data.map((d, i) => (
-            <circle key={`p-${d.month}`} cx={xOf(i)} cy={yOf(d.net)} r={3} fill="#22d3ee" />
-          ))}
+            {/* Gradients */}
+            <defs>
+              <linearGradient id="grad-revenue" x1="0" x2="0" y1="0" y2="1">
+                <stop offset="0%" stopColor="#60a5fa" />
+                <stop offset="100%" stopColor="#3b82f6" />
+              </linearGradient>
+            </defs>
+          </svg>
 
-          {/* Gradients */}
-          <defs>
-            <linearGradient id="grad-revenue" x1="0" x2="0" y1="0" y2="1">
-              <stop offset="0%" stopColor="#60a5fa" />
-              <stop offset="100%" stopColor="#3b82f6" />
-            </linearGradient>
-          </defs>
-        </svg>
+          {/* Tooltip HTML flottant — positionné en % pour rester aligné
+              avec le SVG responsive. */}
+          {hovered && hoverIdx != null && (
+            <div
+              className="absolute pointer-events-none z-10 min-w-[180px]"
+              style={{
+                left: tooltipOnRight ? "auto" : `${tooltipLeftPct}%`,
+                right: tooltipOnRight ? `${100 - tooltipLeftPct}%` : "auto",
+                top: 8,
+                transform: tooltipOnRight ? "translateX(-10px)" : "translateX(10px)",
+              }}
+            >
+              <div className="bg-panel border border-border rounded-md shadow-lg px-3 py-2.5 text-[11.5px]">
+                <div className="font-medium text-text mb-1.5 pb-1.5 border-b border-border">
+                  {formatMonthLabel(hovered.month)}
+                </div>
+                <div className="space-y-1">
+                  <TooltipRow color="#3b82f6" label="Revenus" value={hovered.revenue} />
+                  <TooltipRow color="#33425f" label="Dépenses" value={hovered.expenses} />
+                  <TooltipRow
+                    color="#22d3ee"
+                    label="Net"
+                    value={hovered.net}
+                    strong
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="flex items-center gap-4 text-[11px] text-muted mt-3">
         <Legend color="#3b82f6" label="Revenus" />
         <Legend color="#1f2a44" border="#33425f" label="Dépenses" />
         <Legend color="#22d3ee" line label="Net" />
+        <span className="ml-auto text-[10px] italic">
+          Survole pour voir le détail
+        </span>
       </div>
+    </div>
+  );
+}
+
+function TooltipRow({
+  color,
+  label,
+  value,
+  strong,
+}: {
+  color: string;
+  label: string;
+  value: number;
+  strong?: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <div className="flex items-center gap-1.5 text-muted">
+        <span
+          className="w-2 h-2 rounded-sm shrink-0"
+          style={{ background: color }}
+        />
+        <span>{label}</span>
+      </div>
+      <span
+        className={`font-mono tabular-nums ${strong ? "text-text font-semibold" : "text-text"}`}
+      >
+        {formatAmount(value, "CHF")}
+      </span>
     </div>
   );
 }
