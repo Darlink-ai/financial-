@@ -4,9 +4,8 @@ import { useMemo, useState } from "react";
 import { PageHeader } from "@/components/PageHeader";
 import { useStore, formatMonthLabel } from "@/lib/store";
 import { formatAmount } from "@/lib/format";
-import { getRateToChf, DEFAULT_FX_TO_CHF } from "@/lib/fx";
-import type { AccountCurrency, Revenue } from "@/lib/types";
-import { VAT_COUNTRIES, findVatCountry, type VatCountry } from "@/lib/vat-rates";
+import { VAT_COUNTRIES, type VatCountry } from "@/lib/vat-rates";
+import { computeVatByCountry, type VatRow } from "@/lib/vat-provision";
 import { Download, FileText, Info } from "lucide-react";
 
 /**
@@ -36,8 +35,8 @@ export default function TvaPage() {
     return computeVatByCountry(revenues, selectedMonth);
   }, [revenues, selectedMonth]);
 
-  const totalCA = summary.rows.reduce((s, r) => s + r.amountChf, 0);
-  const totalVat = summary.rows.reduce((s, r) => s + r.vatChf, 0);
+  const totalCA = summary.totalCA;
+  const totalVat = summary.totalVat;
 
   return (
     <>
@@ -219,62 +218,7 @@ export default function TvaPage() {
   );
 }
 
-// ---------- Calculs ----------
-
-type VatRow = {
-  country: VatCountry;
-  amountChf: number;
-  vatChf: number;
-  perSource: { businessId: string; processor: string; currency: string; amount: number; amountChf: number }[];
-};
-
-function computeVatByCountry(revenues: Revenue[], month: string) {
-  const monthRevs = revenues.filter((r) => r.month === month);
-  const rows = new Map<string, VatRow>();
-  for (const rev of monthRevs) {
-    for (const cb of rev.countryBreakdown) {
-      const country = findVatCountry(cb.country);
-      if (!country) continue; // pays hors UE+UK, on saute
-      const amountChf = toChf(cb.amount, rev.currency, rev.month);
-      const key = country.iso;
-      const existing = rows.get(key);
-      if (existing) {
-        existing.amountChf += amountChf;
-        existing.vatChf = (existing.amountChf * country.rate) / 100;
-        existing.perSource.push({
-          businessId: rev.businessId,
-          processor: rev.processor,
-          currency: rev.currency,
-          amount: cb.amount,
-          amountChf,
-        });
-      } else {
-        rows.set(key, {
-          country,
-          amountChf,
-          vatChf: (amountChf * country.rate) / 100,
-          perSource: [{
-            businessId: rev.businessId,
-            processor: rev.processor,
-            currency: rev.currency,
-            amount: cb.amount,
-            amountChf,
-          }],
-        });
-      }
-    }
-  }
-  return {
-    rows: [...rows.values()].sort((a, b) => b.amountChf - a.amountChf),
-    sourceCount: monthRevs.length,
-  };
-}
-
-function toChf(amount: number, currency: string, month: string): number {
-  const c = (currency || "CHF").toUpperCase();
-  if (!(c in DEFAULT_FX_TO_CHF)) return amount;
-  return amount * getRateToChf(month, c as AccountCurrency);
-}
+// ---------- Helpers ----------
 
 function currentMonthIso(): string {
   const d = new Date();

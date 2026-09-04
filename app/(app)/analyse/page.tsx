@@ -104,24 +104,30 @@ export default function AnalysePage() {
   // repartition par processeur est deja visible plus bas).
   const caKpis: KPI[] = [
     {
-      label: "Chiffre d'affaires",
+      label: "Chiffre d'affaires brut",
       value: agg.totals.revenue,
       currency: DISPLAY_CURRENCY,
       hint: agg.loading
         ? "Chargement…"
-        : "Somme des revenus du mois, convertie en CHF via taux moyens.",
+        : "Somme des revenus encaissés sur la période, convertie en CHF via taux moyens du mois.",
+    },
+    {
+      label: "Chiffre d'affaires net",
+      value: agg.totals.revenueNet,
+      currency: DISPLAY_CURRENCY,
+      hint: `CA brut − TVA due sur la période (${formatAmount(agg.totals.vatDue, "CHF")} de TVA calculée par pays UE + UK).`,
     },
     {
       label: "Dépenses",
       value: agg.totals.expenses,
       currency: DISPLAY_CURRENCY,
-      hint: "Dépenses sur tous les comptes réunis (USD − CHF − EUR).",
+      hint: "Dépenses sur tous les comptes réunis (USD − CHF − EUR), hors TVA.",
     },
     {
       label: "Bénéfice avant Impôts et Amortissements",
       value: agg.totals.net,
       currency: DISPLAY_CURRENCY,
-      hint: "CA − Dépenses (Factures payées + TVA).",
+      hint: "CA net − Dépenses.",
     },
   ];
 

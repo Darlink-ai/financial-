@@ -26,10 +26,12 @@ export function SeriesChart({
   if (data.length === 0) return null;
 
   const width = 720;
-  const height = 240;
-  const padX = 32;
-  const padY = 24;
-  const innerW = width - padX * 2;
+  const height = 260;
+  // padX gauche etendu pour l'axe Y avec labels de montants.
+  const padLeft = 68;
+  const padRight = 20;
+  const padY = 28;
+  const innerW = width - padLeft - padRight;
   const innerH = height - padY * 2;
 
   const maxVal = Math.max(...data.map((d) => Math.max(d.revenue, d.expenses, d.net))) * 1.1;
@@ -37,9 +39,23 @@ export function SeriesChart({
   const range = maxVal - minVal || 1;
 
   const yOf = (v: number) => padY + innerH - ((v - minVal) / range) * innerH;
-  const xOf = (i: number) => padX + (i + 0.5) * (innerW / data.length);
+  const xOf = (i: number) => padLeft + (i + 0.5) * (innerW / data.length);
   const barW = (innerW / data.length) * 0.32;
   const colW = innerW / data.length;
+
+  // Labels Y : 5 crans reguliers entre minVal et maxVal, formates court
+  // (K pour milliers, M pour millions).
+  const yTicks = [0, 0.25, 0.5, 0.75, 1].map((t) => {
+    const yPx = padY + innerH * t;
+    const value = maxVal - (maxVal - minVal) * t;
+    return { yPx, value };
+  });
+  const fmtShort = (n: number): string => {
+    const abs = Math.abs(n);
+    if (abs >= 1_000_000) return `${(n / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1)}M`;
+    if (abs >= 1_000) return `${(n / 1_000).toFixed(abs >= 10_000 ? 0 : 1)}k`;
+    return n.toFixed(0);
+  };
 
   const netPath = data
     .map((d, i) => `${i === 0 ? "M" : "L"} ${xOf(i)} ${yOf(d.net)}`)
@@ -67,25 +83,33 @@ export function SeriesChart({
         <div className="relative">
           <svg
             viewBox={`0 0 ${width} ${height}`}
-            className="w-full h-[240px] block"
+            className="w-full h-[260px] block"
             onMouseLeave={() => setHoverIdx(null)}
           >
-            {/* Grille horizontale */}
-            {[0, 0.25, 0.5, 0.75, 1].map((t) => {
-              const y = padY + innerH * t;
-              return (
+            {/* Grille horizontale + labels axe Y (montants en CHF, format court) */}
+            {yTicks.map((tick, idx) => (
+              <g key={idx}>
                 <line
-                  key={t}
-                  x1={padX}
-                  x2={width - padX}
-                  y1={y}
-                  y2={y}
+                  x1={padLeft}
+                  x2={width - padRight}
+                  y1={tick.yPx}
+                  y2={tick.yPx}
                   stroke="#243049"
                   strokeWidth={1}
                   strokeDasharray="2 3"
                 />
-              );
-            })}
+                <text
+                  x={padLeft - 8}
+                  y={tick.yPx + 3}
+                  fontSize={10}
+                  textAnchor="end"
+                  fill="#94a3b8"
+                  fontFamily="ui-monospace, SFMono-Regular, monospace"
+                >
+                  {fmtShort(tick.value)}
+                </text>
+              </g>
+            ))}
 
             {/* Fil vertical du mois survolé */}
             {hoverIdx != null && (
@@ -142,26 +166,51 @@ export function SeriesChart({
 
             {/* Ligne net */}
             <path d={netPath} fill="none" stroke="#22d3ee" strokeWidth={2} pointerEvents="none" />
-            {data.map((d, i) => (
-              <circle
-                key={`p-${d.month}`}
-                cx={xOf(i)}
-                cy={yOf(d.net)}
-                r={hoverIdx === i ? 5 : 3}
-                fill="#22d3ee"
-                stroke={hoverIdx === i ? "#0891b2" : "none"}
-                strokeWidth={2}
-                style={{ transition: "r .15s" }}
-                pointerEvents="none"
-              />
-            ))}
+            {data.map((d, i) => {
+              const cx = xOf(i);
+              const cy = yOf(d.net);
+              // Position du label : au-dessus du point si la place est
+              // suffisante, sinon en dessous.
+              const labelAbove = cy > padY + 22;
+              const labelY = labelAbove ? cy - 10 : cy + 18;
+              return (
+                <g key={`p-${d.month}`}>
+                  <circle
+                    cx={cx}
+                    cy={cy}
+                    r={hoverIdx === i ? 5 : 3.5}
+                    fill="#22d3ee"
+                    stroke={hoverIdx === i ? "#0891b2" : "#0f1525"}
+                    strokeWidth={2}
+                    style={{ transition: "r .15s" }}
+                    pointerEvents="none"
+                  />
+                  {/* Label permanent avec le bénéfice — visible sans survol */}
+                  <text
+                    x={cx}
+                    y={labelY}
+                    fontSize={11}
+                    fontWeight={600}
+                    textAnchor="middle"
+                    fill="#22d3ee"
+                    fontFamily="ui-monospace, SFMono-Regular, monospace"
+                    pointerEvents="none"
+                    stroke="#0f1525"
+                    strokeWidth={3}
+                    paintOrder="stroke"
+                  >
+                    {fmtShort(d.net)}
+                  </text>
+                </g>
+              );
+            })}
 
             {/* Zones de capture hover — une par mois, transparentes,
                 couvrent toute la colonne pour un pointage facile. */}
             {data.map((d, i) => (
               <rect
                 key={`hit-${d.month}`}
-                x={padX + i * colW}
+                x={padLeft + i * colW}
                 y={padY}
                 width={colW}
                 height={innerH}

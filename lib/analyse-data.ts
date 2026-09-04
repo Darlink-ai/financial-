@@ -32,14 +32,17 @@ import {
   getRateToChf,
   hasMonthlyOverride,
 } from "@/lib/fx";
+import { computeVatDue } from "@/lib/vat-provision";
 
 export const DISPLAY_CURRENCY: AccountCurrency = "CHF";
 
 export type MonthlyAgg = {
   month: string; // YYYY-MM
-  revenue: number; // CHF
-  expenses: number; // CHF (somme convertie des 3 buckets)
-  net: number; // revenue - expenses
+  revenue: number; // CHF — CA BRUT (avant TVA due)
+  vatDue: number; // CHF — TVA due par pays UE+UK sur le CA du mois
+  revenueNet: number; // CHF — CA NET = revenue - vatDue
+  expenses: number; // CHF — depenses banque (SANS TVA)
+  net: number; // CHF — Benefice = revenueNet - expenses
 };
 
 export type ExpenseByCurrency = {
@@ -67,9 +70,11 @@ export type AnalyseAggregates = {
   series: MonthlyAgg[];
   /** Totaux sur la période complète. */
   totals: {
-    revenue: number; // CHF
-    expenses: number; // CHF total
-    net: number; // CHF
+    revenue: number; // CHF — CA brut
+    vatDue: number; // CHF — TVA due UE+UK
+    revenueNet: number; // CHF — CA net (revenue - vatDue)
+    expenses: number; // CHF — depenses banque hors TVA
+    net: number; // CHF — benefice = revenueNet - expenses
     expensesByCurrency: ExpenseByCurrency[];
   };
   /** Ventilation CA par business sur la période (en CHF). */
@@ -234,17 +239,27 @@ export function useAnalyseAggregates(period: Period): AnalyseAggregates {
         return sum + localAmount * getRateToChf(month, c);
       }, 0);
 
+      // TVA due (calculee par pays UE+UK depuis le countryBreakdown des
+      // revenus). On la soustrait du CA brut pour donner le CA net —
+      // les depenses restent hors TVA (source banque).
+      const vatDueChf = computeVatDue(revenues, month);
+      const revenueNetChf = revenueChf - vatDueChf;
+
       return {
         month,
         revenue: revenueChf,
+        vatDue: vatDueChf,
+        revenueNet: revenueNetChf,
         expenses: expensesChf,
-        net: revenueChf - expensesChf,
+        net: revenueNetChf - expensesChf,
       };
     });
   }, [months, revenues, monthlySheets]);
 
   const totals = useMemo(() => {
     const totalRevenue = series.reduce((s, m) => s + m.revenue, 0);
+    const totalVat = series.reduce((s, m) => s + m.vatDue, 0);
+    const totalRevenueNet = series.reduce((s, m) => s + m.revenueNet, 0);
     const totalExpenses = series.reduce((s, m) => s + m.expenses, 0);
     // Détail "par devise" : somme native par devise + équivalent CHF
     // (moyenne pondérée sur la période).
@@ -264,8 +279,10 @@ export function useAnalyseAggregates(period: Period): AnalyseAggregates {
     });
     return {
       revenue: totalRevenue,
+      vatDue: totalVat,
+      revenueNet: totalRevenueNet,
       expenses: totalExpenses,
-      net: totalRevenue - totalExpenses,
+      net: totalRevenueNet - totalExpenses,
       expensesByCurrency,
     };
   }, [series, months, monthlySheets]);
