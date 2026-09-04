@@ -81,6 +81,8 @@ export type AnalyseAggregates = {
   byBusiness: { id: string; name: string; color: string; amount: number; share: number }[];
   /** Ventilation CA par processeur de paiement (EMP, Centrobill, …) en CHF. */
   byProcessor: Record<string, number>;
+  /** Frais processeur par processeur (Revenue.fees converti CHF). */
+  feesByProcessor: Record<string, number>;
   /** Taux de change utilisés sur la période. */
   fx: FxRatesSummary;
 };
@@ -324,6 +326,18 @@ export function useAnalyseAggregates(period: Period): AnalyseAggregates {
     return map;
   }, [revenues, months]);
 
+  // Frais processeur par processeur (EMP, Centrobill…) en CHF —
+  // somme du champ Revenue.fees converti au taux du mois.
+  const feesByProcessor = useMemo<Record<string, number>>(() => {
+    const map: Record<string, number> = {};
+    for (const r of revenues) {
+      if (!months.includes(r.month)) continue;
+      const key = r.processor || "—";
+      map[key] = (map[key] ?? 0) + toChf(r.fees ?? 0, r.currency, r.month);
+    }
+    return map;
+  }, [revenues, months]);
+
   // Récap des taux FX utilisés sur la période — moyenne simple sur les
   // mois inclus, pour donner un repère visuel à l'utilisateur.
   const fx = useMemo<FxRatesSummary>(() => {
@@ -344,7 +358,7 @@ export function useAnalyseAggregates(period: Period): AnalyseAggregates {
     };
   }, [months]);
 
-  return { loading, months, series, totals, byBusiness, byProcessor, fx };
+  return { loading, months, series, totals, byBusiness, byProcessor, feesByProcessor, fx };
 }
 
 /** Convertit un montant local en CHF via la table FX du mois.

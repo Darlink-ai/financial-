@@ -71,6 +71,17 @@ export type SubCategoryTotal = {
   invoiceCount: number;
 };
 
+/** Une catégorie exacte (folderCode complet type "6600") avec ses montants
+ *  mois par mois. Label vient du mapping utilisateur (/mappings) — fallback
+ *  sur "Autre (Xxxx)" si le code n'a pas de mapping. */
+export type ExpenseCategory = {
+  code: string; // folderCode complet, ex "6600" ou "C0"
+  label: string; // libellé du mapping ou fallback
+  perMonth: Record<string, number>; // month YYYY-MM -> CHF
+  total: number; // total sur la période
+  invoiceCount: number;
+};
+
 export type FinancialsResult = {
   months: string[];
   byMonth: MonthlyPnl[];
@@ -80,6 +91,9 @@ export type FinancialsResult = {
   /** Répartition fine par sous-catégorie (Marketing, IT, Loyer…). Triée
    *  par montant décroissant. Sert au waterfall + à la vue "postes". */
   subCategories: SubCategoryTotal[];
+  /** Catégories réelles utilisées (folderCode complet), avec breakdown mois
+   *  par mois et labels venant de /mappings. Sert au tableau des dépenses. */
+  expenseCategories: ExpenseCategory[];
   /** Nombre de factures matched incluses dans le calcul. */
   matchedInvoiceCount: number;
   /** Factures matched sans folder_code (rangées dans "autres charges"). */
@@ -208,7 +222,7 @@ function toChf(amount: number, currency: string | null, month: string): number {
 /** Hook principal — recalculé automatiquement à chaque changement d'invoices
  *  ou de revenus (au fur et à mesure des validations). */
 export function useFinancials(period: Period): FinancialsResult {
-  const { invoices, revenues } = useStore();
+  const { invoices, revenues, mappings } = useStore();
   const months = useMemo(() => monthsInPeriod(period), [period]);
 
   return useMemo(() => {
@@ -252,6 +266,16 @@ export function useFinancials(period: Period): FinancialsResult {
     let uncategorized = 0;
     const breakdownMap = new Map<CategoryBreakdown["category"], { amount: number; count: number }>();
     const subMap = new Map<string, SubCategoryTotal>();
+    // Map folderCode complet → ExpenseCategory (avec breakdown mensuel)
+    const expenseCatMap = new Map<string, ExpenseCategory>();
+    const labelForCode = (code: string): string => {
+      const m = mappings.find((mp) => mp.folderCode === code);
+      if (m?.folderLabel) return m.folderLabel;
+      // Fallback : essaie la sous-catégorie plan comptable
+      const sub = classifySubCategory(code);
+      return `${code} — ${sub.label}`;
+    };
+
     for (const inv of matched) {
       const m = inv.invoiceDate!.slice(0, 7);
       const row = byMonthMap.get(m);
@@ -278,6 +302,20 @@ export function useFinancials(period: Period): FinancialsResult {
       existing.amount += amt;
       existing.invoiceCount += 1;
       subMap.set(sub.key, existing);
+
+      // Catégorie exacte (folderCode complet) pour le tableau des dépenses.
+      const code = (inv.folderCode ?? "").trim() || "??";
+      const ec = expenseCatMap.get(code) ?? {
+        code,
+        label: code === "??" ? "Non classé" : labelForCode(code),
+        perMonth: {} as Record<string, number>,
+        total: 0,
+        invoiceCount: 0,
+      };
+      ec.perMonth[m] = (ec.perMonth[m] ?? 0) + amt;
+      ec.total += amt;
+      ec.invoiceCount += 1;
+      expenseCatMap.set(code, ec);
     }
 
     // Calcul dérivés par mois.
@@ -341,14 +379,19 @@ export function useFinancials(period: Period): FinancialsResult {
       (a, b) => b.amount - a.amount,
     );
 
+    const expenseCategories: ExpenseCategory[] = Array.from(
+      expenseCatMap.values(),
+    ).sort((a, b) => b.total - a.total);
+
     return {
       months,
       byMonth,
       totals,
       breakdown,
       subCategories,
+      expenseCategories,
       matchedInvoiceCount: matched.length,
       uncategorizedCount: uncategorized,
     };
-  }, [invoices, revenues, months]);
+  }, [invoices, revenues, mappings, months]);
 }

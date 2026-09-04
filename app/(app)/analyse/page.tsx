@@ -16,7 +16,7 @@ import {
   DISPLAY_CURRENCY,
   useAnalyseAggregates,
 } from "@/lib/analyse-data";
-import { useFinancials, type MonthlyPnl } from "@/lib/analyse-financials";
+import { useFinancials, type ExpenseCategory } from "@/lib/analyse-financials";
 import { RollingReserveChart } from "@/components/analyse/RollingReserveChart";
 import { formatAmount } from "@/lib/format";
 import { formatMonthLabel } from "@/lib/store";
@@ -40,6 +40,11 @@ export default function AnalysePage() {
   // sont ventilées par folder_code via lib/analyse-financials).
   const pnl = useFinancials(period);
 
+  // Frais EMP sur la periode (Revenue.fees converti CHF).
+  const empFees = agg.feesByProcessor["EMP"] ?? 0;
+  // CA Net = CA brut − TVA due − Frais EMP.
+  const caAfterFees = agg.totals.revenue - agg.totals.vatDue - empFees;
+
   const beneficeBrutKpis: KPI[] = [
     {
       label: "Bénéfice brut",
@@ -48,24 +53,22 @@ export default function AnalysePage() {
       hint: "CA − Coûts directs (COGS = folder_codes 4xxx). Ce que génère l'activité avant charges d'exploitation.",
     },
     {
-      label: "Marge brute",
-      value: pnl.totals.revenue > 0
-        ? (pnl.totals.beneficeBrut / pnl.totals.revenue) * 100
-        : 0,
+      label: "TVA",
+      value: agg.totals.vatDue,
       currency: DISPLAY_CURRENCY,
-      hint: "Bénéfice brut / Chiffre d'affaires.",
+      hint: "TVA due sur la période, calculée par pays UE + UK au taux standard depuis le countryBreakdown des revenus.",
     },
     {
-      label: "Chiffre d'affaires",
-      value: pnl.totals.revenue,
+      label: "Frais EMP",
+      value: empFees,
       currency: DISPLAY_CURRENCY,
-      hint: "Somme des revenus saisis sur la période, convertie en CHF au taux du mois.",
+      hint: "Somme des frais processeur emerchantpay sur la période (Revenue.fees × taux moyens CHF).",
     },
     {
-      label: "Coûts directs (COGS)",
-      value: pnl.totals.cogs,
+      label: "CA Net",
+      value: caAfterFees,
       currency: DISPLAY_CURRENCY,
-      hint: "Somme des factures matched avec folder_code commençant par 4 (achats de marchandises et prestations, commissions processeur, infrastructure de prod).",
+      hint: "Chiffre d'affaires − TVA − Frais EMP. Ce qui revient réellement après reversement TVA et frais processeur.",
     },
   ];
 
@@ -180,6 +183,19 @@ export default function AnalysePage() {
         </Section>
 
         <Section
+          icon={BarChart3}
+          title="Tableau des dépenses"
+          subtitle={`${pnl.matchedInvoiceCount} factures validées ventilées par catégorie du /mappings. Une ligne par folder_code, une colonne par mois.`}
+          titleTooltip="Chaque ligne correspond à une catégorie de dépense définie dans /mappings (code + libellé). Le montant par mois vient des factures matched avec ce code. Total à droite pour la période complète. Tout se recalcule en temps réel à chaque validation de facture."
+          live
+        >
+          <ExpensesByCategoryTable
+            categories={pnl.expenseCategories}
+            months={pnl.months}
+          />
+        </Section>
+
+        <Section
           icon={Activity}
           title="EBITDA"
           subtitle="Résultat opérationnel avant amortissements, intérêts et impôts. Se calcule à partir du Bénéfice brut moins les charges d'exploitation courantes."
@@ -187,15 +203,6 @@ export default function AnalysePage() {
           live
         >
           <KpiGrid kpis={ebitdaKpis} percentAt={1} />
-        </Section>
-
-        <Section
-          icon={BarChart3}
-          title="Tableau mensuel — allocation revenus & charges"
-          subtitle={`${pnl.matchedInvoiceCount} factures validées incluses${pnl.uncategorizedCount > 0 ? ` · ${pnl.uncategorizedCount} sans code (comptées dans autres charges)` : ""}. Tout est recalculé au fur et à mesure des validations.`}
-          live
-        >
-          <PnlMonthlyTable byMonth={pnl.byMonth} totals={pnl.totals} />
         </Section>
 
         <Section
@@ -215,116 +222,35 @@ export default function AnalysePage() {
 /** Tableau P&L mensuel : une colonne par mois + colonne "Total" à droite.
  *  Chaque ligne = un poste (CA, COGS, Personnel, etc.) avec tooltip sur la
  *  cellule label pour rappeler la définition. */
-function PnlMonthlyTable({
-  byMonth,
-  totals,
+/** Tableau des dépenses : une ligne par catégorie de dépense (folder_code
+ *  complet + label du mapping utilisateur), une colonne par mois + total.
+ *  Ligne "Total" en bas pour l'ensemble des catégories du mois. */
+function ExpensesByCategoryTable({
+  categories,
+  months,
 }: {
-  byMonth: MonthlyPnl[];
-  totals: Omit<MonthlyPnl, "month">;
+  categories: ExpenseCategory[];
+  months: string[];
 }) {
-  type Row = {
-    label: string;
-    key: keyof Omit<MonthlyPnl, "month">;
-    tooltip: string;
-    kind: "revenue" | "charge" | "computed";
-    strong?: boolean;
-  };
-  const rows: Row[] = [
-    {
-      label: "Chiffre d'affaires",
-      key: "revenue",
-      kind: "revenue",
-      tooltip: "Somme des revenus saisis dans /revenues sur le mois (converti CHF).",
-      strong: true,
-    },
-    {
-      label: "− Coûts directs (4xxx)",
-      key: "cogs",
-      kind: "charge",
-      tooltip: "Factures matched dont folder_code commence par 4 : commissions processeur, infrastructure de prod, marchandises.",
-    },
-    {
-      label: "= Bénéfice brut",
-      key: "beneficeBrut",
-      kind: "computed",
-      tooltip: "CA − Coûts directs.",
-      strong: true,
-    },
-    {
-      label: "− Personnel (5xxx)",
-      key: "personnel",
-      kind: "charge",
-      tooltip: "Salaires, mandats indépendants, charges sociales.",
-    },
-    {
-      label: "− Autres charges (6xxx≠68)",
-      key: "autresCharges",
-      kind: "charge",
-      tooltip: "Loyer, marketing, IT, admin. Inclut aussi les factures matched sans folder_code.",
-    },
-    {
-      label: "= EBITDA",
-      key: "ebitda",
-      kind: "computed",
-      tooltip: "Bénéfice brut − Personnel − Autres charges d'exploitation.",
-      strong: true,
-    },
-    {
-      label: "− Amortissements (68xx)",
-      key: "amortissements",
-      kind: "charge",
-      tooltip: "Généralement 0 côté factures — saisis manuellement en compta.",
-    },
-    {
-      label: "= EBIT",
-      key: "ebit",
-      kind: "computed",
-      tooltip: "EBITDA − Amortissements.",
-      strong: true,
-    },
-    {
-      label: "− Charges financières (69xx)",
-      key: "chargesFinancieres",
-      kind: "charge",
-      tooltip: "Intérêts, frais bancaires.",
-    },
-    {
-      label: "− Impôts (85xx)",
-      key: "impots",
-      kind: "charge",
-      tooltip: "Impôts directs (sur bénéfice, capital).",
-    },
-    {
-      label: "= Bénéfice net",
-      key: "beneficeNet",
-      kind: "computed",
-      tooltip: "EBIT − Charges financières − Impôts. Ce qui reste au final.",
-      strong: true,
-    },
-  ];
-
-  const cellClass = (kind: Row["kind"], value: number, strong: boolean | undefined) => {
-    let cls = "px-3 py-2 text-right font-mono tabular-nums text-[12px] ";
-    if (strong) cls += "font-semibold ";
-    if (kind === "computed") cls += value >= 0 ? "text-ok " : "text-err ";
-    else if (kind === "charge") cls += "text-muted ";
-    return cls;
-  };
+  const monthTotals = months.map((m) =>
+    categories.reduce((s, c) => s + (c.perMonth[m] ?? 0), 0),
+  );
+  const grandTotal = categories.reduce((s, c) => s + c.total, 0);
 
   return (
     <div className="card overflow-x-auto">
       <table className="w-full text-[12px]">
         <thead>
           <tr className="border-b border-border">
-            <th className="text-left px-3 py-2.5 font-medium text-muted text-[11px] uppercase tracking-wider sticky left-0 bg-panel">
-              Poste
+            <th className="text-left px-3 py-2.5 font-medium text-muted text-[11px] uppercase tracking-wider sticky left-0 bg-panel min-w-[240px]">
+              Catégorie
             </th>
-            {byMonth.map((m) => (
+            {months.map((m) => (
               <th
-                key={m.month}
+                key={m}
                 className="text-right px-3 py-2.5 font-medium text-muted text-[11px] uppercase tracking-wider whitespace-nowrap"
               >
-                {formatMonthLabel(m.month)}
+                {formatMonthLabel(m)}
               </th>
             ))}
             <th className="text-right px-3 py-2.5 font-semibold text-text text-[11px] uppercase tracking-wider whitespace-nowrap border-l border-border">
@@ -333,29 +259,65 @@ function PnlMonthlyTable({
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => (
-            <tr
-              key={r.key}
-              className={`border-b border-border/50 ${r.kind === "computed" ? "bg-panel2/40" : ""}`}
-            >
-              <td
-                className={`px-3 py-2 sticky left-0 whitespace-nowrap ${r.strong ? "font-semibold" : ""} ${r.kind === "computed" ? "bg-panel2/40 text-text" : "bg-panel"}`}
-                title={r.tooltip}
-              >
-                {r.label}
-                <span className="text-muted/60 ml-1 text-[10px]" aria-hidden>ⓘ</span>
-              </td>
-              {byMonth.map((m) => (
-                <td key={m.month} className={cellClass(r.kind, m[r.key] as number, r.strong)}>
-                  {formatAmount(m[r.key] as number, "CHF")}
-                </td>
-              ))}
-              <td className={cellClass(r.kind, totals[r.key] as number, true) + " border-l border-border"}>
-                {formatAmount(totals[r.key] as number, "CHF")}
+          {categories.length === 0 ? (
+            <tr>
+              <td colSpan={months.length + 2} className="px-4 py-8 text-center text-muted italic text-[12px]">
+                Aucune facture validée sur la période — la vue se remplira au fur et à mesure.
               </td>
             </tr>
-          ))}
+          ) : (
+            categories.map((c) => (
+              <tr key={c.code} className="border-b border-border/50 hover:bg-panel2/30">
+                <td
+                  className="px-3 py-2 sticky left-0 bg-panel whitespace-nowrap"
+                  title={`Code ${c.code} · ${c.invoiceCount} facture${c.invoiceCount > 1 ? "s" : ""} sur la période`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-[10px] text-muted bg-panel2 px-1.5 py-0.5 rounded shrink-0">
+                      {c.code}
+                    </span>
+                    <span className="text-text">{c.label}</span>
+                    <span className="text-[10px] text-muted/70">· {c.invoiceCount}</span>
+                  </div>
+                </td>
+                {months.map((m) => {
+                  const v = c.perMonth[m] ?? 0;
+                  return (
+                    <td
+                      key={m}
+                      className={`px-3 py-2 text-right font-mono tabular-nums text-[12px] ${v === 0 ? "text-muted/40" : "text-text"}`}
+                    >
+                      {v === 0 ? "—" : formatAmount(v, "CHF")}
+                    </td>
+                  );
+                })}
+                <td className="px-3 py-2 text-right font-mono tabular-nums text-[12px] font-semibold text-text border-l border-border">
+                  {formatAmount(c.total, "CHF")}
+                </td>
+              </tr>
+            ))
+          )}
         </tbody>
+        {categories.length > 0 && (
+          <tfoot>
+            <tr className="border-t-2 border-border bg-panel2/40 font-semibold">
+              <td className="px-3 py-2.5 sticky left-0 bg-panel2/40 text-text text-[12px]">
+                Total dépenses
+              </td>
+              {monthTotals.map((v, i) => (
+                <td
+                  key={months[i]}
+                  className="px-3 py-2.5 text-right font-mono tabular-nums text-[12px] text-warn"
+                >
+                  {formatAmount(v, "CHF")}
+                </td>
+              ))}
+              <td className="px-3 py-2.5 text-right font-mono tabular-nums text-[12px] text-warn border-l border-border">
+                {formatAmount(grandTotal, "CHF")}
+              </td>
+            </tr>
+          </tfoot>
+        )}
       </table>
     </div>
   );
