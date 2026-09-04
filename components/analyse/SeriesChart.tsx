@@ -169,37 +169,65 @@ export function SeriesChart({
             {data.map((d, i) => {
               const cx = xOf(i);
               const cy = yOf(d.net);
+              const labelText = fmtShort(d.net);
               // Position du label : au-dessus du point si la place est
               // suffisante, sinon en dessous.
-              const labelAbove = cy > padY + 22;
-              const labelY = labelAbove ? cy - 10 : cy + 18;
+              const labelAbove = cy > padY + 30;
+              const gap = 14; // distance point → centre du pill
+              const pillCy = labelAbove ? cy - gap : cy + gap;
+              // Largeur pill ~ selon nb caracteres. Font 11 mono → ~6.5px/char.
+              const pillW = Math.max(38, labelText.length * 7 + 12);
+              const pillH = 18;
               return (
                 <g key={`p-${d.month}`}>
+                  {/* Ligne de rappel courte entre point et pill (subtile) */}
+                  <line
+                    x1={cx}
+                    y1={cy}
+                    x2={cx}
+                    y2={labelAbove ? pillCy + pillH / 2 : pillCy - pillH / 2}
+                    stroke="#22d3ee"
+                    strokeOpacity={0.25}
+                    strokeWidth={1}
+                    pointerEvents="none"
+                  />
                   <circle
                     cx={cx}
                     cy={cy}
-                    r={hoverIdx === i ? 5 : 3.5}
+                    r={hoverIdx === i ? 5 : 4}
                     fill="#22d3ee"
-                    stroke={hoverIdx === i ? "#0891b2" : "#0f1525"}
+                    stroke="#0f1525"
                     strokeWidth={2}
                     style={{ transition: "r .15s" }}
                     pointerEvents="none"
                   />
-                  {/* Label permanent avec le bénéfice — visible sans survol */}
+                  {/* Pill design : background sombre + border cyan +
+                      texte cyan. Bien lisible sur tous les fonds. */}
+                  <rect
+                    x={cx - pillW / 2}
+                    y={pillCy - pillH / 2}
+                    width={pillW}
+                    height={pillH}
+                    rx={pillH / 2}
+                    fill="#0b1220"
+                    fillOpacity={0.92}
+                    stroke="#22d3ee"
+                    strokeOpacity={0.5}
+                    strokeWidth={1}
+                    pointerEvents="none"
+                  />
                   <text
                     x={cx}
-                    y={labelY}
+                    y={pillCy + 4}
                     fontSize={11}
                     fontWeight={600}
                     textAnchor="middle"
                     fill="#22d3ee"
                     fontFamily="ui-monospace, SFMono-Regular, monospace"
+                    letterSpacing="0.02em"
                     pointerEvents="none"
-                    stroke="#0f1525"
-                    strokeWidth={3}
-                    paintOrder="stroke"
                   >
-                    {fmtShort(d.net)}
+                    {labelText}
                   </text>
                 </g>
               );
