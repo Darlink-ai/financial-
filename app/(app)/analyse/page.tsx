@@ -115,7 +115,7 @@ export default function AnalysePage() {
       label: "Dépenses",
       value: agg.totals.expenses,
       currency: DISPLAY_CURRENCY,
-      hint: "Somme des débits des 3 rapprochements Excel (CHF + EUR + USD converti CHF au taux moyen du mois).",
+      hint: "Dépenses sur tous les comptes réunis (USD − CHF − EUR).",
     },
     {
       label: "Bénéfice avant Impôts et Amortissements",
