@@ -17,28 +17,32 @@
 
 :root {
   color-scheme: light;
-  /* Fond + surfaces : blancs très légèrement teintés bleu */
-  --bg: 217 41% 98%;
-  --panel: 0 0% 100%;
-  --panel2: 214 45% 96%;
-  --panel3: 214 42% 94%;
-  --border: 215 27% 89%;
-  --border-hover: 215 22% 78%;
-  /* Accents : bleus plus sombres pour contraste sur fond clair */
-  --accent: 217 91% 53%;
-  --accent2: 217 91% 60%;
-  --accent3: 191 91% 36%;
-  /* Status */
-  --ok: 160 91% 32%;
-  --warn: 28 91% 37%;
-  --err: 0 74% 51%;
-  --muted: 215 16% 47%;
-  --text: 222 47% 11%;
-  /* Gradients / effets ambiants */
-  --ambient-1: 217 91% 60%;
-  --ambient-1-alpha: 0.06;
-  --ambient-2: 187 85% 53%;
-  --ambient-2-alpha: 0.05;
+  /* Fond + surfaces : gris-bleu doux type "papier ivoire". Baisse de
+     luminosité par rapport au blanc pur pour eviter l'effet 'trop clair'
+     signale par l'utilisateur. */
+  --bg: 220 20% 91%;
+  --panel: 220 22% 95%;
+  --panel2: 220 18% 88%;
+  --panel3: 220 16% 84%;
+  --border: 220 14% 76%;
+  --border-hover: 220 14% 65%;
+  /* Accents : bleus soutenus mais pas trop vifs pour ne pas eclater
+     sur le fond grege. */
+  --accent: 217 80% 48%;
+  --accent2: 217 85% 55%;
+  --accent3: 191 80% 34%;
+  /* Status : legerement desatures pour rester dans la meme palette. */
+  --ok: 160 70% 30%;
+  --warn: 28 82% 40%;
+  --err: 0 68% 48%;
+  --muted: 220 12% 38%;
+  --text: 222 40% 12%;
+  /* Gradients / effets ambiants — attenues pour eviter le glow bleuatre
+     visible sur fond clair. */
+  --ambient-1: 217 60% 55%;
+  --ambient-1-alpha: 0.04;
+  --ambient-2: 187 60% 45%;
+  --ambient-2-alpha: 0.03;
 }
 
 /* Auto : suit le système quand pas d'override utilisateur */
