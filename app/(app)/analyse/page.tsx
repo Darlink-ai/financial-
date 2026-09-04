@@ -118,10 +118,10 @@ export default function AnalysePage() {
       hint: "Somme des débits des 3 rapprochements Excel (CHF + EUR + USD converti CHF au taux moyen du mois).",
     },
     {
-      label: "Net",
+      label: "Bénéfice avant Impôts et Amortissements",
       value: agg.totals.net,
       currency: DISPLAY_CURRENCY,
-      hint: "CA − Dépenses. Résultat brut avant ventilation par folder_code.",
+      hint: "CA − Dépenses (somme des débits des 3 rapprochements Excel). Proche de l'EBITDA en pratique — mesure la performance opérationnelle avant amortissements, charges financières et impôts.",
     },
   ];
 
