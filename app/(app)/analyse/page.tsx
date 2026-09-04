@@ -192,6 +192,8 @@ export default function AnalysePage() {
           <ExpensesByCategoryTable
             categories={pnl.expenseCategories}
             months={pnl.months}
+            revenueByMonth={Object.fromEntries(pnl.byMonth.map((m) => [m.month, m.revenue]))}
+            revenueTotal={pnl.totals.revenue}
           />
         </Section>
 
@@ -228,14 +230,31 @@ export default function AnalysePage() {
 function ExpensesByCategoryTable({
   categories,
   months,
+  revenueByMonth,
+  revenueTotal,
 }: {
   categories: ExpenseCategory[];
   months: string[];
+  /** CA brut par mois (YYYY-MM → CHF). Sert au % face CA. */
+  revenueByMonth: Record<string, number>;
+  /** CA brut total sur la période. Sert au % de la colonne Total. */
+  revenueTotal: number;
 }) {
   const monthTotals = months.map((m) =>
     categories.reduce((s, c) => s + (c.perMonth[m] ?? 0), 0),
   );
   const grandTotal = categories.reduce((s, c) => s + c.total, 0);
+
+  /** Formatte "1'234.56 CHF · 5.2%" — % base = CA brut du mois (ou total).
+   *  Si CA=0, on cache le %. */
+  const fmtWithPct = (value: number, base: number): { amount: string; pct: string | null } => {
+    if (value === 0) return { amount: "—", pct: null };
+    const pct = base > 0 ? (value / base) * 100 : 0;
+    return {
+      amount: formatAmount(value, "CHF"),
+      pct: base > 0 ? `${pct < 10 ? pct.toFixed(1) : pct.toFixed(0)} %` : null,
+    };
+  };
 
   return (
     <div className="card overflow-x-auto">
@@ -282,18 +301,34 @@ function ExpensesByCategoryTable({
                 </td>
                 {months.map((m) => {
                   const v = c.perMonth[m] ?? 0;
+                  const cell = fmtWithPct(v, revenueByMonth[m] ?? 0);
                   return (
                     <td
                       key={m}
                       className={`px-3 py-2 text-right font-mono tabular-nums text-[12px] ${v === 0 ? "text-muted/40" : "text-text"}`}
                     >
-                      {v === 0 ? "—" : formatAmount(v, "CHF")}
+                      <div>{cell.amount}</div>
+                      {cell.pct && (
+                        <div className="text-[10px] text-muted/70 font-normal mt-0.5">
+                          {cell.pct}
+                        </div>
+                      )}
                     </td>
                   );
                 })}
-                <td className="px-3 py-2 text-right font-mono tabular-nums text-[12px] font-semibold text-text border-l border-border">
-                  {formatAmount(c.total, "CHF")}
-                </td>
+                {(() => {
+                  const cell = fmtWithPct(c.total, revenueTotal);
+                  return (
+                    <td className="px-3 py-2 text-right font-mono tabular-nums text-[12px] font-semibold text-text border-l border-border">
+                      <div>{cell.amount}</div>
+                      {cell.pct && (
+                        <div className="text-[10px] text-muted/70 font-normal mt-0.5">
+                          {cell.pct}
+                        </div>
+                      )}
+                    </td>
+                  );
+                })()}
               </tr>
             ))
           )}
@@ -304,17 +339,35 @@ function ExpensesByCategoryTable({
               <td className="px-3 py-2.5 sticky left-0 bg-panel2/40 text-text text-[12px]">
                 Total dépenses
               </td>
-              {monthTotals.map((v, i) => (
-                <td
-                  key={months[i]}
-                  className="px-3 py-2.5 text-right font-mono tabular-nums text-[12px] text-warn"
-                >
-                  {formatAmount(v, "CHF")}
-                </td>
-              ))}
-              <td className="px-3 py-2.5 text-right font-mono tabular-nums text-[12px] text-warn border-l border-border">
-                {formatAmount(grandTotal, "CHF")}
-              </td>
+              {monthTotals.map((v, i) => {
+                const cell = fmtWithPct(v, revenueByMonth[months[i]] ?? 0);
+                return (
+                  <td
+                    key={months[i]}
+                    className="px-3 py-2.5 text-right font-mono tabular-nums text-[12px] text-warn"
+                  >
+                    <div>{cell.amount}</div>
+                    {cell.pct && (
+                      <div className="text-[10px] text-warn/70 font-normal mt-0.5">
+                        {cell.pct}
+                      </div>
+                    )}
+                  </td>
+                );
+              })}
+              {(() => {
+                const cell = fmtWithPct(grandTotal, revenueTotal);
+                return (
+                  <td className="px-3 py-2.5 text-right font-mono tabular-nums text-[12px] text-warn border-l border-border">
+                    <div>{cell.amount}</div>
+                    {cell.pct && (
+                      <div className="text-[10px] text-warn/70 font-normal mt-0.5">
+                        {cell.pct}
+                      </div>
+                    )}
+                  </td>
+                );
+              })()}
             </tr>
           </tfoot>
         )}
