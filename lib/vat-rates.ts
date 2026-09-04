@@ -50,16 +50,91 @@ export const VAT_COUNTRIES: VatCountry[] = [
   { iso: "UK", name: "Royaume-Uni", rate: 20, isUk: true }, // alias GB
 ];
 
+/**
+ * Alias par nom complet (anglais + français) → code ISO. Les revenus
+ * stockent souvent des noms complets ("United Kingdom", "Allemagne"…)
+ * plutôt que des codes ISO2 — on résout dans les deux sens.
+ */
+const NAME_TO_ISO: Record<string, string> = {
+  // EN
+  "AUSTRIA": "AT",
+  "BELGIUM": "BE",
+  "BULGARIA": "BG",
+  "CROATIA": "HR",
+  "CYPRUS": "CY",
+  "CZECHIA": "CZ", "CZECH REPUBLIC": "CZ",
+  "DENMARK": "DK",
+  "ESTONIA": "EE",
+  "FINLAND": "FI",
+  "FRANCE": "FR",
+  "GERMANY": "DE",
+  "GREECE": "GR",
+  "HUNGARY": "HU",
+  "IRELAND": "IE",
+  "ITALY": "IT",
+  "LATVIA": "LV",
+  "LITHUANIA": "LT",
+  "LUXEMBOURG": "LU",
+  "MALTA": "MT",
+  "NETHERLANDS": "NL", "THE NETHERLANDS": "NL",
+  "POLAND": "PL",
+  "PORTUGAL": "PT",
+  "ROMANIA": "RO",
+  "SLOVAKIA": "SK",
+  "SLOVENIA": "SI",
+  "SPAIN": "ES",
+  "SWEDEN": "SE",
+  "UNITED KINGDOM": "GB", "UK": "GB", "GREAT BRITAIN": "GB", "BRITAIN": "GB",
+  // FR
+  "AUTRICHE": "AT",
+  "BELGIQUE": "BE",
+  "BULGARIE": "BG",
+  "CROATIE": "HR",
+  "CHYPRE": "CY",
+  "TCHÉQUIE": "CZ", "TCHEQUIE": "CZ", "RÉPUBLIQUE TCHÈQUE": "CZ",
+  "DANEMARK": "DK",
+  "ESTONIE": "EE",
+  "FINLANDE": "FI",
+  "ALLEMAGNE": "DE",
+  "GRÈCE": "GR", "GRECE": "GR",
+  "HONGRIE": "HU",
+  "IRLANDE": "IE",
+  "ITALIE": "IT",
+  "LETTONIE": "LV",
+  "LITUANIE": "LT",
+  "MALTE": "MT",
+  "PAYS-BAS": "NL", "PAYS BAS": "NL", "HOLLANDE": "NL",
+  "POLOGNE": "PL",
+  "ROUMANIE": "RO",
+  "SLOVAQUIE": "SK",
+  "SLOVÉNIE": "SI", "SLOVENIE": "SI",
+  "ESPAGNE": "ES",
+  "SUÈDE": "SE", "SUEDE": "SE",
+  "ROYAUME-UNI": "GB", "ROYAUME UNI": "GB", "GRANDE-BRETAGNE": "GB", "GRANDE BRETAGNE": "GB",
+};
+
 const RATE_BY_ISO = new Map(
   VAT_COUNTRIES.map((c) => [c.iso.toUpperCase(), c] as const),
 );
 
-export function findVatCountry(iso: string | null | undefined): VatCountry | null {
-  if (!iso) return null;
-  return RATE_BY_ISO.get(iso.trim().toUpperCase()) ?? null;
+/**
+ * Résout un identifiant pays (ISO2 comme "FR", nom EN comme "France" ou
+ * "United Kingdom", nom FR comme "Allemagne") en VatCountry. Renvoie null
+ * si pays hors UE + UK ou nom inconnu.
+ */
+export function findVatCountry(input: string | null | undefined): VatCountry | null {
+  if (!input) return null;
+  const s = input.trim().toUpperCase();
+  // 1) tentative ISO direct
+  const byIso = RATE_BY_ISO.get(s);
+  if (byIso) return byIso;
+  // 2) tentative nom complet
+  const iso = NAME_TO_ISO[s];
+  if (iso) return RATE_BY_ISO.get(iso) ?? null;
+  return null;
 }
 
 /** True si un pays est UE ou UK (donc concerné par la déclaration TVA). */
-export function isEuOrUk(iso: string | null | undefined): boolean {
-  return findVatCountry(iso) != null;
+export function isEuOrUk(input: string | null | undefined): boolean {
+  return findVatCountry(input) != null;
 }
