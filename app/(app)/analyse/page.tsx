@@ -192,8 +192,10 @@ export default function AnalysePage() {
           <ExpensesByCategoryTable
             categories={pnl.expenseCategories}
             months={pnl.months}
-            revenueByMonth={Object.fromEntries(pnl.byMonth.map((m) => [m.month, m.revenue]))}
-            revenueTotal={pnl.totals.revenue}
+            revenueByMonth={Object.fromEntries(agg.series.map((m) => [m.month, m.revenue]))}
+            revenueTotal={agg.totals.revenue}
+            vatByMonth={Object.fromEntries(agg.series.map((m) => [m.month, m.vatDue]))}
+            vatTotal={agg.totals.vatDue}
           />
         </Section>
 
@@ -232,6 +234,8 @@ function ExpensesByCategoryTable({
   months,
   revenueByMonth,
   revenueTotal,
+  vatByMonth,
+  vatTotal,
 }: {
   categories: ExpenseCategory[];
   months: string[];
@@ -239,11 +243,24 @@ function ExpensesByCategoryTable({
   revenueByMonth: Record<string, number>;
   /** CA brut total sur la période. Sert au % de la colonne Total. */
   revenueTotal: number;
+  /** TVA due par mois (YYYY-MM → CHF). Sert au calcul Benefice = CA - TVA - Depenses. */
+  vatByMonth: Record<string, number>;
+  vatTotal: number;
 }) {
-  const monthTotals = months.map((m) =>
-    categories.reduce((s, c) => s + (c.perMonth[m] ?? 0), 0),
+  // Filtre : exclut la categorie 'C0' (Commission processeur) — les relevés
+  // emerchantpay sont des rentrees d'argent, pas des depenses de commission.
+  // Ils sont visibles a part dans la tuile 'Frais EMP' (source: Revenue.fees).
+  const filteredCategories = categories.filter(
+    (c) => c.code.toUpperCase() !== "C0",
   );
-  const grandTotal = categories.reduce((s, c) => s + c.total, 0);
+  const monthTotals = months.map((m) =>
+    filteredCategories.reduce((s, c) => s + (c.perMonth[m] ?? 0), 0),
+  );
+  const grandTotal = filteredCategories.reduce((s, c) => s + c.total, 0);
+  const monthBenefices = months.map(
+    (m, i) => (revenueByMonth[m] ?? 0) - (vatByMonth[m] ?? 0) - monthTotals[i],
+  );
+  const grandBenefice = revenueTotal - vatTotal - grandTotal;
 
   /** Formatte "1'234.56 CHF · 5.2%" — % base = CA brut du mois (ou total).
    *  Si CA=0, on cache le %. */
@@ -278,14 +295,14 @@ function ExpensesByCategoryTable({
           </tr>
         </thead>
         <tbody>
-          {categories.length === 0 ? (
+          {filteredCategories.length === 0 ? (
             <tr>
               <td colSpan={months.length + 2} className="px-4 py-8 text-center text-muted italic text-[12px]">
                 Aucune facture validée sur la période — la vue se remplira au fur et à mesure.
               </td>
             </tr>
           ) : (
-            categories.map((c) => (
+            filteredCategories.map((c) => (
               <tr key={c.code} className="border-b border-border/50 hover:bg-panel2/30">
                 <td
                   className="px-3 py-2 sticky left-0 bg-panel whitespace-nowrap"
@@ -333,7 +350,7 @@ function ExpensesByCategoryTable({
             ))
           )}
         </tbody>
-        {categories.length > 0 && (
+        {filteredCategories.length > 0 && (
           <tfoot>
             <tr className="border-t-2 border-border bg-panel2/40 font-semibold">
               <td className="px-3 py-2.5 sticky left-0 bg-panel2/40 text-text text-[12px]">
@@ -362,6 +379,46 @@ function ExpensesByCategoryTable({
                     <div>{cell.amount}</div>
                     {cell.pct && (
                       <div className="text-[10px] text-warn/70 font-normal mt-0.5">
+                        {cell.pct}
+                      </div>
+                    )}
+                  </td>
+                );
+              })()}
+            </tr>
+            {/* Sous-total Benefice avant Impots et Amortissements =
+                CA brut − TVA − Total depenses (par mois puis total). */}
+            <tr className="bg-panel2/60 font-semibold border-t border-border">
+              <td className="px-3 py-2.5 sticky left-0 bg-panel2/60 text-text text-[12px]"
+                  title="Chiffre d'affaires brut − TVA due − Total dépenses. Ce que dégage l'activité avant amortissements et impôts.">
+                Bénéfice avant Impôts et Amortissements
+              </td>
+              {monthBenefices.map((v, i) => {
+                const base = revenueByMonth[months[i]] ?? 0;
+                const cell = fmtWithPct(v, base);
+                const color = v >= 0 ? "text-ok" : "text-err";
+                return (
+                  <td
+                    key={months[i]}
+                    className={`px-3 py-2.5 text-right font-mono tabular-nums text-[12px] ${color}`}
+                  >
+                    <div>{cell.amount}</div>
+                    {cell.pct && (
+                      <div className={`text-[10px] font-normal mt-0.5 opacity-70`}>
+                        {cell.pct}
+                      </div>
+                    )}
+                  </td>
+                );
+              })}
+              {(() => {
+                const cell = fmtWithPct(grandBenefice, revenueTotal);
+                const color = grandBenefice >= 0 ? "text-ok" : "text-err";
+                return (
+                  <td className={`px-3 py-2.5 text-right font-mono tabular-nums text-[12px] ${color} border-l border-border`}>
+                    <div>{cell.amount}</div>
+                    {cell.pct && (
+                      <div className="text-[10px] font-normal mt-0.5 opacity-70">
                         {cell.pct}
                       </div>
                     )}
