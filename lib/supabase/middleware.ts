@@ -37,6 +37,8 @@ const PUBLIC_PATHS = [
   // set-passwords : provisionne les mots de passe pour les emails autorises,
   // auth Bearer.
   "/api/admin/set-passwords",
+  // list-unmatched : liste les factures non-matched (audit), auth Bearer.
+  "/api/invoices/list-unmatched",
 ];
 
 function isPublic(pathname: string): boolean {
