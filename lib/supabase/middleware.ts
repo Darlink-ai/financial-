@@ -39,6 +39,8 @@ const PUBLIC_PATHS = [
   "/api/admin/set-passwords",
   // list-unmatched : liste les factures non-matched (audit), auth Bearer.
   "/api/invoices/list-unmatched",
+  // unmatched-rows : lignes Excel debit sans facture validee, auth Bearer.
+  "/api/invoices/unmatched-rows",
 ];
 
 function isPublic(pathname: string): boolean {
