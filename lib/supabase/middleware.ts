@@ -41,6 +41,8 @@ const PUBLIC_PATHS = [
   "/api/invoices/list-unmatched",
   // unmatched-rows : lignes Excel debit sans facture validee, auth Bearer.
   "/api/invoices/unmatched-rows",
+  // create-from-b64 : upload d'un PDF via base64 + Bearer (admin).
+  "/api/invoices/create-from-b64",
 ];
 
 function isPublic(pathname: string): boolean {
