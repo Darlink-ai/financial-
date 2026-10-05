@@ -17,14 +17,14 @@
 
 :root {
   color-scheme: light;
-  /* Fond principal BLANC pur. Les cards se detachent avec un gris
-     ultra-leger ou par la border uniquement. */
+  /* Fond principal BLANC pur. Les cards sont legerement grisees pour
+     bien ressortir visuellement du fond. */
   --bg: 0 0% 100%;           /* fond app : BLANC */
-  --panel: 0 0% 100%;        /* cards : BLANC */
-  --panel2: 220 18% 96%;     /* tiles secondaires (headers tableaux, hovers) */
-  --panel3: 220 15% 92%;     /* hover rows plus marque */
-  --border: 220 14% 90%;     /* trait tres subtile */
-  --border-hover: 220 14% 76%;
+  --panel: 220 20% 96%;      /* cards : gris leger (contraste sur fond blanc) */
+  --panel2: 220 18% 92%;     /* tiles secondaires (headers tableaux, hovers) */
+  --panel3: 220 15% 88%;     /* hover rows plus marque */
+  --border: 220 14% 85%;     /* trait entre cards et fond */
+  --border-hover: 220 14% 72%;
   /* Accents : bleus soutenus mais pas trop vifs pour ne pas eclater
      sur le fond clair. */
   --accent: 217 80% 48%;
