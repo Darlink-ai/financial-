@@ -43,6 +43,8 @@ const PUBLIC_PATHS = [
   "/api/invoices/unmatched-rows",
   // create-from-b64 : upload d'un PDF via base64 + Bearer (admin).
   "/api/invoices/create-from-b64",
+  // vat-aggregate : agrege CA + TVA par pays UE+UK sur fenetre, auth Bearer.
+  "/api/revenue/vat-aggregate",
 ];
 
 function isPublic(pathname: string): boolean {
