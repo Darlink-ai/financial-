@@ -45,6 +45,8 @@ const PUBLIC_PATHS = [
   "/api/invoices/create-from-b64",
   // vat-aggregate : agrege CA + TVA par pays UE+UK sur fenetre, auth Bearer.
   "/api/revenue/vat-aggregate",
+  // delete-month : liste (dryRun) ou supprime les revenus d'un mois, auth Bearer.
+  "/api/revenue/delete-month",
 ];
 
 function isPublic(pathname: string): boolean {
