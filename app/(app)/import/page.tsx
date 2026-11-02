@@ -15,6 +15,35 @@ import {
 import type { Invoice, AccountCurrency } from "@/lib/types";
 import { formatAmount, buildFinalName } from "@/lib/format";
 import { creditorMatchesRow } from "@/lib/creditor-aliases";
+import { detectColumns } from "@/lib/excel-match";
+
+/**
+ * Parse une cellule Excel (date) en ISO YYYY-MM-DD. Tolère :
+ * - number : date-serial Excel (jours depuis 1899-12-30)
+ * - string ISO "YYYY-MM-DD..."
+ * - string DD.MM.YYYY ou DD/MM/YYYY ou DD-MM-YYYY (année 2 ou 4 chiffres)
+ */
+function parseDateCell(v: unknown): string | null {
+  if (v == null || v === "") return null;
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  if (typeof v === "number") {
+    // Excel serial : jours depuis 1899-12-30 (compte le bug Lotus de 1900)
+    const ms = Math.round((v - 25569) * 86400 * 1000);
+    const d = new Date(ms);
+    if (isNaN(d.getTime())) return null;
+    return d.toISOString().slice(0, 10);
+  }
+  const s = String(v).trim();
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const dmy = s.match(/^(\d{1,2})[.\/\-](\d{1,2})[.\/\-](\d{2,4})/);
+  if (dmy) {
+    const [, d, m, y] = dmy;
+    const yr = y.length === 2 ? "20" + y : y;
+    return `${yr}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  }
+  return null;
+}
 
 /**
  * Combine la date de facture extraite avec le mois override choisi par
@@ -1094,6 +1123,74 @@ function DraftRow({
     item.creditorInput,
     item.folderCodeInput,
   ]);
+
+  // Auto-fetch de la date depuis la ligne Excel ciblee : quand l'utilisateur
+  // tape un numero de ligne manuellement, on va chercher la vraie date de
+  // cette ligne dans le fichier Excel et on met a jour invoiceDateInput +
+  // monthInput. Comme ca le nom Drive se recalcule tout seul avec la bonne
+  // date (ex: "28.01.26 - Jubin Freres - 6000" au lieu de la date par defaut).
+  const lastFetchedRowRef = useRef<string | null>(null);
+  useEffect(() => {
+    const n = parseInt(item.rowInput.trim(), 10);
+    if (!Number.isFinite(n) || n < 2) return;
+    const currency = item.currencyInput;
+    if (!currency) return;
+    // Mois a fetcher : prioritise monthInput override, sinon le mois de la date
+    const month = item.monthInput.trim() || item.invoiceDateInput.slice(0, 7);
+    if (!/^\d{4}-\d{2}$/.test(month)) return;
+    const key = `${month}|${currency}|${n}`;
+    if (lastFetchedRowRef.current === key) return;
+    lastFetchedRowRef.current = key;
+
+    const controller = new AbortController();
+    // Debounce 300ms pour eviter de fetcher a chaque frappe de chiffre
+    const timer = setTimeout(async () => {
+      try {
+        const r = await fetch(
+          `/api/excel-sheets/${month}?currency=${currency}`,
+          { cache: "no-store", signal: controller.signal },
+        );
+        if (!r.ok) return;
+        const data = (await r.json()) as {
+          sheet: {
+            headers: string[];
+            rows: (string | number | null)[][];
+          } | null;
+        };
+        if (!data.sheet) return;
+        const cols = detectColumns({
+          headers: data.sheet.headers,
+          rows: data.sheet.rows,
+        });
+        if (cols.idxDate < 0) return;
+        // Ligne excel humaine = n (1-based avec header). rowIdx = n - 2.
+        const rowIdx = n - 2;
+        if (rowIdx < 0 || rowIdx >= data.sheet.rows.length) return;
+        const row = data.sheet.rows[rowIdx];
+        const cell = row?.[cols.idxDate];
+        const parsed = parseDateCell(cell);
+        if (!parsed) return;
+        // Met a jour seulement si different
+        if (
+          parsed !== item.invoiceDateInput ||
+          parsed.slice(0, 7) !== item.monthInput
+        ) {
+          onChange({
+            invoiceDateInput: parsed,
+            monthInput: parsed.slice(0, 7),
+          });
+        }
+      } catch {
+        // Ignore (abort, reseau, etc.)
+      }
+    }, 300);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.rowInput, item.currencyInput, item.monthInput]);
 
   const accentBorder =
     item.status === "validated"
