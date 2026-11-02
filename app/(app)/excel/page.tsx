@@ -7,7 +7,7 @@ import {
   useInvoicesForCurrentMonth,
   formatMonthLabel,
 } from "@/lib/store";
-import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, Download, Trash2 } from "lucide-react";
+import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, Download, Trash2, Search } from "lucide-react";
 import * as XLSX from "xlsx";
 import {
   computeExpenseTotal,
@@ -907,8 +907,62 @@ function SheetTable({
   sheet: ParsedSheet;
   matchedRows: Map<number, MatchResult>;
 }) {
+  const [query, setQuery] = useState("");
+  // Normalise une string pour recherche insensible aux accents/case.
+  const norm = (s: string) =>
+    s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+
+  const filteredRows = useMemo(() => {
+    if (!query.trim()) {
+      return sheet.rows.map((row, idx) => ({ row, idx }));
+    }
+    const q = norm(query.trim());
+    return sheet.rows
+      .map((row, idx) => ({ row, idx }))
+      .filter(({ row, idx }) => {
+        // Cherche dans toutes les cellules de la ligne + le créditeur
+        // de la facture matchée si présente.
+        for (const cell of row) {
+          if (cell != null && norm(String(cell)).includes(q)) return true;
+        }
+        const m = matchedRows.get(idx);
+        if (m?.invoice.creditor && norm(m.invoice.creditor).includes(q)) return true;
+        return false;
+      });
+  }, [sheet.rows, query, matchedRows]);
+
+  const totalMatched = sheet.rows.filter((_, i) => matchedRows.has(i)).length;
+  const visibleMatched = filteredRows.filter(({ idx }) => matchedRows.has(idx)).length;
+
   return (
     <div className="card overflow-hidden">
+      <div className="px-4 py-2.5 border-b border-border flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-2 flex-1 min-w-[220px] max-w-md">
+          <Search size={14} className="text-muted shrink-0" />
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Rechercher un débiteur ou texte dans la ligne…"
+            className="input !py-1 !px-2 text-[12px] flex-1"
+            title="Filtre les lignes dont une cellule (ou le créditeur de la facture rapprochée) contient le texte saisi. Insensible aux accents et à la casse."
+          />
+          {query && (
+            <button
+              onClick={() => setQuery("")}
+              className="text-[11px] text-muted hover:text-text px-2"
+              title="Vider la recherche"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+        <div className="text-[11px] text-muted font-mono tabular-nums ml-auto">
+          {query
+            ? `${filteredRows.length} / ${sheet.rows.length} ligne(s) · ${visibleMatched} rapprochée(s)`
+            : `${sheet.rows.length} ligne(s) · ${totalMatched} rapprochée(s)`}
+        </div>
+      </div>
       <div className="overflow-x-auto max-h-[60vh]">
         <table className="w-full text-[12px] border-collapse">
           <thead className="sticky top-0 bg-panel border-b border-border z-10">
@@ -930,7 +984,17 @@ function SheetTable({
             </tr>
           </thead>
           <tbody>
-            {sheet.rows.map((row, idx) => {
+            {filteredRows.length === 0 && (
+              <tr>
+                <td
+                  colSpan={sheet.headers.length + 2}
+                  className="px-4 py-8 text-center text-muted italic text-[12px]"
+                >
+                  Aucune ligne ne correspond à « {query} ».
+                </td>
+              </tr>
+            )}
+            {filteredRows.map(({ row, idx }) => {
               const m = matchedRows.get(idx);
               return (
                 <tr
