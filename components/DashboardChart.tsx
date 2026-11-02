@@ -61,21 +61,46 @@ async function fetchSheet(
  *  - Dépenses : somme des débits des 3 rapprochements Excel (CHF/EUR/USD),
  *    convertis en USD via taux moyens. Tous comptes confondus.
  */
-function buildMonths(): string[] {
+function buildMonths(nb: number): string[] {
   const now = new Date();
   const months: string[] = [];
-  for (let i = MONTHS_TO_SHOW - 1; i >= 0; i--) {
+  for (let i = nb - 1; i >= 0; i--) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
     months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
   }
   return months;
 }
 
+const RANGE_OPTIONS = [
+  { value: 6, label: "6 mois" },
+  { value: 12, label: "12 mois" },
+  { value: 18, label: "18 mois" },
+  { value: 24, label: "24 mois" },
+];
+const RANGE_STORE_KEY = "dashboard-chart-months";
+
 export function DashboardChart() {
   const { revenues, businesses, ready } = useStore();
   const [filter, setFilter] = useState<string>("all");
+  // Nombre de mois affichés — persisté en localStorage, défaut 6.
+  const [nbMonths, setNbMonths] = useState<number>(() => {
+    if (typeof window === "undefined") return MONTHS_TO_SHOW;
+    try {
+      const stored = localStorage.getItem(RANGE_STORE_KEY);
+      const n = stored ? parseInt(stored, 10) : NaN;
+      return Number.isFinite(n) && RANGE_OPTIONS.some((o) => o.value === n)
+        ? n
+        : MONTHS_TO_SHOW;
+    } catch {
+      return MONTHS_TO_SHOW;
+    }
+  });
+  const changeNbMonths = (n: number) => {
+    setNbMonths(n);
+    try { localStorage.setItem(RANGE_STORE_KEY, String(n)); } catch {}
+  };
 
-  const months = useMemo(() => buildMonths(), []);
+  const months = useMemo(() => buildMonths(nbMonths), [nbMonths]);
   // expensesByMonth[ym] = total dépenses USD, somme des 3 buckets convertis.
   const [expensesByMonth, setExpensesByMonth] = useState<Record<string, number>>(
     {},
@@ -214,13 +239,13 @@ export function DashboardChart() {
         <div>
           <div className="text-[14px] font-semibold flex items-center gap-2">
             <TrendingUp size={15} className="text-accent" />
-            Évolution sur 6 mois
+            Évolution sur {nbMonths} mois
           </div>
           <div className="text-[11px] text-muted">
             Chiffre d&apos;affaires et dépenses (3 comptes confondus) en USD
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {isLoading && (
             <Loader2
               size={13}
@@ -228,6 +253,22 @@ export function DashboardChart() {
               aria-label="Chargement"
             />
           )}
+          <div className="card !rounded-lg p-1 flex items-center gap-0.5">
+            {RANGE_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => changeNbMonths(opt.value)}
+                className={`px-2.5 py-1 rounded-md text-[12px] font-medium transition-colors ${
+                  nbMonths === opt.value
+                    ? "bg-panel2 text-text border border-border"
+                    : "text-muted hover:text-text border border-transparent"
+                }`}
+                title={`Afficher ${opt.label}`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
           <div className="card !rounded-lg p-1 flex items-center gap-0.5">
             {filterOptions.map((opt) => (
               <button
