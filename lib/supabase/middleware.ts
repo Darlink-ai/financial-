@@ -47,6 +47,8 @@ const PUBLIC_PATHS = [
   "/api/revenue/vat-aggregate",
   // delete-month : liste (dryRun) ou supprime les revenus d'un mois, auth Bearer.
   "/api/revenue/delete-month",
+  // admin/upload-sheet : upload d'un fichier banque par un script, auth Bearer.
+  "/api/admin/upload-sheet",
 ];
 
 function isPublic(pathname: string): boolean {
