@@ -486,7 +486,12 @@ export default function ExcelPage() {
 
             <ColumnsMini sheet={sheet} />
 
-            <SheetTable sheet={sheet} matchedRows={matchedRows} />
+            <SheetTable
+              sheet={sheet}
+              matchedRows={matchedRows}
+              month={selectedMonth}
+              currency={currency}
+            />
 
             {unmatchedInvoices.length > 0 && (
               <section className="card overflow-hidden">
@@ -900,14 +905,113 @@ function StatTile({
   );
 }
 
+type Assignee = "gauthier" | "robin" | "jacqueline" | "a_creer";
+const ASSIGNEE_LABEL: Record<Assignee, string> = {
+  gauthier: "Gauthier",
+  robin: "Robin",
+  jacqueline: "Maman",
+  a_creer: "À créer",
+};
+const ASSIGNEE_TONE: Record<Assignee, string> = {
+  gauthier: "text-indigo-400 border-indigo-500/40 bg-indigo-500/10",
+  robin: "text-emerald-400 border-emerald-500/40 bg-emerald-500/10",
+  jacqueline: "text-pink-400 border-pink-500/40 bg-pink-500/10",
+  a_creer: "text-sky-400 border-sky-500/40 bg-sky-500/10",
+};
+
 function SheetTable({
   sheet,
   matchedRows,
+  month,
+  currency,
 }: {
   sheet: ParsedSheet;
   matchedRows: Map<number, MatchResult>;
+  month: string;
+  currency: AccountCurrency;
 }) {
   const [query, setQuery] = useState("");
+  // Attributions chargées pour ce (mois × devise). Clé : rowNumber (idx+2).
+  const [assigns, setAssigns] = useState<Map<number, Assignee>>(new Map());
+
+  useEffect(() => {
+    let cancelled = false;
+    setAssigns(new Map());
+    (async () => {
+      try {
+        const r = await fetch(
+          `/api/row-assignments?month=${month}&currency=${currency}`,
+          { cache: "no-store" },
+        );
+        if (!r.ok) return;
+        const data = (await r.json()) as {
+          assignments: { rowNumber: number; assignee: Assignee }[];
+        };
+        if (cancelled) return;
+        setAssigns(new Map(data.assignments.map((a) => [a.rowNumber, a.assignee])));
+      } catch {
+        /* silencieux */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [month, currency]);
+
+  async function setAssignee(rowNumber: number, next: Assignee | null) {
+    // Optimiste.
+    setAssigns((p) => {
+      const m = new Map(p);
+      if (next) m.set(rowNumber, next);
+      else m.delete(rowNumber);
+      return m;
+    });
+    try {
+      if (next === null) {
+        await fetch(`/api/row-assignments`, {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ month, currency, row: rowNumber }),
+        });
+      } else {
+        const r = await fetch(`/api/row-assignments`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            month,
+            currency,
+            row: rowNumber,
+            assignee: next,
+            cascade: true,
+          }),
+        });
+        if (r.ok) {
+          const data = (await r.json()) as {
+            cascade: { added: number } | null;
+          };
+          const added = data?.cascade?.added ?? 0;
+          if (added > 0) {
+            // Rafraîchit la carte pour montrer les cascades locales.
+            const refresh = await fetch(
+              `/api/row-assignments?month=${month}&currency=${currency}`,
+              { cache: "no-store" },
+            );
+            if (refresh.ok) {
+              const d = (await refresh.json()) as {
+                assignments: { rowNumber: number; assignee: Assignee }[];
+              };
+              setAssigns(
+                new Map(d.assignments.map((a) => [a.rowNumber, a.assignee])),
+              );
+            }
+          }
+        }
+      }
+    } catch {
+      /* silencieux */
+    }
+  }
+
   // Normalise une string pour recherche insensible aux accents/case.
   const norm = (s: string) =>
     s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
@@ -981,13 +1085,16 @@ function SheetTable({
               <th className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-muted font-medium">
                 Rapprochement
               </th>
+              <th className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-muted font-medium whitespace-nowrap">
+                Assigné à
+              </th>
             </tr>
           </thead>
           <tbody>
             {filteredRows.length === 0 && (
               <tr>
                 <td
-                  colSpan={sheet.headers.length + 2}
+                  colSpan={sheet.headers.length + 3}
                   className="px-4 py-8 text-center text-muted italic text-[12px]"
                 >
                   Aucune ligne ne correspond à « {query} ».
@@ -1031,6 +1138,12 @@ function SheetTable({
                     ) : (
                       <span className="text-muted">—</span>
                     )}
+                  </td>
+                  <td className="px-3 py-1.5">
+                    <AssigneePicker
+                      value={assigns.get(idx + 2) ?? null}
+                      onChange={(next) => setAssignee(idx + 2, next)}
+                    />
                   </td>
                 </tr>
               );
@@ -1087,5 +1200,34 @@ function ColumnsMini({ sheet }: { sheet: ParsedSheet }) {
         </span>
       ))}
     </div>
+  );
+}
+
+function AssigneePicker({
+  value,
+  onChange,
+}: {
+  value: Assignee | null;
+  onChange: (next: Assignee | null) => void;
+}) {
+  return (
+    <select
+      value={value ?? ""}
+      onChange={(e) => {
+        const v = e.target.value;
+        onChange(v === "" ? null : (v as Assignee));
+      }}
+      className={
+        "input !py-1 !px-2 text-[11px] !w-[110px] " +
+        (value ? ASSIGNEE_TONE[value] : "text-muted")
+      }
+      title={value ? ASSIGNEE_LABEL[value] : "Attribuer cette ligne"}
+    >
+      <option value="">—</option>
+      <option value="gauthier">Gauthier</option>
+      <option value="robin">Robin</option>
+      <option value="jacqueline">Maman</option>
+      <option value="a_creer">À créer</option>
+    </select>
   );
 }

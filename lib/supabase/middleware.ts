@@ -49,6 +49,8 @@ const PUBLIC_PATHS = [
   "/api/revenue/delete-month",
   // admin/upload-sheet : upload d'un fichier banque par un script, auth Bearer.
   "/api/admin/upload-sheet",
+  // admin/migrate : applique les DDL idempotents en prod, auth Bearer.
+  "/api/admin/migrate",
 ];
 
 function isPublic(pathname: string): boolean {

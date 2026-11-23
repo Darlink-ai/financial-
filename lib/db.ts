@@ -1342,6 +1342,157 @@ export async function deleteExcelSheet(month: string, accountCurrency: string) {
   `;
 }
 
+export async function listExcelSheets(opts: {
+  sinceMonth?: string;
+}): Promise<StoredExcelSheet[]> {
+  const sql = client();
+  const rows = opts.sinceMonth
+    ? await sql<RawExcelSheet[]>`
+        SELECT month, account_currency, file_name, headers, rows, uploaded_at
+        FROM excel_sheets
+        WHERE month >= ${opts.sinceMonth}
+        ORDER BY month ASC, account_currency ASC
+      `
+    : await sql<RawExcelSheet[]>`
+        SELECT month, account_currency, file_name, headers, rows, uploaded_at
+        FROM excel_sheets
+        ORDER BY month ASC, account_currency ASC
+      `;
+  return rows.map(mapExcelSheet);
+}
+
+// ---- Row assignments (Gauthier / Robin / Jacqueline / À créer) ----
+export type RowAssignee = "gauthier" | "robin" | "jacqueline" | "a_creer";
+
+export type RowAssignment = {
+  month: string;
+  accountCurrency: string;
+  rowNumber: number;
+  assignee: RowAssignee;
+  creditorKey: string | null;
+  assignedBy: string | null;
+  assignedAt: string;
+  autoCascaded: boolean;
+};
+
+type RawRowAssignment = {
+  month: string;
+  account_currency: string;
+  row_number: number;
+  assignee: string;
+  creditor_key: string | null;
+  assigned_by: string | null;
+  assigned_at: Date;
+  auto_cascaded: boolean;
+};
+
+const mapRowAssignment = (r: RawRowAssignment): RowAssignment => ({
+  month: r.month,
+  accountCurrency: r.account_currency,
+  rowNumber: r.row_number,
+  assignee: r.assignee as RowAssignee,
+  creditorKey: r.creditor_key,
+  assignedBy: r.assigned_by,
+  assignedAt: r.assigned_at.toISOString(),
+  autoCascaded: r.auto_cascaded,
+});
+
+export async function getRowAssignmentsForSheet(
+  month: string,
+  accountCurrency: string,
+): Promise<RowAssignment[]> {
+  const sql = client();
+  const rows = await sql<RawRowAssignment[]>`
+    SELECT month, account_currency, row_number, assignee, creditor_key,
+           assigned_by, assigned_at, auto_cascaded
+    FROM row_assignments
+    WHERE month = ${month} AND account_currency = ${accountCurrency}
+  `;
+  return rows.map(mapRowAssignment);
+}
+
+export async function listAllRowAssignments(opts: {
+  assignee?: RowAssignee;
+}): Promise<RowAssignment[]> {
+  const sql = client();
+  const rows = opts.assignee
+    ? await sql<RawRowAssignment[]>`
+        SELECT month, account_currency, row_number, assignee, creditor_key,
+               assigned_by, assigned_at, auto_cascaded
+        FROM row_assignments
+        WHERE assignee = ${opts.assignee}
+        ORDER BY month DESC, account_currency ASC, row_number ASC
+      `
+    : await sql<RawRowAssignment[]>`
+        SELECT month, account_currency, row_number, assignee, creditor_key,
+               assigned_by, assigned_at, auto_cascaded
+        FROM row_assignments
+        ORDER BY month DESC, account_currency ASC, row_number ASC
+      `;
+  return rows.map(mapRowAssignment);
+}
+
+export async function upsertRowAssignment(a: {
+  month: string;
+  accountCurrency: string;
+  rowNumber: number;
+  assignee: RowAssignee;
+  creditorKey: string | null;
+  assignedBy: string | null;
+  autoCascaded?: boolean;
+}): Promise<void> {
+  const sql = client();
+  await sql`
+    INSERT INTO row_assignments
+      (month, account_currency, row_number, assignee, creditor_key,
+       assigned_by, assigned_at, auto_cascaded)
+    VALUES
+      (${a.month}, ${a.accountCurrency}, ${a.rowNumber}, ${a.assignee},
+       ${a.creditorKey}, ${a.assignedBy}, now(), ${a.autoCascaded ?? false})
+    ON CONFLICT (month, account_currency, row_number) DO UPDATE SET
+      assignee      = EXCLUDED.assignee,
+      creditor_key  = COALESCE(EXCLUDED.creditor_key, row_assignments.creditor_key),
+      assigned_by   = EXCLUDED.assigned_by,
+      assigned_at   = now(),
+      auto_cascaded = EXCLUDED.auto_cascaded
+  `;
+}
+
+export async function insertAutoRowAssignmentIfAbsent(a: {
+  month: string;
+  accountCurrency: string;
+  rowNumber: number;
+  assignee: RowAssignee;
+  creditorKey: string | null;
+  assignedBy: string | null;
+}): Promise<boolean> {
+  const sql = client();
+  const inserted = await sql<{ month: string }[]>`
+    INSERT INTO row_assignments
+      (month, account_currency, row_number, assignee, creditor_key,
+       assigned_by, assigned_at, auto_cascaded)
+    VALUES
+      (${a.month}, ${a.accountCurrency}, ${a.rowNumber}, ${a.assignee},
+       ${a.creditorKey}, ${a.assignedBy}, now(), TRUE)
+    ON CONFLICT (month, account_currency, row_number) DO NOTHING
+    RETURNING month
+  `;
+  return inserted.length > 0;
+}
+
+export async function deleteRowAssignment(
+  month: string,
+  accountCurrency: string,
+  rowNumber: number,
+): Promise<void> {
+  await client()`
+    DELETE FROM row_assignments
+    WHERE month = ${month}
+      AND account_currency = ${accountCurrency}
+      AND row_number = ${rowNumber}
+  `;
+}
+
 // ---- Reset (dev) ----
 export async function resetDatabase() {
   const sql = client();

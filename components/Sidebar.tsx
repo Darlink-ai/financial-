@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   LayoutDashboard,
   FileText,
@@ -25,6 +25,7 @@ import {
   Landmark,
   Calculator,
   Percent,
+  ListTodo,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { SidebarMonthSelector } from "./SidebarMonthSelector";
@@ -47,15 +48,39 @@ type NavEntry =
   | { kind: "leaf"; leaf: NavLeaf }
   | { kind: "group"; group: NavGroup };
 
+// Comptes qui voient la page /tasks dans la sidebar. Elle contient
+// les lignes Excel qu'on leur a attribuées manuellement + la section
+// « À créer » visible pour les 3.
+const TASKS_EMAILS = new Set([
+  "gauthier.koller@famelink.ai",
+  "contact@famelink.ai",
+  "robin.koller@famelink.ai",
+  "jacqueline@famelink.ai",
+]);
+
+function buildEntries(userEmail: string | null): NavEntry[] {
+  const showTasks =
+    !!userEmail && TASKS_EMAILS.has(userEmail.toLowerCase().trim());
+  return BASE_ENTRIES(showTasks);
+}
+
 // Sidebar structure : un seul leaf top-level (Tableau de bord), tout
 // le reste est en groupes repliables. Tous les items top-level se
 // rendent visuellement identiquement (même hauteur, même icône, même
 // padding) — seul le chevron à droite distingue un groupe d'une feuille.
-const ENTRIES: NavEntry[] = [
+const BASE_ENTRIES = (showTasks: boolean): NavEntry[] => [
   {
     kind: "leaf",
     leaf: { href: "/", label: "Tableau de bord", icon: LayoutDashboard },
   },
+  ...(showTasks
+    ? [
+        {
+          kind: "leaf" as const,
+          leaf: { href: "/tasks", label: "Tâches", icon: ListTodo },
+        },
+      ]
+    : []),
   {
     kind: "group",
     group: {
@@ -142,6 +167,7 @@ export function Sidebar({
 }) {
   const pathname = usePathname();
   const onAnalysePage = pathname.startsWith("/analyse");
+  const entries = useMemo(() => buildEntries(userEmail), [userEmail]);
 
   const [collapsed, setCollapsed] = useState(false);
   // Tous les groupes fermés par défaut — l'utilisateur ouvre ce dont il
@@ -157,14 +183,14 @@ export function Sidebar({
     // On part de "tout fermé", puis on applique l'état sauvegardé,
     // puis on force l'ouverture du groupe contenant la page courante.
     const next: Record<string, boolean> = { ...stored };
-    for (const e of ENTRIES) {
+    for (const e of entries) {
       if (e.kind === "group" && e.group.items.some((it) => pathname === it.href)) {
         next[e.group.id] = true;
       }
     }
     setOpenGroups(next);
     setHydrated(true);
-  }, [pathname]);
+  }, [pathname, entries]);
 
   // Persist.
   useEffect(() => {
@@ -206,7 +232,7 @@ export function Sidebar({
           collapsed ? "pt-4" : "pt-3",
         )}
       >
-        {ENTRIES.map((entry) => {
+        {entries.map((entry) => {
           if (entry.kind === "leaf") {
             return (
               <NavItem
