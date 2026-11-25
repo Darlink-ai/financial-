@@ -177,7 +177,9 @@ export default function ImportPage() {
   const [deletingSelected, setDeletingSelected] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  const selectableCount = items.filter((it) => it.status !== "validated").length;
   const toggleSelect = (key: string) => {
+    if (items.find((it) => it.key === key)?.status === "validated") return;
     setSelectedKeys((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
@@ -185,8 +187,12 @@ export default function ImportPage() {
       return next;
     });
   };
+  // Seulement ce qui peut encore être validé ou supprimé : une facture
+  // validée reste affichée pour le récap mais ne se sélectionne plus.
   const selectAllVisible = () => {
-    setSelectedKeys(new Set(items.map((it) => it.key)));
+    setSelectedKeys(
+      new Set(items.filter((it) => it.status !== "validated").map((it) => it.key)),
+    );
   };
   const clearSelection = () => setSelectedKeys(new Set());
 
@@ -608,7 +614,7 @@ export default function ImportPage() {
    */
   const deleteSelected = async () => {
     const targets = items.filter(
-      (it) => selectedKeys.has(it.key) && it.invoice?.id,
+      (it) => selectedKeys.has(it.key) && it.invoice?.id && it.status !== "validated",
     );
     if (targets.length === 0) {
       alert("Aucune facture sélectionnée avec un ID DB valide.");
@@ -977,13 +983,13 @@ export default function ImportPage() {
                 <input
                   type="checkbox"
                   checked={
-                    items.length > 0 && selectedKeys.size === items.length
+                    selectableCount > 0 && selectedKeys.size === selectableCount
                   }
                   ref={(el) => {
                     if (el)
                       el.indeterminate =
                         selectedKeys.size > 0 &&
-                        selectedKeys.size < items.length;
+                        selectedKeys.size < selectableCount;
                   }}
                   onChange={(e) => {
                     if (e.target.checked) selectAllVisible();
@@ -991,7 +997,7 @@ export default function ImportPage() {
                   }}
                   className="accent-accent cursor-pointer"
                   title={
-                    selectedKeys.size === items.length
+                    selectedKeys.size === selectableCount
                       ? "Tout désélectionner"
                       : "Tout sélectionner"
                   }

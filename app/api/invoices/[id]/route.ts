@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { deleteInvoice, updateInvoice } from "@/lib/db";
+import { deleteInvoice, getInvoiceStatus, updateInvoice } from "@/lib/db";
 import type { Invoice } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -16,10 +16,25 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
+  // Une facture rapprochée d'une ligne ne se supprime pas d'un clic : une
+  // page restée ouverte peut encore l'afficher comme brouillon. On la
+  // dévalide d'abord (ou ?force=1 pour un usage d'administration).
+  if (new URL(req.url).searchParams.get("force") !== "1") {
+    const status = await getInvoiceStatus(id);
+    if (status === "matched") {
+      return NextResponse.json(
+        {
+          error: "matched",
+          message: "Facture déjà rapprochée d'une ligne du relevé : elle n'a pas été supprimée.",
+        },
+        { status: 409 },
+      );
+    }
+  }
   const ok = await deleteInvoice(id);
   if (!ok) return NextResponse.json({ error: "not_found" }, { status: 404 });
   return NextResponse.json({ ok: true });

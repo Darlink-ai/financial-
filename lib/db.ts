@@ -994,6 +994,13 @@ export async function getInvoiceWithAttachment(id: string): Promise<{
 }
 
 /** Supprime une seule facture. */
+export async function getInvoiceStatus(id: string): Promise<string | null> {
+  const [row] = await client()<{ status: string }[]>`
+    SELECT status FROM invoices WHERE id = ${id}
+  `;
+  return row?.status ?? null;
+}
+
 export async function deleteInvoice(id: string): Promise<boolean> {
   const sql = client();
   const rows = await sql<{ id: string }[]>`
