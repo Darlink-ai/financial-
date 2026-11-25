@@ -1016,13 +1016,18 @@ function SheetTable({
   const norm = (s: string) =>
     s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 
+  const cols = useMemo(() => detectColumns(sheet), [sheet]);
+
+  // Seules les lignes de transactions : les en-têtes de la banque (solde,
+  // IBAN…) restent stockés mais ne sont pas affichés. Le n° de ligne (idx+2)
+  // ne change pas — il sert au rapprochement manuel et aux attributions.
   const filteredRows = useMemo(() => {
-    if (!query.trim()) {
-      return sheet.rows.map((row, idx) => ({ row, idx }));
-    }
-    const q = norm(query.trim());
-    return sheet.rows
+    const dataRows = sheet.rows
       .map((row, idx) => ({ row, idx }))
+      .filter(({ row, idx }) => idx >= cols.dataStartRow && row.some((c) => c != null && c !== ""));
+    if (!query.trim()) return dataRows;
+    const q = norm(query.trim());
+    return dataRows
       .filter(({ row, idx }) => {
         // Cherche dans toutes les cellules de la ligne + le créditeur
         // de la facture matchée si présente.
@@ -1033,10 +1038,19 @@ function SheetTable({
         if (m?.invoice.creditor && norm(m.invoice.creditor).includes(q)) return true;
         return false;
       });
-  }, [sheet.rows, query, matchedRows]);
+  }, [sheet.rows, query, matchedRows, cols.dataStartRow]);
 
+  const dataRowTotal = sheet.rows.filter(
+    (row, idx) => idx >= cols.dataStartRow && row.some((c) => c != null && c !== ""),
+  ).length;
   const totalMatched = sheet.rows.filter((_, i) => matchedRows.has(i)).length;
   const visibleMatched = filteredRows.filter(({ idx }) => matchedRows.has(idx)).length;
+  const subAmountIdx = useMemo(() => {
+    const headerRow = cols.dataStartRow > 0 ? sheet.rows[cols.dataStartRow - 1] ?? [] : [];
+    return headerRow.findIndex((h) => norm(String(h ?? "")).startsWith("sous-montant"));
+  }, [sheet.rows, cols.dataStartRow]);
+
+  const th = "px-3 py-2 text-left text-[10px] uppercase tracking-wider text-muted font-medium whitespace-nowrap";
 
   return (
     <div className="card overflow-hidden">
@@ -1063,29 +1077,20 @@ function SheetTable({
         </div>
         <div className="text-[11px] text-muted font-mono tabular-nums ml-auto">
           {query
-            ? `${filteredRows.length} / ${sheet.rows.length} ligne(s) · ${visibleMatched} rapprochée(s)`
-            : `${sheet.rows.length} ligne(s) · ${totalMatched} rapprochée(s)`}
+            ? `${filteredRows.length} / ${dataRowTotal} ligne(s) · ${visibleMatched} rapprochée(s)`
+            : `${dataRowTotal} ligne(s) · ${totalMatched} rapprochée(s)`}
         </div>
       </div>
-      <div className="overflow-x-auto max-h-[60vh]">
+      <div className="overflow-auto max-h-[calc(100vh-90px)] min-h-[420px]">
         <table className="w-full text-[12px] border-collapse">
-          <thead className="sticky top-0 bg-panel border-b border-border z-10">
+          <thead className="sticky top-0 bg-panel border-b border-border z-20">
             <tr>
-              <th className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-muted font-medium w-12">
-                #
-              </th>
-              {sheet.headers.map((h, i) => (
-                <th
-                  key={i}
-                  className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-muted font-medium whitespace-nowrap"
-                >
-                  {h || `Col ${i + 1}`}
-                </th>
-              ))}
-              <th className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-muted font-medium">
-                Rapprochement
-              </th>
-              <th className="px-3 py-2 text-left text-[10px] uppercase tracking-wider text-muted font-medium whitespace-nowrap">
+              <th className={`${th} w-14`}>#</th>
+              <th className={`${th} w-24`}>Date</th>
+              <th className={th}>Description</th>
+              <th className={`${th} text-right w-32`}>Montant</th>
+              <th className={th}>Facture</th>
+              <th className={`${th} sticky right-0 bg-panel z-30 w-[130px] border-l border-border`}>
                 Assigné à
               </th>
             </tr>
@@ -1093,53 +1098,72 @@ function SheetTable({
           <tbody>
             {filteredRows.length === 0 && (
               <tr>
-                <td
-                  colSpan={sheet.headers.length + 3}
-                  className="px-4 py-8 text-center text-muted italic text-[12px]"
-                >
+                <td colSpan={6} className="px-4 py-8 text-center text-muted italic text-[12px]">
                   Aucune ligne ne correspond à « {query} ».
                 </td>
               </tr>
             )}
             {filteredRows.map(({ row, idx }) => {
               const m = matchedRows.get(idx);
+              const desc = cols.idxCreditor >= 0 ? String(row[cols.idxCreditor] ?? "") : "";
+              const amount = rowAmount(row, cols, subAmountIdx);
               return (
                 <tr
                   key={idx}
                   className={
-                    m
-                      ? "bg-[rgba(34,197,94,0.12)] hover:bg-[rgba(34,197,94,0.18)] border-l-2 border-l-ok"
-                      : "hover:bg-panel2 border-l-2 border-l-transparent"
+                    "border-b border-border/40 " +
+                    (m
+                      ? "bg-[rgba(34,197,94,0.12)] hover:bg-[rgba(34,197,94,0.18)]"
+                      : "hover:bg-panel2")
                   }
                 >
-                  <td className="px-3 py-1.5 text-muted tabular-nums align-top">
-                    <div>{idx + 2}</div>
-                    {m?.invoice.creditor && (
-                      <div
-                        className="text-[10px] text-ok font-medium mt-0.5 max-w-[110px] truncate"
-                        title={m.invoice.creditor}
-                      >
-                        {m.invoice.creditor}
-                      </div>
-                    )}
+                  <td
+                    className={
+                      "px-3 py-1 text-muted tabular-nums border-l-2 " +
+                      (m ? "border-l-ok" : "border-l-transparent")
+                    }
+                  >
+                    {idx + 2}
                   </td>
-                  {sheet.headers.map((_, ci) => (
-                    <td key={ci} className="px-3 py-1.5 whitespace-nowrap">
-                      {formatCell(row[ci])}
-                    </td>
-                  ))}
-                  <td className="px-3 py-1.5">
+                  <td className="px-3 py-1 tabular-nums whitespace-nowrap">
+                    {formatShortDate(cols.idxDate >= 0 ? row[cols.idxDate] : null)}
+                  </td>
+                  <td className="px-3 py-1 max-w-[420px] truncate" title={desc}>
+                    {shortDescription(desc)}
+                  </td>
+                  <td
+                    className={
+                      "px-3 py-1 text-right tabular-nums whitespace-nowrap font-medium " +
+                      (amount != null && amount > 0 ? "text-ok" : "")
+                    }
+                  >
+                    {amount == null
+                      ? ""
+                      : new Intl.NumberFormat("fr-CH", {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                          signDisplay: "exceptZero",
+                        }).format(amount)}
+                  </td>
+                  <td className="px-3 py-1 max-w-[220px] truncate">
                     {m ? (
-                      <div className="flex items-center gap-1.5">
-                        <CheckCircle2 size={12} className="text-ok" />
-                        <span className="text-ok">{m.invoice.creditor}</span>
-                        <span className="text-muted text-[11px]">({m.reasons.join(", ")})</span>
-                      </div>
-                    ) : (
-                      <span className="text-muted">—</span>
-                    )}
+                      <span
+                        className="inline-flex items-center gap-1.5 text-ok"
+                        title={`${m.invoice.creditor ?? ""} (${m.reasons.join(", ")})`}
+                      >
+                        <CheckCircle2 size={12} className="shrink-0" />
+                        <span className="truncate">{m.invoice.creditor}</span>
+                      </span>
+                    ) : null}
                   </td>
-                  <td className="px-3 py-1.5">
+                  <td
+                    className="px-3 py-1 sticky right-0 z-10 border-l border-border"
+                    style={{
+                      background: m
+                        ? "linear-gradient(rgba(34,197,94,0.12), rgba(34,197,94,0.12)), hsl(var(--panel))"
+                        : "hsl(var(--panel))",
+                    }}
+                  >
                     <AssigneePicker
                       value={assigns.get(idx + 2) ?? null}
                       onChange={(next) => setAssignee(idx + 2, next)}
@@ -1155,11 +1179,52 @@ function SheetTable({
   );
 }
 
-function formatCell(v: string | number | Date | null): string {
-  if (v == null) return "";
-  if (v instanceof Date) return v.toLocaleDateString("fr-CH");
-  if (typeof v === "number") return new Intl.NumberFormat("fr-CH").format(v);
-  return String(v);
+function toNumber(v: string | number | Date | null | undefined): number | null {
+  if (v == null || v === "" || v instanceof Date) return null;
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  const n = Number(String(v).replace(/['\s]/g, "").replace(",", "."));
+  return Number.isFinite(n) ? n : null;
+}
+
+// Montant affiché : débit (négatif), sinon crédit (positif), sinon sous-montant
+// (lignes de détail d'un ordre groupé, ex. impôts).
+function rowAmount(
+  row: (string | number | null)[],
+  cols: { idxDebit: number; idxCredit: number; idxAmount: number },
+  subAmountIdx: number,
+): number | null {
+  if (cols.idxDebit >= 0) {
+    const d = toNumber(row[cols.idxDebit]);
+    if (d != null && d !== 0) return -Math.abs(d);
+  }
+  if (cols.idxCredit >= 0) {
+    const c = toNumber(row[cols.idxCredit]);
+    if (c != null && c !== 0) return Math.abs(c);
+  }
+  if (cols.idxDebit < 0 && cols.idxAmount >= 0) {
+    const a = toNumber(row[cols.idxAmount]);
+    if (a != null) return a;
+  }
+  if (subAmountIdx >= 0) {
+    const s = toNumber(row[subAmountIdx]);
+    if (s != null) return s;
+  }
+  return null;
+}
+
+function formatShortDate(v: string | number | Date | null): string {
+  if (v == null || v === "") return "";
+  if (v instanceof Date) {
+    return v.toLocaleDateString("fr-CH", { day: "2-digit", month: "2-digit", year: "2-digit" });
+  }
+  const m = String(v).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[3]}.${m[2]}.${m[1].slice(2)}` : String(v);
+}
+
+// « RUNPOD.IO;08057 RUNPOD.IO » → « RUNPOD.IO » ; « Robin Koller;Les Mengartes… » → « Robin Koller ».
+function shortDescription(s: string): string {
+  const first = s.split(";")[0].trim();
+  return first || s.trim();
 }
 
 /**
