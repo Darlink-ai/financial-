@@ -11,6 +11,9 @@ import {
   RefreshCw,
   Trash2,
   ExternalLink,
+  Check,
+  X,
+  Loader2,
 } from "lucide-react";
 import type { Invoice, AccountCurrency } from "@/lib/types";
 import { formatAmount, buildFinalName } from "@/lib/format";
@@ -1622,55 +1625,56 @@ function NearMissDisplay({
   const goToPrevCandidate = () => goToCandidate(idx - 1);
 
   const fmtAmt = (n: number | null, cur: string | null) =>
-    n != null ? `${n.toFixed(2)}${cur ? " " + cur : ""}` : "—";
+    n != null
+      ? `${n.toLocaleString("fr-CH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${cur ? " " + cur : ""}`
+      : "—";
+  const fmtDate = (d: string | null | undefined) => {
+    const m = d?.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return m ? `${m[3]}.${m[2]}.${m[1].slice(2)}` : "—";
+  };
+  const bankName = current.excelRowText
+    ? current.excelRowText.split(";")[0].trim() || bankVendor
+    : "—";
 
   return (
-    <div className="text-[10.5px] text-warn leading-relaxed">
-      <div>
-        <span>match avec ligne </span>
-        <span className="font-medium">
+    <div className="text-[12px] leading-relaxed">
+      <div className="text-muted">
+        Ligne proposée :{" "}
+        <span className="font-medium text-text">
           {current.row} {current.currency}
         </span>
         {idx > 0 && (
-          <span className="text-muted ml-1">
+          <span className="ml-1">
             (candidat {idx + 1}/{candidates.length})
           </span>
         )}
-        <span> — </span>
-        <span className={amountOk ? "text-ok" : ""}>
-          montant : {fmtAmt(excelAmt, current.currency)} (Excel) vs{" "}
-          {fmtAmt(invAmt, nearMiss.invoiceCurrency)} (facture)
-        </span>
-        <span className="text-muted"> · </span>
-        <span className={dateOk ? "text-ok" : ""}>
-          date : {current.excelDate ?? "—"} (Excel) vs{" "}
-          {nearMiss.invoiceDate ?? "—"} (facture)
-        </span>
-        <span className="text-muted"> · </span>
-        <span className={creditorOk ? "text-ok" : "text-err"}>
-          créditeur : {bankVendor} (Excel) vs{" "}
-          {nearMiss.invoiceCreditor ?? "—"} (facture)
-          {llmCheck.status === "loading" && (
-            <span className="text-muted ml-1"> · vérification IA…</span>
-          )}
-          {llmCheck.status === "ok" && llmCheck.same === true && !staticOk && (
-            <span className="text-ok ml-1" title={llmCheck.reason}>
-              {" "}
-              · ✓ IA confirme même entité
-            </span>
-          )}
-          {llmCheck.status === "ok" && llmCheck.same === false && (
-            <span className="text-err ml-1" title={llmCheck.reason}>
-              {" "}
-              · ✗ IA : entités distinctes ⚠
-            </span>
-          )}
-          {llmCheck.status === "err" && (
-            <span className="text-muted ml-1"> · (IA indispo)</span>
-          )}
-          {llmCheck.status === "idle" && !staticOk && " ⚠"}
-        </span>
       </div>
+      <CheckLine
+        ok={amountOk}
+        okLabel="Bon montant"
+        koLabel="Montant"
+        detail={`facture : ${fmtAmt(invAmt, nearMiss.invoiceCurrency)} · Excel : ${fmtAmt(excelAmt, current.currency)}`}
+      />
+      <CheckLine
+        ok={dateOk}
+        okLabel="Bonne date"
+        koLabel="Date"
+        detail={`facture : ${fmtDate(nearMiss.invoiceDate)} · Excel : ${fmtDate(current.excelDate)}`}
+      />
+      {llmCheck.status === "loading" && !staticOk ? (
+        <div className="flex items-center gap-1.5 text-muted">
+          <Loader2 size={12} className="animate-spin shrink-0" />
+          Créditeur : vérification…
+        </div>
+      ) : (
+        <CheckLine
+          ok={creditorOk}
+          okLabel="Bon créditeur"
+          koLabel="Créditeur"
+          detail={`facture : ${nearMiss.invoiceCreditor ?? "—"} · Excel : ${bankName}`}
+          title={llmCheck.reason}
+        />
+      )}
       {(canGoPrev || showNextButton) && (
         <div className="mt-1 flex items-center gap-3 text-[10px]">
           {canGoPrev && (
@@ -1841,5 +1845,32 @@ function MonthYearInput({
         aria-label="Année du relevé"
       />
     </>
+  );
+}
+
+function CheckLine({
+  ok,
+  okLabel,
+  koLabel,
+  detail,
+  title,
+}: {
+  ok: boolean;
+  okLabel: string;
+  koLabel: string;
+  detail: string;
+  title?: string;
+}) {
+  return ok ? (
+    <div className="flex items-center gap-1.5 text-ok" title={detail}>
+      <Check size={13} className="shrink-0" />
+      {okLabel}
+    </div>
+  ) : (
+    <div className="flex items-center gap-1.5 min-w-0" title={title ?? detail}>
+      <X size={13} className="shrink-0 text-err" />
+      <span className="text-err font-medium shrink-0">{koLabel}</span>
+      <span className="text-muted truncate">— {detail}</span>
+    </div>
   );
 }
