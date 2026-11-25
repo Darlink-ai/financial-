@@ -57,6 +57,8 @@ const PUBLIC_PATHS = [
   "/api/admin/clear-assignee",
   // admin/purge-sync : retire ce qu'une synchro mail a importé, auth Bearer.
   "/api/admin/purge-sync",
+  // admin/restore-from-drive : recrée des factures depuis leur PDF Drive, auth Bearer.
+  "/api/admin/restore-from-drive",
 ];
 
 function isPublic(pathname: string): boolean {
