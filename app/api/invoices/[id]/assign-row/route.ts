@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import {
   findInvoicesMatchingRow,
   getAllMappings,
+  getExcelSheet,
   getInvoiceWithAttachment,
   saveCreditorClassification,
   updateInvoice,
@@ -9,6 +10,12 @@ import {
 import { uploadMatchedInvoiceToDrive } from "@/lib/auto-process";
 import { buildFinalName } from "@/lib/format";
 import type { AccountCurrency, Invoice } from "@/lib/types";
+import { sheetColumns } from "@/lib/excel-row-display";
+
+const MONTHS_FR = [
+  "janvier", "février", "mars", "avril", "mai", "juin",
+  "juillet", "août", "septembre", "octobre", "novembre", "décembre",
+];
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -108,6 +115,36 @@ export async function POST(
     const current = await getInvoiceWithAttachment(id);
     const effectiveInvoiceDate = invoiceDate || current?.invoice.invoiceDate;
     const effectiveCurrency = currency || current?.invoice.accountCurrency;
+
+    // ---- 1a. La ligne doit exister dans le relevé du mois de la facture.
+    //    Sinon (date mal lue, ex. 05.07.2027 au lieu de 06.07.2026) la
+    //    facture serait « validée » sur un relevé qui n'existe pas : elle ne
+    //    verdit aucune ligne et la tâche correspondante reste ouverte.
+    if (effectiveInvoiceDate && effectiveCurrency) {
+      const month = effectiveInvoiceDate.slice(0, 7);
+      const label = `${MONTHS_FR[Number(month.slice(5)) - 1] ?? month} ${month.slice(0, 4)}`;
+      const sheet = await getExcelSheet(month, effectiveCurrency);
+      if (!sheet) {
+        return NextResponse.json(
+          {
+            error: "no_sheet",
+            message: `Pas de relevé ${effectiveCurrency} pour ${label} (date de la facture : ${effectiveInvoiceDate.slice(0, 10)}). Corrige le mois ou la date avant de valider.`,
+          },
+          { status: 400 },
+        );
+      }
+      const { dataStartRow } = sheetColumns({ headers: sheet.headers, rows: sheet.rows });
+      const idx = row - 2;
+      if (idx < dataStartRow || idx >= sheet.rows.length) {
+        return NextResponse.json(
+          {
+            error: "no_row",
+            message: `La ligne ${row} n'existe pas dans le relevé ${effectiveCurrency} de ${label}.`,
+          },
+          { status: 400 },
+        );
+      }
+    }
     const demotedIds: string[] = [];
     if (effectiveInvoiceDate && effectiveCurrency) {
       try {
