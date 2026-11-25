@@ -4,6 +4,7 @@ import { isAllowedEmail } from "@/lib/supabase/env";
 import {
   deleteRowAssignment,
   getRowAssignmentsForSheet,
+  setRowAssignmentProblem,
   upsertRowAssignment,
   type RowAssignee,
 } from "@/lib/db";
@@ -114,6 +115,39 @@ export async function POST(req: Request) {
       { error: "db_error", message: (e as Error).message },
       { status: 503 },
     );
+  }
+}
+
+export async function PATCH(req: Request) {
+  const email = await requireUserEmail();
+  if (!email)
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
+  const body = (await req.json().catch(() => ({}))) as {
+    month?: string;
+    currency?: string;
+    row?: number;
+    problem?: boolean;
+  };
+  const month = body.month ?? "";
+  const currency = (body.currency ?? "").toUpperCase();
+  const row = Number(body.row);
+  if (
+    !MONTH_RE.test(month) ||
+    !ALLOWED_CURRENCIES.has(currency) ||
+    !Number.isInteger(row) ||
+    row < 2 ||
+    typeof body.problem !== "boolean"
+  ) {
+    return NextResponse.json({ error: "bad_body" }, { status: 400 });
+  }
+  try {
+    const ok = await setRowAssignmentProblem(month, currency, row, body.problem);
+    if (!ok) return NextResponse.json({ error: "not_found" }, { status: 404 });
+    return NextResponse.json({ ok: true });
+  } catch (e) {
+    console.error("PATCH /api/row-assignments failed", e);
+    return NextResponse.json({ error: "db_error" }, { status: 503 });
   }
 }
 

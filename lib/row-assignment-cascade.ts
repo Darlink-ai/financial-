@@ -79,6 +79,9 @@ export async function cascadeAssignment(opts: {
         continue;
       }
       if (creditorKeyAt(sheet, cols, i) !== opts.creditorKey) continue;
+      // Seulement les débits : une entrée d'argent du même nom n'est pas une tâche.
+      const amount = rowAmount(sheet.rows[i], cols);
+      if (amount == null || amount >= 0) continue;
       const ok = await insertAutoRowAssignmentIfAbsent({
         month: sheet.month,
         accountCurrency: sheet.accountCurrency,
@@ -102,6 +105,7 @@ export type RowAssignmentEnriched = {
   assignedBy: string | null;
   assignedAt: string;
   autoCascaded: boolean;
+  problem: boolean;
   /** Description complète du relevé (survol). */
   description: string;
   /** Nom affiché, comme dans le tableau Rapprochement Excel. */
@@ -121,6 +125,7 @@ export async function enrichAssignments(
     assignedBy: string | null;
     assignedAt: string;
     autoCascaded: boolean;
+    problem: boolean;
   }>,
 ): Promise<RowAssignmentEnriched[]> {
   if (assignments.length === 0) return [];

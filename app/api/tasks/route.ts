@@ -45,10 +45,12 @@ export async function GET() {
       enrichAssignments(mine),
       enrichAssignments(toCreate),
     ]);
+    // Une ligne validée par une facture n'est plus une tâche.
+    const open = (list: typeof mineE) => list.filter((r) => !r.matchedCreditor);
     return NextResponse.json({
       me,
-      mine: mineE,
-      toCreate: toCreateE,
+      mine: open(mineE),
+      toCreate: open(toCreateE),
     });
   } catch (e) {
     console.error("GET /api/tasks failed", e);

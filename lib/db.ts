@@ -1373,6 +1373,7 @@ export type RowAssignment = {
   assignedBy: string | null;
   assignedAt: string;
   autoCascaded: boolean;
+  problem: boolean;
 };
 
 type RawRowAssignment = {
@@ -1384,6 +1385,7 @@ type RawRowAssignment = {
   assigned_by: string | null;
   assigned_at: Date;
   auto_cascaded: boolean;
+  problem: boolean;
 };
 
 const mapRowAssignment = (r: RawRowAssignment): RowAssignment => ({
@@ -1395,6 +1397,7 @@ const mapRowAssignment = (r: RawRowAssignment): RowAssignment => ({
   assignedBy: r.assigned_by,
   assignedAt: r.assigned_at.toISOString(),
   autoCascaded: r.auto_cascaded,
+  problem: r.problem,
 });
 
 export async function getRowAssignmentsForSheet(
@@ -1404,7 +1407,7 @@ export async function getRowAssignmentsForSheet(
   const sql = client();
   const rows = await sql<RawRowAssignment[]>`
     SELECT month, account_currency, row_number, assignee, creditor_key,
-           assigned_by, assigned_at, auto_cascaded
+           assigned_by, assigned_at, auto_cascaded, problem
     FROM row_assignments
     WHERE month = ${month} AND account_currency = ${accountCurrency}
   `;
@@ -1418,14 +1421,14 @@ export async function listAllRowAssignments(opts: {
   const rows = opts.assignee
     ? await sql<RawRowAssignment[]>`
         SELECT month, account_currency, row_number, assignee, creditor_key,
-               assigned_by, assigned_at, auto_cascaded
+               assigned_by, assigned_at, auto_cascaded, problem
         FROM row_assignments
         WHERE assignee = ${opts.assignee}
         ORDER BY month DESC, account_currency ASC, row_number ASC
       `
     : await sql<RawRowAssignment[]>`
         SELECT month, account_currency, row_number, assignee, creditor_key,
-               assigned_by, assigned_at, auto_cascaded
+               assigned_by, assigned_at, auto_cascaded, problem
         FROM row_assignments
         ORDER BY month DESC, account_currency ASC, row_number ASC
       `;
@@ -1478,6 +1481,22 @@ export async function insertAutoRowAssignmentIfAbsent(a: {
     RETURNING month
   `;
   return inserted.length > 0;
+}
+
+export async function setRowAssignmentProblem(
+  month: string,
+  accountCurrency: string,
+  rowNumber: number,
+  problem: boolean,
+): Promise<boolean> {
+  const updated = await client()<{ month: string }[]>`
+    UPDATE row_assignments SET problem = ${problem}
+    WHERE month = ${month}
+      AND account_currency = ${accountCurrency}
+      AND row_number = ${rowNumber}
+    RETURNING month
+  `;
+  return updated.length > 0;
 }
 
 export async function deleteRowAssignment(

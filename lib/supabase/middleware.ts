@@ -51,6 +51,8 @@ const PUBLIC_PATHS = [
   "/api/admin/upload-sheet",
   // admin/migrate : applique les DDL idempotents en prod, auth Bearer.
   "/api/admin/migrate",
+  // admin/recascade : relance l'attribution automatique des tâches, auth Bearer.
+  "/api/admin/recascade",
 ];
 
 function isPublic(pathname: string): boolean {

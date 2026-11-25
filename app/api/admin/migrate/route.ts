@@ -30,6 +30,8 @@ const STATEMENTS: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_row_assignments_creditor_key
      ON row_assignments (creditor_key)
      WHERE creditor_key IS NOT NULL`,
+  `ALTER TABLE row_assignments
+     ADD COLUMN IF NOT EXISTS problem BOOLEAN NOT NULL DEFAULT FALSE`,
 ];
 
 export async function POST(req: Request) {

@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ListTodo, PlusCircle, Loader2, CheckCircle2 } from "lucide-react";
+import { ListTodo, PlusCircle, Loader2, AlertTriangle } from "lucide-react";
 import { formatSignedAmount } from "@/lib/excel-row-display";
 
-const TH = "px-3 py-2 text-left text-[10px] uppercase tracking-wider text-muted font-medium whitespace-nowrap";
+const TH = "px-4 py-2.5 text-left text-[10px] uppercase tracking-wider text-muted font-medium whitespace-nowrap";
+const TD = "px-4 py-3";
 
 type Assignee = "gauthier" | "robin" | "jacqueline" | "a_creer";
+const ASSIGNEES: Assignee[] = ["gauthier", "robin", "jacqueline", "a_creer"];
 const ASSIGNEE_LABEL: Record<Assignee, string> = {
   gauthier: "Gauthier",
   robin: "Robin",
@@ -23,6 +25,7 @@ type Enriched = {
   assignedBy: string | null;
   assignedAt: string;
   autoCascaded: boolean;
+  problem: boolean;
   description: string;
   label: string;
   amount: number | null;
@@ -46,13 +49,18 @@ function formatMonth(ym: string): string {
   return `${MONTHS_FR[m - 1]} ${y}`;
 }
 
+const rowRef = (a: Enriched) => ({
+  month: a.month,
+  currency: a.accountCurrency,
+  row: a.rowNumber,
+});
+
 export default function TasksPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<TasksPayload | null>(null);
 
   async function reload() {
-    setLoading(true);
     setError(null);
     try {
       const r = await fetch("/api/tasks", { cache: "no-store" });
@@ -78,6 +86,23 @@ export default function TasksPage() {
     void reload();
   }, []);
 
+  async function act(a: Enriched, action: string) {
+    if (action === "problem" || action === "no-problem") {
+      await fetch(`/api/row-assignments`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...rowRef(a), problem: action === "problem" }),
+      });
+    } else if (action.startsWith("to:")) {
+      await fetch(`/api/row-assignments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...rowRef(a), assignee: action.slice(3), cascade: false }),
+      });
+    }
+    await reload();
+  }
+
   if (loading) {
     return (
       <div className="px-8 py-10 text-muted text-[13px] flex items-center gap-2">
@@ -86,9 +111,7 @@ export default function TasksPage() {
     );
   }
   if (error) {
-    return (
-      <div className="px-8 py-10 text-[13px] text-err">{error}</div>
-    );
+    return <div className="px-8 py-10 text-[13px] text-err">{error}</div>;
   }
   if (!data) return null;
 
@@ -96,39 +119,19 @@ export default function TasksPage() {
     <div className="px-8 py-6 space-y-8 max-w-[1200px]">
       <TasksSection
         title={`Pour ${ASSIGNEE_LABEL[data.me]}`}
-        subtitle="Lignes Excel qu'on t'a attribuées — ouvre la page Rapprochement Excel pour les traiter."
+        subtitle="Lignes du relevé à justifier. Dès qu'une facture est rapprochée, la ligne disparaît."
         icon={<ListTodo size={16} className="text-accent" />}
         items={data.mine}
-        onUnassign={async (a) => {
-          await fetch(`/api/row-assignments`, {
-            method: "DELETE",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              month: a.month,
-              currency: a.accountCurrency,
-              row: a.rowNumber,
-            }),
-          });
-          await reload();
-        }}
+        sendTo={ASSIGNEES.filter((x) => x !== data.me)}
+        onAction={act}
       />
       <TasksSection
         title="À créer"
-        subtitle="Factures à émettre — visibles pour tout le monde."
+        subtitle="Factures à créer — visibles pour tout le monde."
         icon={<PlusCircle size={16} className="text-sky-400" />}
         items={data.toCreate}
-        onUnassign={async (a) => {
-          await fetch(`/api/row-assignments`, {
-            method: "DELETE",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              month: a.month,
-              currency: a.accountCurrency,
-              row: a.rowNumber,
-            }),
-          });
-          await reload();
-        }}
+        sendTo={ASSIGNEES.filter((x) => x !== "a_creer")}
+        onAction={act}
       />
     </div>
   );
@@ -139,15 +142,16 @@ function TasksSection({
   subtitle,
   icon,
   items,
-  onUnassign,
+  sendTo,
+  onAction,
 }: {
   title: string;
   subtitle: string;
   icon: React.ReactNode;
   items: Enriched[];
-  onUnassign: (a: Enriched) => Promise<void>;
+  sendTo: Assignee[];
+  onAction: (a: Enriched, action: string) => Promise<void>;
 }) {
-  // Groupé par mois décroissant.
   const groups = useMemo(() => {
     const map = new Map<string, Enriched[]>();
     for (const it of items) {
@@ -159,7 +163,7 @@ function TasksSection({
   }, [items]);
 
   return (
-    <section className="card">
+    <section className="card overflow-hidden">
       <div className="px-5 py-3 border-b border-border flex items-center gap-2">
         {icon}
         <div className="text-[13px] font-medium">{title}</div>
@@ -179,16 +183,15 @@ function TasksSection({
               <div className="px-5 py-2 bg-panel2/40 text-[11px] uppercase tracking-wider text-muted">
                 {formatMonth(month)}
               </div>
-              <table className="w-full text-[12px] border-collapse">
+              <table className="w-full text-[13px] border-collapse">
                 <thead className="border-b border-border">
                   <tr>
-                    <th className={`${TH} w-14`}>#</th>
-                    <th className={`${TH} w-14`}>Compte</th>
-                    <th className={`${TH} w-24`}>Date</th>
+                    <th className={`${TH} w-16`}>#</th>
+                    <th className={`${TH} w-20`}>Compte</th>
+                    <th className={`${TH} w-28`}>Date</th>
                     <th className={TH}>Description</th>
-                    <th className={`${TH} text-right w-32`}>Montant</th>
-                    <th className={TH}>Facture</th>
-                    <th className={`${TH} w-24`}></th>
+                    <th className={`${TH} text-right w-36`}>Montant</th>
+                    <th className={`${TH} w-[190px]`}></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -196,54 +199,61 @@ function TasksSection({
                     <tr
                       key={`${r.accountCurrency}-${r.rowNumber}`}
                       className={
-                        "border-b border-border/40 " +
-                        (r.matchedCreditor
-                          ? "bg-[rgba(34,197,94,0.12)] hover:bg-[rgba(34,197,94,0.18)]"
-                          : "hover:bg-panel2")
+                        "border-b border-border/40 last:border-b-0 " +
+                        (r.problem ? "bg-err/5 hover:bg-err/10" : "hover:bg-panel2")
                       }
                     >
                       <td
                         className={
-                          "px-3 py-1 text-muted tabular-nums border-l-2 " +
-                          (r.matchedCreditor ? "border-l-ok" : "border-l-transparent")
+                          `${TD} text-muted tabular-nums border-l-2 ` +
+                          (r.problem ? "border-l-err" : "border-l-transparent")
                         }
                       >
                         {r.rowNumber}
                       </td>
-                      <td className="px-3 py-1 text-muted font-mono">{r.accountCurrency}</td>
-                      <td className="px-3 py-1 tabular-nums whitespace-nowrap">{r.date}</td>
-                      <td className="px-3 py-1 max-w-[420px] truncate" title={r.description}>
-                        {r.label}
+                      <td className={`${TD} text-muted font-mono`}>{r.accountCurrency}</td>
+                      <td className={`${TD} tabular-nums whitespace-nowrap`}>{r.date}</td>
+                      <td className={`${TD} max-w-[420px]`} title={r.description}>
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="truncate">{r.label}</span>
+                          {r.problem && (
+                            <span className="inline-flex items-center gap-1 text-[10px] text-err border border-err/40 bg-err/10 rounded px-1.5 py-0.5 shrink-0">
+                              <AlertTriangle size={10} /> Problème
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td
                         className={
-                          "px-3 py-1 text-right tabular-nums whitespace-nowrap font-medium " +
+                          `${TD} text-right tabular-nums whitespace-nowrap font-medium ` +
                           (r.amount != null && r.amount > 0 ? "text-ok" : "")
                         }
                       >
                         {formatSignedAmount(r.amount)}
                       </td>
-                      <td className="px-3 py-1 max-w-[220px] truncate">
-                        {r.matchedCreditor ? (
-                          <span className="inline-flex items-center gap-1.5 text-ok" title={r.matchedCreditor}>
-                            <CheckCircle2 size={12} className="shrink-0" />
-                            <span className="truncate">{r.matchedCreditor}</span>
-                          </span>
-                        ) : null}
-                      </td>
-                      <td className="px-3 py-1 text-right">
-                        {r.autoCascaded && (
-                          <span className="text-[10px] text-muted italic mr-2" title="Attribuée automatiquement d'après un fournisseur déjà classé.">
-                            auto
-                          </span>
-                        )}
-                        <button
-                          onClick={() => void onUnassign(r)}
-                          className="text-[11px] text-muted hover:text-err"
-                          title="Retirer l'attribution"
+                      <td className={`${TD} text-right`}>
+                        <select
+                          value=""
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            e.target.value = "";
+                            if (v) void onAction(r, v);
+                          }}
+                          className="input !py-1 !px-2 text-[12px] !w-[170px]"
+                          title="Signaler un problème ou renvoyer la tâche"
                         >
-                          ✕
-                        </button>
+                          <option value="">Action…</option>
+                          {r.problem ? (
+                            <option value="no-problem">Plus de problème</option>
+                          ) : (
+                            <option value="problem">Problème</option>
+                          )}
+                          {sendTo.map((x) => (
+                            <option key={x} value={`to:${x}`}>
+                              Renvoyer à {ASSIGNEE_LABEL[x]}
+                            </option>
+                          ))}
+                        </select>
                       </td>
                     </tr>
                   ))}
