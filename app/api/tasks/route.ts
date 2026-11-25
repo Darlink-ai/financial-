@@ -15,6 +15,8 @@ const EMAIL_TO_ASSIGNEE: Record<string, RowAssignee> = {
   "jacqueline@famelink.ai": "jacqueline",
 };
 
+const TO_CREATE_VIEWER = "gauthier.koller@famelink.ai";
+
 export async function GET() {
   let email: string | null = null;
   if (process.env.AUTH_ENABLED !== "true") {
@@ -31,26 +33,25 @@ export async function GET() {
   }
   const me = EMAIL_TO_ASSIGNEE[email] ?? null;
   // Seuls Robin, Gauthier, Jacqueline voient leurs propres tâches ;
-  // la section « À créer » est visible pour ces 3 personnes.
+  // la section « À créer » n'est envoyée qu'à TO_CREATE_VIEWER.
   if (!me) {
     return NextResponse.json({ error: "no_tasks_for_this_user" }, { status: 403 });
   }
+  const seesToCreate = email === TO_CREATE_VIEWER;
 
   try {
-    const [mine, toCreate] = await Promise.all([
-      listAllRowAssignments({ assignee: me }),
-      listAllRowAssignments({ assignee: "a_creer" }),
-    ]);
     const [mineE, toCreateE] = await Promise.all([
-      enrichAssignments(mine),
-      enrichAssignments(toCreate),
+      listAllRowAssignments({ assignee: me }).then(enrichAssignments),
+      seesToCreate
+        ? listAllRowAssignments({ assignee: "a_creer" }).then(enrichAssignments)
+        : Promise.resolve(null),
     ]);
     // Une ligne validée par une facture n'est plus une tâche.
     const open = (list: typeof mineE) => list.filter((r) => !r.matchedCreditor);
     return NextResponse.json({
       me,
       mine: open(mineE),
-      toCreate: open(toCreateE),
+      toCreate: toCreateE ? open(toCreateE) : null,
     });
   } catch (e) {
     console.error("GET /api/tasks failed", e);

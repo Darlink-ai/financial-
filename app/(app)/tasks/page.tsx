@@ -36,7 +36,8 @@ type Enriched = {
 type TasksPayload = {
   me: Assignee;
   mine: Enriched[];
-  toCreate: Enriched[];
+  /** null : la section « À créer » n'est pas pour ce compte. */
+  toCreate: Enriched[] | null;
 };
 
 const MONTHS_FR = [
@@ -128,15 +129,17 @@ export default function TasksPage() {
         onAction={act}
         onAskSend={(row, to, count) => setPending({ row, to, count })}
       />
+      {data.toCreate && (
       <TasksSection
         title="À créer"
-        subtitle="Factures à créer — visibles pour tout le monde."
+        subtitle="Factures à créer."
         icon={<PlusCircle size={16} className="text-sky-400" />}
         items={data.toCreate}
         sendTo={ASSIGNEES.filter((x) => x !== "a_creer")}
         onAction={act}
         onAskSend={(row, to, count) => setPending({ row, to, count })}
       />
+      )}
       {pending && (
         <SendDialog
           label={pending.row.label}
