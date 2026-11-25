@@ -16,6 +16,14 @@ import {
   type ParsedSheet,
 } from "@/lib/excel-match";
 import { formatAmount } from "@/lib/format";
+import {
+  formatShortDate,
+  formatSignedAmount,
+  rowAmount,
+  rowDescription,
+  sheetColumns,
+  shortDescription,
+} from "@/lib/excel-row-display";
 import type { Invoice, AccountCurrency } from "@/lib/types";
 import { ACCOUNT_CURRENCIES } from "@/lib/types";
 
@@ -1012,7 +1020,7 @@ function SheetTable({
   const norm = (s: string) =>
     s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 
-  const cols = useMemo(() => detectColumns(sheet), [sheet]);
+  const cols = useMemo(() => sheetColumns(sheet), [sheet]);
 
   // Seules les lignes de transactions : les en-têtes de la banque (solde,
   // IBAN…) restent stockés mais ne sont pas affichés. Le n° de ligne (idx+2)
@@ -1041,10 +1049,6 @@ function SheetTable({
   ).length;
   const totalMatched = sheet.rows.filter((_, i) => matchedRows.has(i)).length;
   const visibleMatched = filteredRows.filter(({ idx }) => matchedRows.has(idx)).length;
-  const subAmountIdx = useMemo(() => {
-    const headerRow = cols.dataStartRow > 0 ? sheet.rows[cols.dataStartRow - 1] ?? [] : [];
-    return headerRow.findIndex((h) => norm(String(h ?? "")).startsWith("sous-montant"));
-  }, [sheet.rows, cols.dataStartRow]);
 
   const th = "px-3 py-2 text-left text-[10px] uppercase tracking-wider text-muted font-medium whitespace-nowrap";
 
@@ -1101,8 +1105,8 @@ function SheetTable({
             )}
             {filteredRows.map(({ row, idx }) => {
               const m = matchedRows.get(idx);
-              const desc = cols.idxCreditor >= 0 ? String(row[cols.idxCreditor] ?? "") : "";
-              const amount = rowAmount(row, cols, subAmountIdx);
+              const desc = rowDescription(row, cols);
+              const amount = rowAmount(row, cols);
               return (
                 <tr
                   key={idx}
@@ -1133,13 +1137,7 @@ function SheetTable({
                       (amount != null && amount > 0 ? "text-ok" : "")
                     }
                   >
-                    {amount == null
-                      ? ""
-                      : new Intl.NumberFormat("fr-CH", {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                          signDisplay: "exceptZero",
-                        }).format(amount)}
+                    {formatSignedAmount(amount)}
                   </td>
                   <td className="px-3 py-1 max-w-[220px] truncate">
                     {m ? (
@@ -1173,54 +1171,6 @@ function SheetTable({
       </div>
     </div>
   );
-}
-
-function toNumber(v: string | number | Date | null | undefined): number | null {
-  if (v == null || v === "" || v instanceof Date) return null;
-  if (typeof v === "number") return Number.isFinite(v) ? v : null;
-  const n = Number(String(v).replace(/['\s]/g, "").replace(",", "."));
-  return Number.isFinite(n) ? n : null;
-}
-
-// Montant affiché : débit (négatif), sinon crédit (positif), sinon sous-montant
-// (lignes de détail d'un ordre groupé, ex. impôts).
-function rowAmount(
-  row: (string | number | null)[],
-  cols: { idxDebit: number; idxCredit: number; idxAmount: number },
-  subAmountIdx: number,
-): number | null {
-  if (cols.idxDebit >= 0) {
-    const d = toNumber(row[cols.idxDebit]);
-    if (d != null && d !== 0) return -Math.abs(d);
-  }
-  if (cols.idxCredit >= 0) {
-    const c = toNumber(row[cols.idxCredit]);
-    if (c != null && c !== 0) return Math.abs(c);
-  }
-  if (cols.idxDebit < 0 && cols.idxAmount >= 0) {
-    const a = toNumber(row[cols.idxAmount]);
-    if (a != null) return a;
-  }
-  if (subAmountIdx >= 0) {
-    const s = toNumber(row[subAmountIdx]);
-    if (s != null) return s;
-  }
-  return null;
-}
-
-function formatShortDate(v: string | number | Date | null): string {
-  if (v == null || v === "") return "";
-  if (v instanceof Date) {
-    return v.toLocaleDateString("fr-CH", { day: "2-digit", month: "2-digit", year: "2-digit" });
-  }
-  const m = String(v).match(/^(\d{4})-(\d{2})-(\d{2})/);
-  return m ? `${m[3]}.${m[2]}.${m[1].slice(2)}` : String(v);
-}
-
-// « RUNPOD.IO;08057 RUNPOD.IO » → « RUNPOD.IO » ; « Robin Koller;Les Mengartes… » → « Robin Koller ».
-function shortDescription(s: string): string {
-  const first = s.split(";")[0].trim();
-  return first || s.trim();
 }
 
 /**

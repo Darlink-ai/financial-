@@ -1,27 +1,24 @@
-import { detectColumns, type ParsedSheet } from "@/lib/excel-match";
 import {
+  getAllState,
   getExcelSheet,
   insertAutoRowAssignmentIfAbsent,
   listExcelSheets,
   type RowAssignee,
   type StoredExcelSheet,
 } from "@/lib/db";
+import {
+  formatShortDate,
+  rowAmount,
+  rowDescription,
+  sheetColumns,
+  shortDescription,
+  type SheetColumns,
+} from "@/lib/excel-row-display";
 
-/**
- * Normalise la description d'une ligne Excel pour servir de clé de
- * fournisseur. Aucune entrée connue → null (on ne cascade pas sur une
- * description vide ou trop générique).
- */
-export function creditorKeyFromRow(
-  row: (string | number | null)[],
-  headers: string[],
-): string | null {
-  const { idxCreditor } = detectColumns({ headers, rows: [row] });
-  const raw =
-    idxCreditor >= 0 && row[idxCreditor] != null ? String(row[idxCreditor]) : "";
-  const k = normalizeKey(raw);
-  if (!k || k.length < 3) return null;
-  return k;
+// Les colonnes se détectent sur le relevé ENTIER (la ligne d'en-tête
+// « Date de transaction… » est au milieu des rows) : jamais sur une ligne seule.
+function columnsOf(sheet: StoredExcelSheet): SheetColumns {
+  return sheetColumns({ headers: sheet.headers, rows: sheet.rows });
 }
 
 function normalizeKey(s: string): string {
@@ -30,16 +27,21 @@ function normalizeKey(s: string): string {
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, "")
     .replace(/[^a-z0-9]+/g, " ")
-    .trim()
-    .split(/\s+/)
-    .slice(0, 4)
-    .join(" ");
+    .trim();
 }
 
-/**
- * Récupère la description normalisée pour la ligne (month, currency, row).
- * `rowNumber` est l'ID affiché dans la colonne « # » (idx+2).
- */
+// Clé fournisseur = nom affiché (partie avant « ; »), normalisé.
+function creditorKeyAt(
+  sheet: StoredExcelSheet,
+  cols: SheetColumns,
+  idx: number,
+): string | null {
+  if (idx < cols.dataStartRow || idx >= sheet.rows.length) return null;
+  const k = normalizeKey(shortDescription(rowDescription(sheet.rows[idx], cols)));
+  return k.length >= 3 ? k : null;
+}
+
+/** `rowNumber` = n° affiché dans la colonne « # » (idx+2). */
 export async function getCreditorKeyFor(
   month: string,
   accountCurrency: string,
@@ -47,19 +49,12 @@ export async function getCreditorKeyFor(
 ): Promise<string | null> {
   const sheet = await getExcelSheet(month, accountCurrency);
   if (!sheet) return null;
-  const idx = rowNumber - 2;
-  if (idx < 0 || idx >= sheet.rows.length) return null;
-  return creditorKeyFromRow(sheet.rows[idx], sheet.headers);
+  return creditorKeyAt(sheet, columnsOf(sheet), rowNumber - 2);
 }
 
 /**
- * Propage une attribution à toutes les lignes des sheets ≥ `sinceMonth`
- * qui ont la même description normalisée et qui n'ont pas déjà une
- * attribution. Ne touche pas aux cibles déjà attribuées (manuelles ou
- * cascades précédentes).
- *
- * `excludeSelf` : (month, currency, row) de la ligne source, pour ne pas
- *   se marquer soi-même auto_cascaded.
+ * Propage une attribution aux lignes des relevés ≥ `sinceMonth` qui ont le
+ * même nom de fournisseur et pas encore d'attribution.
  */
 export async function cascadeAssignment(opts: {
   creditorKey: string;
@@ -72,7 +67,8 @@ export async function cascadeAssignment(opts: {
   let added = 0;
   let scanned = 0;
   for (const sheet of sheets) {
-    for (let i = 0; i < sheet.rows.length; i++) {
+    const cols = columnsOf(sheet);
+    for (let i = cols.dataStartRow; i < sheet.rows.length; i++) {
       scanned++;
       const rowNumber = i + 2;
       if (
@@ -82,14 +78,13 @@ export async function cascadeAssignment(opts: {
       ) {
         continue;
       }
-      const key = creditorKeyFromRow(sheet.rows[i], sheet.headers);
-      if (key !== opts.creditorKey) continue;
+      if (creditorKeyAt(sheet, cols, i) !== opts.creditorKey) continue;
       const ok = await insertAutoRowAssignmentIfAbsent({
         month: sheet.month,
         accountCurrency: sheet.accountCurrency,
         rowNumber,
         assignee: opts.assignee,
-        creditorKey: key,
+        creditorKey: opts.creditorKey,
         assignedBy: opts.assignedBy,
       });
       if (ok) added++;
@@ -98,10 +93,6 @@ export async function cascadeAssignment(opts: {
   return { added, scanned };
 }
 
-/**
- * Enrichit une liste d'attributions avec, pour chaque ligne, la
- * description Excel + le montant (utile sur la page /tasks).
- */
 export type RowAssignmentEnriched = {
   month: string;
   accountCurrency: string;
@@ -111,9 +102,13 @@ export type RowAssignmentEnriched = {
   assignedBy: string | null;
   assignedAt: string;
   autoCascaded: boolean;
+  /** Description complète du relevé (survol). */
   description: string;
+  /** Nom affiché, comme dans le tableau Rapprochement Excel. */
+  label: string;
   amount: number | null;
-  date: string | null;
+  date: string;
+  matchedCreditor: string | null;
 };
 
 export async function enrichAssignments(
@@ -128,44 +123,48 @@ export async function enrichAssignments(
     autoCascaded: boolean;
   }>,
 ): Promise<RowAssignmentEnriched[]> {
-  // Cache sheets by (month, currency) pour éviter plusieurs lectures.
-  const cache = new Map<string, StoredExcelSheet | null>();
+  if (assignments.length === 0) return [];
+  const cache = new Map<string, { sheet: StoredExcelSheet; cols: SheetColumns } | null>();
   const getSheet = async (month: string, currency: string) => {
     const k = `${month}|${currency}`;
-    if (!cache.has(k)) cache.set(k, await getExcelSheet(month, currency));
+    if (!cache.has(k)) {
+      const sheet = await getExcelSheet(month, currency);
+      cache.set(k, sheet ? { sheet, cols: columnsOf(sheet) } : null);
+    }
     return cache.get(k) ?? null;
   };
+
+  const { invoices } = await getAllState();
+  const matchedBy = new Map<string, string>();
+  for (const inv of invoices) {
+    if (inv.status !== "matched" || inv.excelRowMatched == null || !inv.invoiceDate) continue;
+    const k = `${inv.invoiceDate.slice(0, 7)}|${inv.accountCurrency ?? "USD"}|${inv.excelRowMatched}`;
+    if (!matchedBy.has(k)) matchedBy.set(k, inv.creditor ?? "");
+  }
+
   const out: RowAssignmentEnriched[] = [];
   for (const a of assignments) {
-    const sheet = await getSheet(a.month, a.accountCurrency);
+    const s = await getSheet(a.month, a.accountCurrency);
     let description = "";
     let amount: number | null = null;
-    let date: string | null = null;
-    if (sheet) {
+    let date = "";
+    if (s) {
       const idx = a.rowNumber - 2;
-      if (idx >= 0 && idx < sheet.rows.length) {
-        const row = sheet.rows[idx];
-        const parsed: ParsedSheet = { headers: sheet.headers, rows: [row] };
-        const { idxCreditor, idxAmount, idxDebit, idxDate } =
-          detectColumns(parsed);
-        if (idxCreditor >= 0 && row[idxCreditor] != null) {
-          description = String(row[idxCreditor]).trim();
-        }
-        const amtIdx = idxDebit >= 0 ? idxDebit : idxAmount;
-        if (amtIdx >= 0 && row[amtIdx] != null) {
-          const n = Number(
-            String(row[amtIdx]).replace(/'/g, "").replace(/,/g, "."),
-          );
-          if (Number.isFinite(n)) amount = n;
-        }
-        if (idxDate >= 0 && row[idxDate] != null) {
-          const v = String(row[idxDate]);
-          const m = v.match(/^(\d{4})-(\d{2})-(\d{2})/);
-          date = m ? `${m[3]}.${m[2]}.${m[1].slice(2)}` : v;
-        }
+      const row = s.sheet.rows[idx];
+      if (row) {
+        description = rowDescription(row, s.cols);
+        amount = rowAmount(row, s.cols);
+        date = formatShortDate(s.cols.idxDate >= 0 ? row[s.cols.idxDate] : null);
       }
     }
-    out.push({ ...a, description, amount, date });
+    out.push({
+      ...a,
+      description,
+      label: shortDescription(description),
+      amount,
+      date,
+      matchedCreditor: matchedBy.get(`${a.month}|${a.accountCurrency}|${a.rowNumber}`) ?? null,
+    });
   }
   return out;
 }

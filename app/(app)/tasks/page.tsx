@@ -1,7 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ListTodo, PlusCircle, Loader2 } from "lucide-react";
+import { ListTodo, PlusCircle, Loader2, CheckCircle2 } from "lucide-react";
+import { formatSignedAmount } from "@/lib/excel-row-display";
+
+const TH = "px-3 py-2 text-left text-[10px] uppercase tracking-wider text-muted font-medium whitespace-nowrap";
 
 type Assignee = "gauthier" | "robin" | "jacqueline" | "a_creer";
 const ASSIGNEE_LABEL: Record<Assignee, string> = {
@@ -21,8 +24,10 @@ type Enriched = {
   assignedAt: string;
   autoCascaded: boolean;
   description: string;
+  label: string;
   amount: number | null;
-  date: string | null;
+  date: string;
+  matchedCreditor: string | null;
 };
 
 type TasksPayload = {
@@ -174,31 +179,59 @@ function TasksSection({
               <div className="px-5 py-2 bg-panel2/40 text-[11px] uppercase tracking-wider text-muted">
                 {formatMonth(month)}
               </div>
-              <table className="w-full text-[12px]">
+              <table className="w-full text-[12px] border-collapse">
+                <thead className="border-b border-border">
+                  <tr>
+                    <th className={`${TH} w-14`}>#</th>
+                    <th className={`${TH} w-14`}>Compte</th>
+                    <th className={`${TH} w-24`}>Date</th>
+                    <th className={TH}>Description</th>
+                    <th className={`${TH} text-right w-32`}>Montant</th>
+                    <th className={TH}>Facture</th>
+                    <th className={`${TH} w-24`}></th>
+                  </tr>
+                </thead>
                 <tbody>
                   {rows.map((r) => (
                     <tr
                       key={`${r.accountCurrency}-${r.rowNumber}`}
-                      className="hover:bg-panel2/60 border-t border-border"
+                      className={
+                        "border-b border-border/40 " +
+                        (r.matchedCreditor
+                          ? "bg-[rgba(34,197,94,0.12)] hover:bg-[rgba(34,197,94,0.18)]"
+                          : "hover:bg-panel2")
+                      }
                     >
-                      <td className="px-5 py-2 text-muted tabular-nums w-16">
-                        #{r.rowNumber}
+                      <td
+                        className={
+                          "px-3 py-1 text-muted tabular-nums border-l-2 " +
+                          (r.matchedCreditor ? "border-l-ok" : "border-l-transparent")
+                        }
+                      >
+                        {r.rowNumber}
                       </td>
-                      <td className="px-3 py-2 text-muted w-16 font-mono">
-                        {r.accountCurrency}
+                      <td className="px-3 py-1 text-muted font-mono">{r.accountCurrency}</td>
+                      <td className="px-3 py-1 tabular-nums whitespace-nowrap">{r.date}</td>
+                      <td className="px-3 py-1 max-w-[420px] truncate" title={r.description}>
+                        {r.label}
                       </td>
-                      <td className="px-3 py-2 text-muted w-24 tabular-nums">
-                        {r.date ?? ""}
+                      <td
+                        className={
+                          "px-3 py-1 text-right tabular-nums whitespace-nowrap font-medium " +
+                          (r.amount != null && r.amount > 0 ? "text-ok" : "")
+                        }
+                      >
+                        {formatSignedAmount(r.amount)}
                       </td>
-                      <td className="px-3 py-2 truncate max-w-[480px]" title={r.description}>
-                        {r.description || <span className="text-muted">—</span>}
+                      <td className="px-3 py-1 max-w-[220px] truncate">
+                        {r.matchedCreditor ? (
+                          <span className="inline-flex items-center gap-1.5 text-ok" title={r.matchedCreditor}>
+                            <CheckCircle2 size={12} className="shrink-0" />
+                            <span className="truncate">{r.matchedCreditor}</span>
+                          </span>
+                        ) : null}
                       </td>
-                      <td className="px-3 py-2 text-right font-mono tabular-nums w-28">
-                        {r.amount != null
-                          ? `${r.amount.toLocaleString("fr-CH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${r.accountCurrency}`
-                          : "—"}
-                      </td>
-                      <td className="px-3 py-2 w-28 text-right">
+                      <td className="px-3 py-1 text-right">
                         {r.autoCascaded && (
                           <span className="text-[10px] text-muted italic mr-2" title="Attribuée automatiquement d'après un fournisseur déjà classé.">
                             auto
