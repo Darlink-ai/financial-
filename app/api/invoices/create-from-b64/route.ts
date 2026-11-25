@@ -27,6 +27,12 @@ export async function POST(req: Request) {
     fileB64?: string;
     mailbox?: string;
     accountCurrency?: string;
+    /** Mail d'origine (reçu archivé en PDF) : évite qu'une synchro le réimporte. */
+    mailboxId?: string;
+    sourceMessageId?: string;
+    fromEmail?: string;
+    subject?: string;
+    receivedAt?: string;
   };
   if (!body.fileName || !body.fileB64) {
     return NextResponse.json(
@@ -40,12 +46,12 @@ export async function POST(req: Request) {
 
   await insertIncomingInvoice({
     id,
-    mailboxId: "manual",
-    sourceMessageId: id,
-    subject: body.fileName,
-    fromEmail: "manual@local",
+    mailboxId: body.mailboxId ?? "manual",
+    sourceMessageId: body.sourceMessageId ?? id,
+    subject: body.subject ?? body.fileName,
+    fromEmail: body.fromEmail ?? "manual@local",
     mailbox: body.mailbox ?? "Ajout manuel",
-    receivedAt: new Date().toISOString(),
+    receivedAt: body.receivedAt ?? new Date().toISOString(),
     attachmentName: body.fileName,
     attachmentBytes: bytes,
     attachmentB64: body.fileB64,

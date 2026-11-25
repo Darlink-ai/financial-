@@ -71,7 +71,7 @@ function buildGmailQuery(opts: SyncOptions): string {
   return parts.join(" ");
 }
 
-async function getValidAccessToken(mb: {
+export async function getValidAccessToken(mb: {
   id: string;
   oauth_access_token: string | null;
   oauth_expires_at: Date | null;
