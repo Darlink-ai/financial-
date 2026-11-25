@@ -9,9 +9,9 @@ import {
   createSyncRun,
   getAllMappings,
   getMailboxesForSync,
+  existingMessageIds,
   incrementMailboxInvoicesFound,
   insertIncomingInvoice,
-  invoiceExistsForMessage,
   updateMailboxAccessToken,
   updateMailboxLastSync,
 } from "./db";
@@ -35,7 +35,17 @@ type SyncOptions = {
   /** Plage personnalisée (YYYY-MM-DD). Inclusive aux deux bords si renseignée. */
   afterDate?: string;
   beforeDate?: string;
+  /** Heure (Date.now()) après laquelle on n'attaque plus de nouveau mail :
+   *  le run s'arrête proprement et renvoie partial=true (la suite est
+   *  reprise par un nouvel appel, les mails déjà importés sont sautés). */
+  deadline?: number;
+  /** Mails déjà traités par un lot précédent du même clic (même s'ils
+   *  n'ont laissé aucune facture, ex. supprimée comme doublon). */
+  skipMessageIds?: string[];
 };
+
+/** Plafond de mails listés par boîte et par run. */
+const MAX_MESSAGES_PER_MAILBOX = 1000;
 
 function buildGmailQuery(opts: SyncOptions): string {
   const parts: string[] = ["has:attachment", "filename:pdf"];
@@ -98,6 +108,12 @@ export async function runSync(
   totalSkipped: number;
   totalDeduped: number;
   query: string;
+  /** true : arrêté avant la fin faute de temps, il reste des mails à traiter. */
+  partial: boolean;
+  /** Mails nouveaux pas encore traités quand le run s'est arrêté. */
+  remaining: number;
+  /** Mails traités par ce run (à repasser en skipMessageIds au lot suivant). */
+  processedMessageIds: string[];
 }> {
   const query = buildGmailQuery(opts);
   const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -107,6 +123,11 @@ export async function runSync(
   let totalAdded = 0;
   let totalSkipped = 0;
   let runError: string | null = null;
+  let partial = false;
+  let remaining = 0;
+  const outOfTime = () => opts.deadline != null && Date.now() > opts.deadline;
+  const alreadyDone = new Set(opts.skipMessageIds ?? []);
+  const processedMessageIds: string[] = [];
 
   try {
     // On charge les mappings comptables une fois pour l'ensemble du run,
@@ -132,19 +153,36 @@ export async function runSync(
 
         // includeSpamTrash=true → l'API renvoie aussi les messages en
         // dossier Spam (et Trash, mais on filtre Trash via la query).
-        const messageIds = await listMessages(accessToken, query, 100, true);
+        const messageIds = await listMessages(
+          accessToken,
+          query,
+          MAX_MESSAGES_PER_MAILBOX,
+          true,
+        );
         r.totalMessages = messageIds.length;
+        const known = await existingMessageIds(mb.id, messageIds);
         console.log(
           `[sync] ${mb.email} query="${query}" → ${messageIds.length} message(s) trouvé(s) par Gmail`,
         );
 
-        for (const messageId of messageIds) {
-          const dup = await invoiceExistsForMessage(mb.id, messageId);
-          if (dup) {
+        let mailboxCut = false;
+        for (let mi = 0; mi < messageIds.length; mi++) {
+          const messageId = messageIds[mi];
+          if (known.has(messageId)) {
             r.skipped++;
             totalSkipped++;
             continue;
           }
+          if (alreadyDone.has(messageId)) continue;
+          if (outOfTime()) {
+            partial = true;
+            mailboxCut = true;
+            remaining += messageIds
+              .slice(mi)
+              .filter((id) => !known.has(id) && !alreadyDone.has(id)).length;
+            break;
+          }
+          processedMessageIds.push(messageId);
 
           const msg = await getMessage(accessToken, messageId);
           const attachments = extractPdfAttachments(msg);
@@ -214,7 +252,7 @@ export async function runSync(
           }
         }
 
-        await updateMailboxLastSync(mb.id);
+        if (!mailboxCut) await updateMailboxLastSync(mb.id);
         if (r.added > 0) {
           await incrementMailboxInvoicesFound(mb.id, r.added);
         }
@@ -230,5 +268,15 @@ export async function runSync(
   const totalDeduped = results.reduce((s, r) => s + (r.deduped ?? 0), 0);
   await finishSyncRun(runId, results, totalAdded, totalSkipped, runError);
 
-  return { runId, results, totalAdded, totalSkipped, totalDeduped, query };
+  return {
+    runId,
+    results,
+    totalAdded,
+    totalSkipped,
+    totalDeduped,
+    query,
+    partial,
+    remaining,
+    processedMessageIds,
+  };
 }

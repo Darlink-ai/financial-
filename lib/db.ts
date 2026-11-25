@@ -553,6 +553,19 @@ export async function incrementMailboxInvoicesFound(id: string, n: number) {
   `;
 }
 
+export async function existingMessageIds(
+  mailboxId: string,
+  sourceMessageIds: string[],
+): Promise<Set<string>> {
+  if (sourceMessageIds.length === 0) return new Set();
+  const rows = await client()<{ source_message_id: string }[]>`
+    SELECT DISTINCT source_message_id FROM invoices
+    WHERE mailbox_id = ${mailboxId}
+      AND source_message_id = ANY(${sourceMessageIds})
+  `;
+  return new Set(rows.map((r) => r.source_message_id));
+}
+
 export async function invoiceExistsForMessage(
   mailboxId: string,
   sourceMessageId: string,

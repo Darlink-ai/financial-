@@ -43,22 +43,33 @@ export async function listMessages(
    */
   includeSpamTrash = false,
 ): Promise<string[]> {
-  const url = new URL(`${BASE}/messages`);
-  url.searchParams.set("q", query);
-  url.searchParams.set("maxResults", String(maxResults));
-  if (includeSpamTrash) {
-    url.searchParams.set("includeSpamTrash", "true");
-  }
+  // Gmail rend 500 ids au plus par page : on suit nextPageToken jusqu'à maxResults.
+  const ids: string[] = [];
+  let pageToken: string | undefined;
+  do {
+    const url = new URL(`${BASE}/messages`);
+    url.searchParams.set("q", query);
+    url.searchParams.set("maxResults", String(Math.min(500, maxResults - ids.length)));
+    if (includeSpamTrash) {
+      url.searchParams.set("includeSpamTrash", "true");
+    }
+    if (pageToken) url.searchParams.set("pageToken", pageToken);
 
-  const r = await fetch(url, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  if (!r.ok) {
-    const txt = await r.text();
-    throw new Error(`gmail list ${r.status}: ${txt.slice(0, 200)}`);
-  }
-  const data = (await r.json()) as { messages?: { id: string }[] };
-  return (data.messages || []).map((m) => m.id);
+    const r = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!r.ok) {
+      const txt = await r.text();
+      throw new Error(`gmail list ${r.status}: ${txt.slice(0, 200)}`);
+    }
+    const data = (await r.json()) as {
+      messages?: { id: string }[];
+      nextPageToken?: string;
+    };
+    for (const m of data.messages || []) ids.push(m.id);
+    pageToken = data.nextPageToken;
+  } while (pageToken && ids.length < maxResults);
+  return ids;
 }
 
 export async function getMessage(

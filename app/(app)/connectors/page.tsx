@@ -191,6 +191,7 @@ function CronSection({
 }) {
   const eligible = mailboxes.filter((m) => m.hasRefreshToken);
   const [running, setRunning] = useState(false);
+  const [batchInfo, setBatchInfo] = useState<string | null>(null);
   const [elapsedSec, setElapsedSec] = useState(0);
   const [runs, setRuns] = useState<SyncRun[]>([]);
   const [afterDate, setAfterDate] = useState("");
@@ -283,46 +284,96 @@ function CronSection({
   const runNow = async (only?: string[]) => {
     setRunning(true);
     setRunResult(null);
+    setBatchInfo(null);
     try {
-      const r = await fetch("/api/sync/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          mailboxIds: only,
-          lookbackDays: 6,
-          afterDate: afterDate || undefined,
-          beforeDate: beforeDate || undefined,
-        }),
-      });
-      if (!r.ok) {
-        const txt = await r.text();
-        alert(`Sync failed: HTTP ${r.status}\n${txt.slice(0, 300)}`);
-        return;
-      }
-      const d = (await r.json()) as {
+      // Une requête s'arrête avant la limite de Vercel (partial=true) : on
+      // enchaîne les lots jusqu'au bout. Les mails déjà importés sont sautés.
+      type Batch = {
         results: SyncRun["results"];
         totalAdded: number;
         totalSkipped: number;
         totalDeduped?: number;
         query?: string;
+        partial?: boolean;
+        remaining?: number;
+        processedMessageIds?: string[];
       };
-      setRunResult({
-        totalAdded: d.totalAdded,
-        totalSkipped: d.totalSkipped,
-        totalDeduped: d.totalDeduped,
-        results: d.results,
-        query: d.query,
-      });
+      const MAX_BATCHES = 40;
+      let first: Batch | null = null;
+      let totalAdded = 0;
+      let totalDeduped = 0;
+      const perBox = new Map<string, SyncRun["results"][number]>();
+      let last: Batch | null = null;
+      const done: string[] = [];
+      for (let batch = 1; batch <= MAX_BATCHES; batch++) {
+        const r = await fetch("/api/sync/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            mailboxIds: only,
+            lookbackDays: 6,
+            afterDate: afterDate || undefined,
+            beforeDate: beforeDate || undefined,
+            skipMessageIds: done.length > 0 ? done : undefined,
+          }),
+        });
+        if (!r.ok) {
+          const txt = await r.text();
+          alert(
+            `Sync failed: HTTP ${r.status}\n${txt.slice(0, 300)}` +
+              (batch > 1
+                ? `\n\n${totalAdded} facture(s) déjà importée(s) dans les lots précédents sont conservées. Relance pour continuer.`
+                : ""),
+          );
+          if (batch > 1) {
+            await loadRuns();
+            onReload();
+          }
+          return;
+        }
+        const d = (await r.json()) as Batch;
+        done.push(...(d.processedMessageIds ?? []));
+        first ??= d;
+        last = d;
+        totalAdded += d.totalAdded;
+        totalDeduped += d.totalDeduped ?? 0;
+        for (const res of d.results ?? []) {
+          const prev = perBox.get(res.mailboxId);
+          perBox.set(
+            res.mailboxId,
+            prev
+              ? {
+                  ...prev,
+                  added: prev.added + res.added,
+                  deduped: (prev.deduped ?? 0) + (res.deduped ?? 0),
+                  error: res.error ?? prev.error,
+                }
+              : res,
+          );
+        }
+        if (!d.partial) break;
+        setBatchInfo(
+          `Lot ${batch + 1} · ${d.remaining ?? "?"} mail${(d.remaining ?? 0) > 1 ? "s" : ""} restant${(d.remaining ?? 0) > 1 ? "s" : ""} · ${totalAdded} importée${totalAdded > 1 ? "s" : ""}`,
+        );
+      }
+      // « Déjà connues » = ce qui était déjà importé AVANT ce clic (1er lot).
+      const d = {
+        totalAdded,
+        totalSkipped: first?.totalSkipped ?? 0,
+        totalDeduped,
+        results: Array.from(perBox.values()),
+        query: first?.query,
+      };
+      setRunResult(d);
       await loadRuns();
       onReload();
       // Alert récap : le user demande explicitement un feedback à la fin
       // du sync sur "combien de nouvelles factures ont pu être retrouvées".
-      // Le bandeau vert reste visible en dessous pour le détail, mais
-      // l'alert donne un chiffre clair immédiatement.
-      const netNew =
-        d.totalAdded - (d.totalDeduped ?? 0);
+      const netNew = d.totalAdded - (d.totalDeduped ?? 0);
       const lines = [
-        `Analyse terminée.`,
+        last?.partial
+          ? `Analyse arrêtée après ${MAX_BATCHES} lots — relance pour continuer (${last.remaining ?? "?"} mails restants).`
+          : `Analyse terminée.`,
         ``,
         `📥 ${d.totalAdded} nouvelle${d.totalAdded > 1 ? "s" : ""} facture${d.totalAdded > 1 ? "s" : ""} détectée${d.totalAdded > 1 ? "s" : ""} dans les mails${d.totalDeduped ? ` (dont ${d.totalDeduped} dédoublonnée${d.totalDeduped > 1 ? "s" : ""} → ${netNew} conservée${netNew > 1 ? "s" : ""})` : ""}`,
         `⏭️ ${d.totalSkipped} déjà connue${d.totalSkipped > 1 ? "s" : ""} (skippée${d.totalSkipped > 1 ? "s" : ""})`,
@@ -338,6 +389,7 @@ function CronSection({
       alert(lines.join("\n"));
     } finally {
       setRunning(false);
+      setBatchInfo(null);
     }
   };
 
@@ -362,6 +414,7 @@ function CronSection({
               <div className="text-[14px] font-semibold text-text flex items-center gap-2">
                 Synchronisation en cours…
                 <span className="badge info tabular-nums">{elapsedLabel}</span>
+                {batchInfo && <span className="badge tabular-nums">{batchInfo}</span>}
               </div>
               <div className="text-[12px] text-muted">
                 Récupération des emails, extraction des PDF, classification et

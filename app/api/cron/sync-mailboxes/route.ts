@@ -32,7 +32,11 @@ export async function GET(req: Request) {
   }
 
   try {
-    const result = await runSync("cron", { lookbackDays: 6 });
+    // Même garde que le bouton : le cron suivant reprend ce qui reste.
+    const result = await runSync("cron", {
+      lookbackDays: 6,
+      deadline: Date.now() + 230_000,
+    });
     return NextResponse.json(result);
   } catch (e) {
     const err = e as Error;

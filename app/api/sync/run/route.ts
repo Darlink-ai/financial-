@@ -17,14 +17,19 @@ export async function POST(req: Request) {
     lookbackDays?: number;
     afterDate?: string;
     beforeDate?: string;
+    skipMessageIds?: string[];
   };
 
   try {
+    // Vercel coupe à 300 s : on n'attaque plus de nouveau mail après 230 s.
+    // La page relance alors un lot (partial=true) jusqu'à la fin.
     const result = await runSync("manual", {
       mailboxIds: body.mailboxIds,
       lookbackDays: body.lookbackDays ?? 6,
       afterDate: body.afterDate?.trim() || undefined,
       beforeDate: body.beforeDate?.trim() || undefined,
+      deadline: Date.now() + 230_000,
+      skipMessageIds: Array.isArray(body.skipMessageIds) ? body.skipMessageIds : undefined,
     });
     return NextResponse.json(result);
   } catch (e) {
