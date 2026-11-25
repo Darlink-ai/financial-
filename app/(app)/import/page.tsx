@@ -386,7 +386,10 @@ export default function ImportPage() {
     }
   };
 
-  const validateItem = async (it: DraftItem) => {
+  /** `onlyRemoveSiblingsIn` : si fourni, seuls les brouillons doublons de
+   *  cette liste sont supprimés (validation d'une sélection : on ne touche
+   *  pas aux brouillons non cochés). */
+  const validateItem = async (it: DraftItem, onlyRemoveSiblingsIn?: Set<string>) => {
     if (!it.invoice) return;
     const n = parseInt(it.rowInput.trim(), 10);
     if (!Number.isFinite(n) || n < 2) {
@@ -472,7 +475,9 @@ export default function ImportPage() {
       // Auto-suppression des siblings qui ciblaient la même ligne Excel
       // (même rowNumber + currency + mois). Ils sont devenus obsolètes
       // car la ligne est maintenant prise par celle qu'on vient de valider.
-      const siblings = collisionMap.get(it.key) ?? [];
+      const siblings = (collisionMap.get(it.key) ?? []).filter(
+        (k) => !onlyRemoveSiblingsIn || onlyRemoveSiblingsIn.has(k),
+      );
       const deletedNames: string[] = [];
       for (const siblingKey of siblings) {
         const sibling = items.find((p) => p.key === siblingKey);
@@ -754,6 +759,9 @@ export default function ImportPage() {
   };
 
   const draftedCount = items.filter((i) => i.status === "drafted").length;
+  const selectedDraftedCount = items.filter(
+    (i) => i.status === "drafted" && selectedKeys.has(i.key),
+  ).length;
   const [validatingAll, setValidatingAll] = useState(false);
 
   /** Validation en batch de tous les drafts éligibles. Skip ceux qui :
@@ -766,7 +774,11 @@ export default function ImportPage() {
     type Skipped = { name: string; reason: string };
     const eligibles: DraftItem[] = [];
     const skipped: Skipped[] = [];
+    // Avec une sélection, on ne valide QUE les brouillons cochés ; les autres
+    // ne sont ni validés ni supprimés.
+    const scope = selectedKeys.size > 0 ? new Set(selectedKeys) : null;
     for (const it of items) {
+      if (scope && !scope.has(it.key)) continue;
       if (it.status !== "drafted" || !it.invoice?.id) continue;
       const n = parseInt(it.rowInput.trim(), 10);
       if (!Number.isFinite(n) || n < 2) {
@@ -809,15 +821,18 @@ export default function ImportPage() {
       handled.add(it.invoice!.id);
       // Marque les siblings comme handled — ils seront auto-supprimés
       // par validateItem.
-      const siblingKeys = collisionMap.get(it.key) ?? [];
+      const siblingKeys = (collisionMap.get(it.key) ?? []).filter(
+        (k) => !scope || scope.has(k),
+      );
       for (const sk of siblingKeys) {
         const sib = items.find((p) => p.key === sk);
         if (sib?.invoice?.id) handled.add(sib.invoice.id);
       }
-      await validateItem(it);
+      await validateItem(it, scope ?? undefined);
       processed++;
     }
     setValidatingAll(false);
+    if (scope) clearSelection();
 
     // Petit récap. Les badges sur les rows reflètent le résultat de
     // chaque ligne — on ne ré-itère pas le détail ici.
@@ -1016,9 +1031,18 @@ export default function ImportPage() {
                 {draftedCount > 0 && (
                   <button
                     onClick={validateAll}
-                    disabled={validatingAll || deletingSelected || rematchingAll}
+                    disabled={
+                      validatingAll ||
+                      deletingSelected ||
+                      rematchingAll ||
+                      (selectedKeys.size > 0 && selectedDraftedCount === 0)
+                    }
                     className="btn btn-primary disabled:opacity-50"
-                    title={`Valider en séquence les ${draftedCount} brouillon(s) qui ont une ligne Excel renseignée. Skip ceux qui ciblent une ligne déjà prise.`}
+                    title={
+                      selectedKeys.size > 0
+                        ? `Valider seulement les ${selectedDraftedCount} brouillon(s) coché(s). Les autres ne sont pas touchés.`
+                        : `Valider en séquence les ${draftedCount} brouillon(s) qui ont une ligne Excel renseignée. Skip ceux qui ciblent une ligne déjà prise.`
+                    }
                   >
                     {validatingAll ? (
                       <>
@@ -1027,7 +1051,10 @@ export default function ImportPage() {
                       </>
                     ) : (
                       <>
-                        <CheckCircle2 size={12} /> Valider tout ({draftedCount})
+                        <CheckCircle2 size={12} />{" "}
+                        {selectedKeys.size > 0
+                          ? `Valider la sélection (${selectedDraftedCount})`
+                          : `Valider tout (${draftedCount})`}
                       </>
                     )}
                   </button>
