@@ -61,6 +61,8 @@ const PUBLIC_PATHS = [
   "/api/admin/restore-from-drive",
   // admin/gmail-messages : lecture seule des mails d'une boîte connectée, auth Bearer.
   "/api/admin/gmail-messages",
+  // admin/audit-matches : contrôle fournisseur ↔ ligne des factures validées, auth Bearer.
+  "/api/admin/audit-matches",
 ];
 
 function isPublic(pathname: string): boolean {

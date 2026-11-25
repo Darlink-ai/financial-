@@ -1,3 +1,4 @@
+import { creditorMatchesRow } from "./creditor-aliases";
 import type { Invoice } from "./types";
 
 export type ParsedSheet = {
@@ -848,6 +849,11 @@ export function matchInvoicesAgainstSheet(
         extendedDateTolerance: opts?.matchCreditColumn,
       });
       if (!check.ok) return;
+      // Montant et date ne suffisent pas : le fournisseur de la facture doit
+      // se retrouver dans le texte de la ligne (sinon un reçu RunPod de
+      // 200 USD collait avec une ligne Cloudflare du même jour).
+      const rowText = row.filter((c) => typeof c === "string").join(" ");
+      if (!creditorMatchesRow(inv.creditor, rowText)) return;
 
       // Déviation combinée : plus c'est bas, plus le match est précis.
       // On normalise date/2j sur [0,1] pour rester dans la même échelle
@@ -866,6 +872,7 @@ export function matchInvoicesAgainstSheet(
         reasons: [
           `montant ±${(check.amountRel * 100).toFixed(1)}%`,
           `date à ±${check.dateDiffDays.toFixed(0)}j`,
+          "fournisseur ✓",
         ],
         excelAmount: rowAmount,
         excelDate: rowDate,

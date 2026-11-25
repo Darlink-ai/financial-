@@ -87,6 +87,16 @@ export async function rematchInvoicesForBucket(opts: {
     return { matched: 0, cleared: 0, dedupedDuplicates: 0 };
   }
 
+  // Une facture déjà validée n'est jamais déplacée, dévalidée ni supprimée
+  // ici (une validation à la main doit survivre au rechargement du relevé) ;
+  // ses lignes sont réservées pour les autres.
+  const alreadyMatched = candidates.filter(
+    (i) => i.status === "matched" && i.excelRowMatched != null,
+  );
+  const toMatch = candidates.filter(
+    (i) => !(i.status === "matched" && i.excelRowMatched != null),
+  );
+
   // Premier passage : pour chaque facture, trouver son best match (EUR > CHF > USD).
   type Resolved = {
     invoiceId: string;
@@ -102,21 +112,19 @@ export async function rematchInvoicesForBucket(opts: {
   // ensuite dédoublonnée à tort). Le batch est traité dans l'ordre des
   // candidates — on assigne donc en greedy : 1er trouvé gagne la ligne.
   const claimedByCurrency: Partial<Record<AccountCurrency, Set<number>>> = {};
-  for (const inv of candidates) {
+  for (const inv of alreadyMatched) {
+    const cur = (inv.accountCurrency ?? "USD") as AccountCurrency;
+    (claimedByCurrency[cur] ??= new Set<number>()).add(inv.excelRowMatched!);
+  }
+  for (const inv of toMatch) {
     for (const cur of EXCEL_SEARCH_ORDER) {
       const sheet = sheetsByCurrency[cur];
       if (!sheet) continue;
       const claimed = claimedByCurrency[cur] ?? new Set<number>();
       // Pass 1 : ligne libre (n'importe pas encore prise dans ce batch).
-      let matches = matchInvoicesAgainstSheet(sheet, [inv], {
+      const matches = matchInvoicesAgainstSheet(sheet, [inv], {
         excludeRowIndices: claimed,
       });
-      // Pass 2 : si rien de libre → on tolère un conflit (vrai doublon
-      // facture/reçu pour la même tx bancaire). Le dédoublonnage par
-      // byKey ci-dessous gardera le plus ancien.
-      if (matches.length === 0 && claimed.size > 0) {
-        matches = matchInvoicesAgainstSheet(sheet, [inv]);
-      }
       if (matches.length > 0) {
         const rowIndex = matches[0].rowIndex;
         // rowIndex + 2 = N° Excel humain — cohérent avec excludeRowIndices.
@@ -142,6 +150,8 @@ export async function rematchInvoicesForBucket(opts: {
     arr.push(r);
     byKey.set(key, arr);
   }
+  // Deux factures sur la même ligne : la plus ancienne la prend, l'autre
+  // reste à rapprocher à la main. Plus aucune suppression ici.
   const idsToDelete = new Set<string>();
   for (const [, group] of byKey) {
     if (group.length <= 1) continue;
@@ -151,15 +161,7 @@ export async function rematchInvoicesForBucket(opts: {
     );
     for (const loser of sorted.slice(1)) idsToDelete.add(loser.invoiceId);
   }
-  let dedupedDuplicates = 0;
-  for (const id of idsToDelete) {
-    try {
-      await deleteInvoice(id);
-      dedupedDuplicates++;
-    } catch (e) {
-      console.error("rematch dedup delete failed for", id, e);
-    }
-  }
+  const dedupedDuplicates = 0;
 
   // ---- Application des matches ----
   const resolvedById = new Map(
@@ -169,8 +171,8 @@ export async function rematchInvoicesForBucket(opts: {
   );
 
   let matched = 0;
-  let cleared = 0;
-  for (const inv of candidates) {
+  const cleared = 0;
+  for (const inv of toMatch) {
     if (idsToDelete.has(inv.id)) continue;
     const r = resolvedById.get(inv.id);
     if (r) {
@@ -205,14 +207,6 @@ export async function rematchInvoicesForBucket(opts: {
           }
         }
       }
-    } else if (inv.status === "matched") {
-      // Avant matchée mais plus dans aucun sheet → rétrograde.
-      // (Drive : on garde le fichier en place, on ne re-télécharge pas.)
-      await updateInvoice(inv.id, {
-        excelRowMatched: null,
-        status: inv.drivePath ? "uploaded" : "renamed",
-      });
-      cleared++;
     }
   }
   return { matched, cleared, dedupedDuplicates };
@@ -813,36 +807,24 @@ async function autoProcessInvoiceInner(
         invoiceMonth: month,
       });
       if (others.length > 0) {
-        const currentTime = new Date(input.receivedAt).getTime();
-        // Existant plus ancien que la facture courante → on est le doublon.
-        const olderExisting = others.find(
-          (o) => new Date(o.receivedAt).getTime() <= currentTime,
-        );
-        if (olderExisting) {
-          // Self est le doublon : on se supprime et on sort proprement.
-          await deleteInvoice(input.invoiceId);
-          return {
-            status: "matched", // statut conceptuel ; la row n'existe plus
-            classified: true,
-            uploadedToDrive: uploaded,
-            matchedExcelRow: matchedRow,
-            errors: [
-              ...errors,
-              `Doublon supprimé : la ligne Excel #${matchedRow} est déjà couverte par ${olderExisting.finalName ?? olderExisting.id}.`,
-            ],
-            deletedAsDuplicateOf: olderExisting.id,
-          };
-        } else {
-          // Self est le plus ancien : on garde + on supprime les newer.
-          for (const o of others) {
-            try {
-              await deleteInvoice(o.id);
-              deletedOtherIds.push(o.id);
-            } catch (e) {
-              console.error("dedup delete failed for", o.id, e);
-            }
-          }
-        }
+        // La ligne est déjà couverte par une facture validée : c'est TOUJOURS
+        // la nouvelle qui cède. On ne supprime jamais une facture existante
+        // (une facture déposée à la main a pour date de réception le jour du
+        // dépôt : « garder la plus ancienne » la faisait disparaître au
+        // profit du mail d'origine).
+        const existing = others[0];
+        await deleteInvoice(input.invoiceId);
+        return {
+          status: "matched", // statut conceptuel ; la row n'existe plus
+          classified: true,
+          uploadedToDrive: uploaded,
+          matchedExcelRow: matchedRow,
+          errors: [
+            ...errors,
+            `Doublon supprimé : la ligne Excel #${matchedRow} est déjà couverte par ${existing.finalName ?? existing.id}.`,
+          ],
+          deletedAsDuplicateOf: existing.id,
+        };
       }
     } catch (e) {
       console.error("dedup check failed", e);

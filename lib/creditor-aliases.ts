@@ -17,6 +17,21 @@ export const CREDITOR_ALIASES: string[][] = [
   ["elevenlabs", "eleven labs"],
 ];
 
+// Mots trop génériques pour prouver qu'un fournisseur est sur une ligne
+// (« Atlas Cloud » ne doit pas coller avec « Google CLOUD »), plus le
+// vocabulaire des relevés UBS (« Paiement carte de debit »…).
+const STOPWORDS = new Set([
+  "cloud", "services", "service", "technologies", "technology", "tech", "limited",
+  "gmbh", "sarl", "corp", "corporation", "company", "group", "holding", "holdings",
+  "international", "global", "solutions", "systems", "software", "digital", "online",
+  "media", "studio", "labs", "team", "plan", "subscription", "subscr", "invoice",
+  "receipt", "payment", "payments", "paiement", "carte", "debit", "credit",
+  "transaction", "montant", "exchange", "rate", "couts", "commerce", "ordre",
+  "banking", "compte", "account", "reference", "motif", "inc", "llc", "ltd",
+  "this", "paying", "statement", "generated", "order", "from", "with", "your",
+  "pour", "facture", "recu", "solde", "frais", "suisse", "switzerland",
+]);
+
 export function normalize(s: string): string {
   return s
     .toLowerCase()
@@ -41,8 +56,18 @@ export function creditorMatchesRow(
 
   // Match direct : n'importe quel mot ≥ 4 chars du créditeur PDF trouvé
   // dans la row bancaire.
-  const tokens = invNorm.split(" ").filter((t) => t.length >= 4);
+  const tokens = invNorm.split(" ").filter((t) => t.length >= 4 && !STOPWORDS.has(t));
   if (tokens.some((t) => excelNorm.includes(t))) return true;
+
+  // Noms courts (« AWS », « UBS », « X.AI ») : le nom collé, sans les mots
+  // génériques, doit apparaître tel quel dans la ligne collée.
+  if (tokens.length === 0) {
+    const compact = invNorm
+      .split(" ")
+      .filter((t) => !STOPWORDS.has(t))
+      .join("");
+    if (compact.length >= 3 && excelNorm.replace(/ /g, "").includes(compact)) return true;
+  }
 
   // Match via alias : cherche si le créditeur PDF est dans un groupe
   // d'alias, puis vérifie si un des autres noms du groupe est dans la
