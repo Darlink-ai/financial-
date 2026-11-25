@@ -27,17 +27,20 @@ export async function GET(req: Request) {
   );
   try {
     const term = `%${q}%`;
+    // 50 par défaut coupait les résultats (les ajouts manuels, récents,
+    // passaient devant les factures venues des mails) : 2000 par défaut.
+    const limit = Math.min(5000, Math.max(1, Number(url.searchParams.get("limit") ?? 2000) || 2000));
     const rows = await sql`
       SELECT id, creditor, subject, amount, currency, invoice_date,
              excel_row_matched, account_currency, status, mailbox,
-             drive_path, final_name, last_error
+             drive_path, final_name, last_error, received_at
       FROM invoices
       WHERE creditor ILIKE ${term}
          OR subject ILIKE ${term}
          OR drive_path ILIKE ${term}
          OR final_name ILIKE ${term}
       ORDER BY received_at DESC
-      LIMIT 50
+      LIMIT ${limit}
     `;
     return NextResponse.json({ ok: true, count: rows.length, invoices: rows });
   } finally {

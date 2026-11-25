@@ -91,6 +91,21 @@ export async function POST(req: Request) {
         matched: invoices
           .filter((i) => i.excel_row_matched != null)
           .map((i) => `${i.creditor} → ligne ${i.excel_row_matched}`),
+        // Dates des mails importés : la période réellement couverte.
+        receivedRange: (() => {
+          const ds = invoices
+            .map((i) => i.received_at?.toISOString().slice(0, 10))
+            .filter((x): x is string => !!x)
+            .sort();
+          return ds.length ? { first: ds[0], last: ds[ds.length - 1] } : null;
+        })(),
+        creditors: Object.entries(
+          invoices.reduce<Record<string, number>>((acc, i) => {
+            const k = (i.creditor ?? "?").trim();
+            acc[k] = (acc[k] ?? 0) + 1;
+            return acc;
+          }, {}),
+        ).sort((x, y) => y[1] - x[1]),
         first: invoices[0]?.id ?? null,
         last: invoices[invoices.length - 1]?.id ?? null,
       });
