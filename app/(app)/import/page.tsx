@@ -16,6 +16,7 @@ import type { Invoice, AccountCurrency } from "@/lib/types";
 import { formatAmount, buildFinalName } from "@/lib/format";
 import { creditorMatchesRow } from "@/lib/creditor-aliases";
 import { detectColumns } from "@/lib/excel-match";
+import { DirectClassify } from "@/components/DirectClassify";
 
 /**
  * Parse une cellule Excel (date) en ISO YYYY-MM-DD. Tolère :
@@ -142,11 +143,19 @@ type DraftItem = {
   } | null;
 };
 
+const tabClass = (active: boolean) =>
+  `px-4 py-1.5 rounded-full text-[12px] font-semibold transition-colors ${
+    active
+      ? "bg-accent text-white shadow-[0_10px_22px_-12px_hsl(var(--accent)/0.8)]"
+      : "text-muted hover:text-text hover:bg-panel2"
+  }`;
+
 export default function ImportPage() {
   const { reloadFromDb, invoices } = useStore();
   const [items, setItems] = useState<DraftItem[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [uploadType, setUploadType] = useState<"invoice" | "receipt">("invoice");
+  const [mode, setMode] = useState<"normal" | "direct">("normal");
   const [rematchingAll, setRematchingAll] = useState(false);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [deletingSelected, setDeletingSelected] = useState(false);
@@ -851,32 +860,43 @@ export default function ImportPage() {
         {/* Toggle Type : Facture (débit) vs Reçu (crédit).
             Le type sélectionné s'applique aux prochains uploads — matcher
             regarde soit la colonne Débit soit la colonne Crédit du sheet. */}
-        <div className="card p-1.5 flex items-center gap-1 w-fit">
+        <div className="card !rounded-full p-1.5 flex items-center gap-1 w-fit">
           <button
-            onClick={() => setUploadType("invoice")}
-            className={`px-4 py-1.5 rounded-md text-[12px] font-medium transition-colors ${
-              uploadType === "invoice"
-                ? "bg-panel2 text-text border border-border"
-                : "text-muted hover:text-text border border-transparent"
-            }`}
+            onClick={() => {
+              setMode("normal");
+              setUploadType("invoice");
+            }}
+            className={tabClass(mode === "normal" && uploadType === "invoice")}
             title="Facture = sortie d'argent. Matcher regarde la colonne Débit du sheet."
           >
             📄 Facture (débit)
           </button>
           <button
-            onClick={() => setUploadType("receipt")}
-            className={`px-4 py-1.5 rounded-md text-[12px] font-medium transition-colors ${
-              uploadType === "receipt"
-                ? "bg-panel2 text-text border border-border"
-                : "text-muted hover:text-text border border-transparent"
-            }`}
+            onClick={() => {
+              setMode("normal");
+              setUploadType("receipt");
+            }}
+            className={tabClass(mode === "normal" && uploadType === "receipt")}
             title="Reçu = entrée d'argent (ex: reçus mensuels processeur). Matcher regarde la colonne Crédit du sheet."
           >
             💰 Reçu (crédit)
           </button>
+          <button
+            onClick={() => setMode("direct")}
+            className={tabClass(mode === "direct")}
+            title="Fichiers nommés « mois - devise - n° de ligne » : classés directement sur la ligne, sans lecture du PDF."
+          >
+            🏷️ Facture (renommée)
+          </button>
+        </div>
+
+        {/* Reste monté quand on change d'onglet : la liste des fichiers classés est gardée. */}
+        <div hidden={mode !== "direct"} className="space-y-4">
+          <DirectClassify />
         </div>
 
         {/* Dropzone */}
+        {mode === "normal" && (
         <div
           onDragOver={(e) => {
             e.preventDefault();
@@ -905,6 +925,7 @@ export default function ImportPage() {
               : "Plusieurs fichiers acceptés. Le traitement démarre dès le drop."}
           </div>
         </div>
+        )}
 
         <input
           ref={fileRef}
@@ -918,7 +939,7 @@ export default function ImportPage() {
           }}
         />
 
-        {items.length > 0 && (
+        {mode === "normal" && items.length > 0 && (
           <div className="card overflow-hidden">
             <div className="flex items-center justify-between px-5 py-3 border-b border-border gap-3 flex-wrap">
               <div className="text-[13px] flex items-center gap-3">
