@@ -17,6 +17,7 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
+        page: "hsl(var(--page) / <alpha-value>)",
         bg: "hsl(var(--bg) / <alpha-value>)",
         panel: "hsl(var(--panel) / <alpha-value>)",
         panel2: "hsl(var(--panel2) / <alpha-value>)",
@@ -33,8 +34,18 @@ const config: Config = {
         text: "hsl(var(--text) / <alpha-value>)",
       },
       fontFamily: {
-        sans: ["ui-sans-serif", "system-ui", "-apple-system", "Segoe UI", "Roboto"],
+        sans: ["var(--font-sans)", "ui-sans-serif", "system-ui", "-apple-system", "Segoe UI", "Roboto"],
         mono: ["ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
+      },
+      // Formes de l'admin dropp.ing : tout est plus arrondi.
+      borderRadius: {
+        sm: "6px",
+        DEFAULT: "8px",
+        md: "10px",
+        lg: "14px",
+        xl: "18px",
+        "2xl": "22px",
+        "3xl": "28px",
       },
     },
   },

@@ -194,7 +194,7 @@ export default function InvoicesPage() {
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              className="input pl-9"
+              className="input !pl-9 !rounded-full"
               placeholder="Rechercher (créditeur, expéditeur, code…)"
             />
           </div>

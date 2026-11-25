@@ -378,15 +378,15 @@ export default function ExcelPage() {
       <div className="px-8 pt-5 pb-8 space-y-4">
         <div className="flex items-center gap-3 flex-wrap">
           {/* Picker de devise — 3 onglets visuels CHF / EUR / USD */}
-          <div className="card p-1.5 flex items-center gap-1 w-fit">
+          <div className="card !rounded-full p-1.5 flex items-center gap-1 w-fit">
             {ACCOUNT_CURRENCIES.map((c) => (
               <button
                 key={c}
                 onClick={() => setCurrency(c)}
-                className={`px-5 py-2 rounded-md text-[13px] font-medium font-mono transition-colors ${
+                className={`px-5 py-2 rounded-full text-[13px] font-semibold transition-colors ${
                   currency === c
-                    ? "bg-panel2 text-text border border-border shadow-[inset_0_0_0_1px_rgba(96,165,250,0.2)]"
-                    : "text-muted hover:text-text border border-transparent"
+                    ? "bg-accent text-white shadow-[0_10px_22px_-12px_hsl(var(--accent)/0.8)]"
+                    : "text-muted hover:text-text hover:bg-panel2"
                 }`}
               >
                 {c}
@@ -1100,7 +1100,7 @@ function SheetTable({
             {filteredRows.length === 0 && (
               <tr>
                 <td colSpan={6} className="px-4 py-8 text-center text-muted italic text-[12px]">
-                  Aucune ligne ne correspond à « {query} ».
+                  {query ? `Aucune ligne ne correspond à « ${query} ».` : "Aucune opération sur ce relevé."}
                 </td>
               </tr>
             )}

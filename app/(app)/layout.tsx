@@ -14,11 +14,14 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
 
   return (
     <StoreProvider>
-      <div className="flex min-h-screen">
+      <div className="flex min-h-screen bg-page">
         <SidebarWithCount userEmail={safeEmail} />
-        <main className="flex-1 min-w-0">
-          <DbErrorBanner />
-          {children}
+        <main className="flex-1 min-w-0 py-4 pr-4">
+          {/* overflow-clip (pas hidden) : garde les en-têtes « sticky » des pages. */}
+          <div className="app-frame min-h-[calc(100vh-32px)] overflow-clip">
+            <DbErrorBanner />
+            {children}
+          </div>
         </main>
       </div>
     </StoreProvider>

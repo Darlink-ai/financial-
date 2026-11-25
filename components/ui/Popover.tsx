@@ -63,7 +63,7 @@ export function Popover({
             sameWidth ? "w-full" : "min-w-[12rem]",
           ].join(" ")}
         >
-          <div className="card p-1.5 shadow-[0_18px_40px_-12px_rgba(0,0,0,0.55)] border border-border bg-panel">
+          <div className="card p-1.5 !rounded-2xl !shadow-[var(--shadow-pop)] border border-border bg-panel">
             {typeof children === "function"
               ? (children as (close: () => void) => ReactNode)(() => setOpen(false))
               : children}

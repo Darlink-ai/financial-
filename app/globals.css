@@ -3,10 +3,17 @@
 @tailwind utilities;
 
 /*
- * SYSTÈME DE THÈMES — deux palettes complètes.
+ * SYSTÈME DE THÈMES — deux palettes complètes, dans les formes de l'admin
+ * dropp.ing (fond gris, grand cadre arrondi, cartes blanches très arrondies,
+ * pilules) avec le bleu à la place du vert citron.
  *
  * Chaque couleur est déclarée en canaux HSL (sans hsl(…) wrapper) pour que
  * Tailwind puisse composer des opacity modifiers via `hsl(var(--panel) / N)`.
+ *
+ *   --page    fond de la fenêtre, autour du cadre et de la barre latérale
+ *   --bg      le grand cadre arrondi du contenu
+ *   --panel   les cartes (blanc)
+ *   --panel2  surfaces secondaires (en-têtes de tableau, survols, champs)
  *
  * Sélecteurs :
  *   :root                                → palette light par défaut
@@ -17,94 +24,90 @@
 
 :root {
   color-scheme: light;
-  /* Fond principal BLANC pur. Les cards sont legerement grisees pour
-     bien ressortir visuellement du fond. */
-  --bg: 0 0% 100%;           /* fond app : BLANC */
-  --panel: 220 20% 96%;      /* cards : gris leger (contraste sur fond blanc) */
-  --panel2: 220 18% 92%;     /* tiles secondaires (headers tableaux, hovers) */
-  --panel3: 220 15% 88%;     /* hover rows plus marque */
-  --border: 220 14% 85%;     /* trait entre cards et fond */
-  --border-hover: 220 14% 72%;
-  /* Accents : bleus soutenus mais pas trop vifs pour ne pas eclater
-     sur le fond clair. */
-  --accent: 217 80% 48%;
-  --accent2: 217 85% 55%;
-  --accent3: 191 80% 34%;
-  /* Status : legerement desatures pour rester dans la meme palette. */
-  --ok: 160 70% 30%;
+  --page: 225 14% 91.5%;
+  --bg: 228 22% 96.5%;
+  --panel: 0 0% 100%;
+  --panel2: 225 22% 96.5%;
+  --panel3: 225 18% 92.5%;
+  --border: 225 18% 91%;
+  --border-hover: 225 14% 82%;
+  --accent: 221 83% 53%;
+  --accent2: 224 76% 48%;
+  --accent3: 199 89% 40%;
+  --ok: 152 60% 32%;
   --warn: 28 82% 40%;
   --err: 0 68% 48%;
-  --muted: 220 12% 42%;
-  --text: 222 40% 12%;
-  /* Gradients / effets ambiants — attenues pour eviter le glow bleuatre
-     visible sur fond clair. */
-  --ambient-1: 217 60% 55%;
-  --ambient-1-alpha: 0.03;
-  --ambient-2: 187 60% 45%;
-  --ambient-2-alpha: 0.02;
+  --muted: 225 8% 50%;
+  --text: 225 20% 11%;
+  --shadow: 0 1px 2px rgb(14 16 22 / 0.04), 0 12px 32px -14px rgb(14 16 22 / 0.1);
+  --shadow-pop: 0 0 0 1px hsl(var(--border)), 0 18px 40px -16px rgb(14 16 22 / 0.28);
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 /* Auto : suit le système quand pas d'override utilisateur */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --bg: 222 55% 6%;
-    --panel: 222 44% 10%;
-    --panel2: 220 38% 15%;
-    --panel3: 219 37% 20%;
-    --border: 219 33% 21%;
-    --border-hover: 219 30% 29%;
-    --accent: 213 94% 68%;
-    --accent2: 217 91% 60%;
-    --accent3: 187 85% 53%;
-    --ok: 156 64% 52%;
-    --warn: 43 96% 56%;
-    --err: 0 91% 71%;
-    --muted: 215 20% 65%;
-    --text: 217 100% 96%;
-    --ambient-1: 217 91% 60%;
-    --ambient-1-alpha: 0.08;
-    --ambient-2: 187 85% 53%;
-    --ambient-2-alpha: 0.05;
+    --page: 228 20% 3%;
+    --bg: 228 18% 6%;
+    --panel: 228 14% 10%;
+    --panel2: 228 13% 13%;
+    --panel3: 228 12% 17%;
+    --border: 228 12% 17%;
+    --border-hover: 228 11% 26%;
+    --accent: 217 91% 64%;
+    --accent2: 217 91% 58%;
+    --accent3: 199 89% 60%;
+    --ok: 152 55% 52%;
+    --warn: 36 90% 60%;
+    --err: 0 85% 70%;
+    --muted: 225 9% 60%;
+    --text: 225 30% 95%;
+    --shadow: none;
+    --shadow-pop: 0 0 0 1px hsl(var(--border)), 0 18px 40px -16px rgb(0 0 0 / 0.7);
   }
 }
 
 /* Override utilisateur explicite → gagne toujours contre le système */
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: 222 55% 6%;
-  --panel: 222 44% 10%;
-  --panel2: 220 38% 15%;
-  --panel3: 219 37% 20%;
-  --border: 219 33% 21%;
-  --border-hover: 219 30% 29%;
-  --accent: 213 94% 68%;
-  --accent2: 217 91% 60%;
-  --accent3: 187 85% 53%;
-  --ok: 156 64% 52%;
-  --warn: 43 96% 56%;
-  --err: 0 91% 71%;
-  --muted: 215 20% 65%;
-  --text: 217 100% 96%;
-  --ambient-1: 217 91% 60%;
-  --ambient-1-alpha: 0.08;
-  --ambient-2: 187 85% 53%;
-  --ambient-2-alpha: 0.05;
+  --page: 228 20% 3%;
+  --bg: 228 18% 6%;
+  --panel: 228 14% 10%;
+  --panel2: 228 13% 13%;
+  --panel3: 228 12% 17%;
+  --border: 228 12% 17%;
+  --border-hover: 228 11% 26%;
+  --accent: 217 91% 64%;
+  --accent2: 217 91% 58%;
+  --accent3: 199 89% 60%;
+  --ok: 152 55% 52%;
+  --warn: 36 90% 60%;
+  --err: 0 85% 70%;
+  --muted: 225 9% 60%;
+  --text: 225 30% 95%;
+  --shadow: none;
+  --shadow-pop: 0 0 0 1px hsl(var(--border)), 0 18px 40px -16px rgb(0 0 0 / 0.7);
 }
 
 html,
 body {
-  background:
-    radial-gradient(1200px 600px at 100% -10%, hsl(var(--ambient-1) / var(--ambient-1-alpha)), transparent 60%),
-    radial-gradient(900px 500px at -10% 110%, hsl(var(--ambient-2) / var(--ambient-2-alpha)), transparent 60%),
-    hsl(var(--bg));
+  background: hsl(var(--page));
   color: hsl(var(--text));
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--font-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
   min-height: 100vh;
 }
 
 * {
   box-sizing: border-box;
+}
+
+:focus-visible {
+  outline: 2px solid hsl(var(--accent));
+  outline-offset: 2px;
 }
 
 ::-webkit-scrollbar {
@@ -115,118 +118,181 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: hsl(var(--border));
+  background: hsl(var(--border-hover));
+  border: 3px solid transparent;
+  background-clip: padding-box;
   border-radius: 999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(var(--border-hover));
+  background: hsl(var(--muted) / 0.6);
+  background-clip: padding-box;
 }
 
-.card {
-  background: linear-gradient(180deg, hsl(var(--text) / 0.015), transparent),
-    hsl(var(--panel));
-  border: 1px solid hsl(var(--border));
-  border-radius: 14px;
-  box-shadow: 0 1px 0 hsl(var(--text) / 0.03) inset,
-    0 8px 24px -16px hsl(var(--bg) / 0.6);
+/* ── Le cadre ─────────────────────────────────────────────────────────── */
+
+.app-frame {
+  background: hsl(var(--bg));
+  border-radius: 32px;
 }
+
+/* ── Les cartes ───────────────────────────────────────────────────────── */
+
+.card {
+  background: hsl(var(--panel));
+  border: 1px solid hsl(var(--border));
+  border-radius: 22px;
+  box-shadow: var(--shadow);
+  animation: monte 0.55s var(--ease) both;
+}
+
+/* Surface "accentée" : carte mise en avant (KPI, analyse financière). */
+.card-accent {
+  background:
+    radial-gradient(120% 90% at 85% 0%, hsl(var(--accent) / 0.12) 0%, transparent 55%),
+    hsl(var(--panel));
+  border: 1px solid hsl(var(--accent) / 0.22);
+  border-radius: 22px;
+  box-shadow: var(--shadow), 0 16px 32px -20px hsl(var(--accent) / 0.45);
+  animation: monte 0.55s var(--ease) both;
+}
+
+/* ── Les boutons ──────────────────────────────────────────────────────── */
 
 .btn {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 14px;
-  border-radius: 10px;
+  padding: 8px 16px;
+  border-radius: 999px;
   border: 1px solid hsl(var(--border));
   background: hsl(var(--panel2));
   color: hsl(var(--text));
   font-size: 13px;
-  font-weight: 500;
-  transition: background 120ms ease, border-color 120ms ease, transform 80ms ease;
+  font-weight: 600;
+  white-space: nowrap;
+  transition:
+    background 0.2s,
+    border-color 0.2s,
+    transform 0.15s var(--ease);
   cursor: pointer;
 }
 .btn:hover {
   background: hsl(var(--panel3));
   border-color: hsl(var(--border-hover));
+  transform: translateY(-1px);
 }
 .btn:active {
-  transform: translateY(0.5px);
+  transform: none;
 }
 .btn-primary {
-  background: linear-gradient(180deg, hsl(var(--accent)) 0%, hsl(var(--accent2)) 100%);
-  border-color: hsl(var(--accent2));
+  background: hsl(var(--accent));
+  border-color: transparent;
   color: white;
-  box-shadow: 0 6px 18px -8px hsl(var(--accent2) / 0.6);
+  box-shadow: 0 10px 22px -12px hsl(var(--accent) / 0.8);
 }
 .btn-primary:hover {
-  filter: brightness(1.1);
+  background: hsl(var(--accent2));
+  border-color: transparent;
+}
+.btn:disabled,
+.btn:disabled:hover {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
 }
 
+/* ── Les champs ───────────────────────────────────────────────────────── */
+
 .input {
-  background: hsl(var(--bg));
+  background: hsl(var(--panel2));
   border: 1px solid hsl(var(--border));
   color: hsl(var(--text));
-  padding: 8px 12px;
-  border-radius: 10px;
+  padding: 8px 14px;
+  border-radius: 12px;
   font-size: 13px;
   outline: none;
   width: 100%;
-  transition: border-color 120ms ease, box-shadow 120ms ease;
+  transition:
+    border-color 0.2s,
+    box-shadow 0.2s,
+    background 0.2s;
+}
+.input:hover {
+  border-color: hsl(var(--border-hover));
 }
 .input:focus {
+  background: hsl(var(--panel));
   border-color: hsl(var(--accent));
   box-shadow: 0 0 0 3px hsl(var(--accent) / 0.15);
 }
 .input:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-  background: hsl(var(--panel2) / 0.5);
 }
-.btn:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
+
+/* ── Les pastilles ────────────────────────────────────────────────────── */
 
 .badge {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 10px;
+  padding: 3px 9px;
   border-radius: 999px;
-  font-size: 11px;
-  font-weight: 500;
-  border: 1px solid hsl(var(--border));
-  background: hsl(var(--bg));
+  font-size: 11.5px;
+  font-weight: 600;
+  border: 1px solid transparent;
+  background: hsl(var(--panel2));
   color: hsl(var(--muted));
 }
 .badge.ok {
-  border-color: hsl(var(--ok) / 0.35);
   background: hsl(var(--ok) / 0.12);
   color: hsl(var(--ok));
 }
 .badge.warn {
-  border-color: hsl(var(--warn) / 0.35);
   background: hsl(var(--warn) / 0.12);
   color: hsl(var(--warn));
 }
 .badge.err {
-  border-color: hsl(var(--err) / 0.35);
   background: hsl(var(--err) / 0.12);
   color: hsl(var(--err));
 }
 .badge.info {
-  border-color: hsl(var(--accent) / 0.4);
-  background: hsl(var(--accent) / 0.15);
+  background: hsl(var(--accent) / 0.12);
   color: hsl(var(--accent));
 }
 
-/* Surface "accentée" : panneau avec un léger glow bleu, pour mettre en avant
-   les cartes KPI ou les sections d'analyse financière. */
-.card-accent {
-  background:
-    linear-gradient(180deg, hsl(var(--accent) / 0.08), transparent 60%),
-    hsl(var(--panel));
-  border: 1px solid hsl(var(--accent) / 0.25);
-  border-radius: 14px;
-  box-shadow: 0 10px 30px -18px hsl(var(--accent2) / 0.5);
+/* ── Les tableaux ─────────────────────────────────────────────────────── */
+
+/* En-têtes à la façon de l'admin dropp.ing : texte normal, gris, sans
+   capitales ni espacement. L'emporte sur les utilitaires des pages. */
+.card table thead th,
+.card-accent table thead th {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: hsl(var(--muted));
+}
+
+@keyframes monte {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card,
+  .card-accent {
+    animation: none;
+  }
+  .btn,
+  .btn:hover {
+    transition: none;
+    transform: none;
+  }
 }

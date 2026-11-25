@@ -209,7 +209,7 @@ export function Sidebar({
   return (
     <aside
       className={cn(
-        "shrink-0 border-r border-border bg-panel min-h-screen flex flex-col sticky top-0 h-screen transition-[width] duration-200 ease-out",
+        "shrink-0 m-4 bg-panel border border-border rounded-3xl shadow-[var(--shadow)] flex flex-col sticky top-4 h-[calc(100vh-32px)] transition-[width] duration-200 ease-out",
         collapsed ? "w-[64px]" : "w-64",
       )}
     >
@@ -217,7 +217,7 @@ export function Sidebar({
       <button
         type="button"
         onClick={() => setCollapsed((v) => !v)}
-        className="absolute top-1/2 -translate-y-1/2 right-0 translate-x-1/2 z-40 w-6 h-10 rounded-md bg-panel2 border border-border hover:border-borderHover text-muted hover:text-text flex items-center justify-center transition-colors shadow-[0_4px_12px_-4px_rgba(0,0,0,0.6)]"
+        className="absolute top-1/2 -translate-y-1/2 right-0 translate-x-1/2 z-40 w-6 h-10 rounded-full bg-panel border border-border hover:border-borderHover text-muted hover:text-text flex items-center justify-center transition-colors shadow-[var(--shadow-pop)]"
         title={collapsed ? "Déplier la sidebar" : "Replier la sidebar"}
       >
         {collapsed ? <ChevronRight size={13} /> : <ChevronLeft size={13} />}
@@ -265,10 +265,10 @@ export function Sidebar({
                 <button
                   onClick={() => toggleGroup(g.id)}
                   className={cn(
-                    "group w-full flex items-center gap-3 rounded-lg text-[13px] transition-colors px-3 py-2",
+                    "group w-full flex items-center gap-3 rounded-full text-[13px] font-medium transition-colors px-3 py-2",
                     groupHasActive
-                      ? "bg-panel2/60 text-text border border-border"
-                      : "text-muted hover:text-text hover:bg-panel2 border border-transparent",
+                      ? "bg-panel2 text-text"
+                      : "text-muted hover:text-text hover:bg-panel2",
                   )}
                 >
                   <GroupIcon
@@ -300,10 +300,10 @@ export function Sidebar({
                   }}
                   title={g.label}
                   className={cn(
-                    "group w-full flex items-center justify-center rounded-lg px-2 py-2 transition-colors",
+                    "group w-full flex items-center justify-center rounded-full px-2 py-2 transition-colors",
                     groupHasActive
-                      ? "bg-panel2 text-text border border-border"
-                      : "text-muted hover:text-text hover:bg-panel2 border border-transparent",
+                      ? "bg-panel2 text-text"
+                      : "text-muted hover:text-text hover:bg-panel2",
                   )}
                 >
                   <GroupIcon
@@ -315,7 +315,7 @@ export function Sidebar({
 
               {/* Sous-items, indentés. Cachés en mode replié. */}
               {!collapsed && isOpen && (
-                <div className="ml-3 mt-0.5 mb-1 pl-3 border-l border-border/60 space-y-0.5">
+                <div className="ml-5 mt-1 mb-1.5 pl-2.5 border-l border-border space-y-0.5">
                   {g.items.map((leaf) => (
                     <NavItem
                       key={leaf.href}
@@ -334,12 +334,12 @@ export function Sidebar({
       </nav>
 
       {userEmail && (
-        <div className="p-3 border-t border-border">
+        <div className="p-2.5">
           {!collapsed ? (
-            <div className="card p-2.5">
+            <div className="rounded-2xl bg-panel2 p-2">
               <div className="flex items-center gap-2 min-w-0">
-                <div className="w-7 h-7 rounded-full bg-panel2 border border-border flex items-center justify-center shrink-0">
-                  <User size={13} className="text-accent" />
+                <div className="w-8 h-8 rounded-full bg-accent text-white flex items-center justify-center shrink-0">
+                  <User size={14} />
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="text-[11px] text-muted">Connecté</div>
@@ -350,7 +350,7 @@ export function Sidebar({
                 <form action="/api/auth/signout" method="post">
                   <button
                     type="submit"
-                    className="btn !px-2 !py-1.5"
+                    className="btn !px-2 !py-2 !bg-panel"
                     title="Se déconnecter"
                   >
                     <LogOut size={12} />
@@ -394,12 +394,12 @@ function NavItem({
     <Link
       href={leaf.href}
       className={cn(
-        "group flex items-center gap-3 rounded-lg transition-colors",
-        compact ? "text-[12px] px-2.5 py-1.5" : "text-[13px] px-3 py-2",
+        "group flex items-center gap-3 rounded-full font-medium transition-colors",
+        compact ? "text-[12.5px] px-3 py-1.5" : "text-[13px] px-3 py-2",
         collapsed ? "!px-2 !py-2 justify-center" : "",
         active
-          ? "bg-panel2 text-text border border-border shadow-[inset_0_0_0_1px_rgba(96,165,250,0.15)]"
-          : "text-muted hover:text-text hover:bg-panel2 border border-transparent",
+          ? "bg-accent text-white shadow-[0_10px_22px_-12px_hsl(var(--accent)/0.8)]"
+          : "text-muted hover:text-text hover:bg-panel2",
       )}
       title={collapsed ? leaf.label : undefined}
     >
@@ -407,7 +407,7 @@ function NavItem({
         size={compact ? 14 : 16}
         className={cn(
           "shrink-0 transition-colors",
-          active ? "text-accent" : "text-muted group-hover:text-text",
+          active ? "text-white" : "text-muted group-hover:text-text",
         )}
       />
       {!collapsed && (

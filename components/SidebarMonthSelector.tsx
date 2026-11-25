@@ -26,8 +26,8 @@ export function SidebarMonthSelector({ disabled = false }: { disabled?: boolean 
   const currentMonth = parseInt(monthStr, 10);
 
   return (
-    <div className="px-3 pt-4 pb-3 border-b border-border">
-      <div className="text-[10px] uppercase tracking-wider text-muted px-1 pb-2 flex items-center gap-1.5">
+    <div className="px-3 pt-4 pb-2">
+      <div className="text-[11.5px] font-medium text-muted px-2 pb-2 flex items-center gap-1.5">
         <Calendar size={11} />
         Période
       </div>
@@ -39,7 +39,7 @@ export function SidebarMonthSelector({ disabled = false }: { disabled?: boolean 
             type="button"
             onClick={disabled ? undefined : toggle}
             disabled={disabled}
-            className={`btn w-full justify-between !py-2 ${
+            className={`btn w-full justify-between !py-2.5 !bg-panel2 ${
               disabled ? "opacity-50 cursor-not-allowed" : ""
             }`}
           >
@@ -118,10 +118,10 @@ function MonthPicker({
               key={m}
               type="button"
               onClick={() => onPick(browsingYear, m)}
-              className={`px-2 py-2 rounded-md text-[12px] font-medium transition-colors ${
+              className={`px-2 py-2 rounded-full text-[12px] font-medium transition-colors ${
                 isActive
-                  ? "bg-accent2 text-white border border-accent2 shadow-[0_4px_12px_-4px_rgba(59,130,246,0.5)]"
-                  : "text-muted hover:text-text hover:bg-panel2 border border-transparent"
+                  ? "bg-accent text-white shadow-[0_10px_22px_-12px_hsl(var(--accent)/0.8)]"
+                  : "text-muted hover:text-text hover:bg-panel2"
               }`}
             >
               {label}
