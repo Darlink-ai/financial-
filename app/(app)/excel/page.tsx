@@ -10,7 +10,6 @@ import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, Download, Trash2, S
 import * as XLSX from "xlsx";
 import {
   computeExpenseTotal,
-  detectColumns,
   matchInvoicesAgainstSheet,
   type MatchResult,
   type ParsedSheet,
@@ -486,8 +485,6 @@ export default function ExcelPage() {
                 hint={`${expenseTotals.debitRowCount} débit${expenseTotals.debitRowCount > 1 ? "s" : ""} · ${formatAmount(expenseTotals.totalCredit, currency)} de crédits`}
               />
             </div>
-
-            <ColumnsMini sheet={sheet} />
 
             <SheetTable
               sheet={sheet}
@@ -1179,47 +1176,6 @@ function SheetTable({
           </tbody>
         </table>
       </div>
-    </div>
-  );
-}
-
-/**
- * Récap minimaliste : une ligne avec les colonnes que l'algo a identifiées
- * (numéro + nom lu dans le fichier). Sert à vérifier d'un coup d'œil que
- * mon parsing est correct quand on upload un nouveau fichier.
- */
-function ColumnsMini({ sheet }: { sheet: ParsedSheet }) {
-  const cols = detectColumns(sheet);
-  const headerRow =
-    cols.dataStartRow > 0
-      ? sheet.rows[cols.dataStartRow - 1] ?? sheet.headers
-      : (sheet.headers as unknown as (string | number | null)[]);
-
-  const label = (idx: number) => {
-    if (idx < 0) return null;
-    const v = headerRow[idx];
-    return v == null || v === "" ? `col ${idx + 1}` : String(v);
-  };
-
-  const items: { key: string; value: string | null }[] = [
-    { key: "Date", value: label(cols.idxDate) },
-    { key: "Description", value: label(cols.idxCreditor) },
-    { key: "Débit", value: label(cols.idxDebit) },
-    { key: "Crédit", value: label(cols.idxCredit) },
-  ];
-
-  return (
-    <div className="text-[11px] text-muted flex flex-wrap items-center gap-x-4 gap-y-1 px-1">
-      {items.map((it) => (
-        <span key={it.key}>
-          <span className="text-muted">{it.key} : </span>
-          {it.value ? (
-            <span className="text-text font-mono">{it.value}</span>
-          ) : (
-            <span className="text-err">—</span>
-          )}
-        </span>
-      ))}
     </div>
   );
 }

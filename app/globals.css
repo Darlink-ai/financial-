@@ -10,8 +10,8 @@
  * Chaque couleur est déclarée en canaux HSL (sans hsl(…) wrapper) pour que
  * Tailwind puisse composer des opacity modifiers via `hsl(var(--panel) / N)`.
  *
- *   --page    fond de la fenêtre, autour du cadre et de la barre latérale
- *   --bg      le grand cadre arrondi du contenu
+ *   --page    fond de la fenêtre (même teinte que --bg : pas de bande grise)
+ *   --bg      fond du contenu
  *   --panel   les cartes (blanc)
  *   --panel2  surfaces secondaires (en-têtes de tableau, survols, champs)
  *
@@ -24,7 +24,7 @@
 
 :root {
   color-scheme: light;
-  --page: 225 14% 91.5%;
+  --page: 228 22% 96.5%;
   --bg: 228 22% 96.5%;
   --panel: 0 0% 100%;
   --panel2: 225 22% 96.5%;
@@ -48,7 +48,7 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --page: 228 20% 3%;
+    --page: 228 18% 6%;
     --bg: 228 18% 6%;
     --panel: 228 14% 10%;
     --panel2: 228 13% 13%;
@@ -71,7 +71,7 @@
 /* Override utilisateur explicite → gagne toujours contre le système */
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --page: 228 20% 3%;
+  --page: 228 18% 6%;
   --bg: 228 18% 6%;
   --panel: 228 14% 10%;
   --panel2: 228 13% 13%;
@@ -130,9 +130,10 @@ body {
 
 /* ── Le cadre ─────────────────────────────────────────────────────────── */
 
+/* Pas de bande grise autour : le cadre a la couleur de la fenêtre, seules
+   la barre latérale et les cartes blanches ressortent. */
 .app-frame {
-  background: hsl(var(--bg));
-  border-radius: 32px;
+  background: transparent;
 }
 
 /* ── Les cartes ───────────────────────────────────────────────────────── */
