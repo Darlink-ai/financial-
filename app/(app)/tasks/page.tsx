@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ListTodo, PlusCircle, Loader2, AlertTriangle } from "lucide-react";
+import { ListTodo, PlusCircle, Loader2, AlertTriangle, Search } from "lucide-react";
 import { formatSignedAmount } from "@/lib/excel-row-display";
 
 const TH = "px-4 py-2.5 text-left text-[10px] uppercase tracking-wider text-muted font-medium whitespace-nowrap";
@@ -44,6 +44,9 @@ const MONTHS_FR = [
   "Janvier", "Février", "Mars", "Avril", "Mai", "Juin",
   "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre",
 ];
+const norm = (s: string) =>
+  s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
 function formatMonth(ym: string): string {
   const [y, m] = ym.split("-").map(Number);
   if (!y || !m) return ym;
@@ -88,6 +91,7 @@ export default function TasksPage() {
   }, []);
 
   const [pending, setPending] = useState<{ row: Enriched; to: Assignee; count: number } | null>(null);
+  const [query, setQuery] = useState("");
 
   async function act(a: Enriched, action: string, sameCreditor = false) {
     if (action === "problem" || action === "no-problem") {
@@ -119,12 +123,33 @@ export default function TasksPage() {
   if (!data) return null;
 
   return (
-    <div className="px-8 py-6 space-y-8 max-w-[1200px]">
+    <div className="px-8 py-6 space-y-6 max-w-[1200px]">
+      <div className="card !rounded-full px-4 py-2 flex items-center gap-2 max-w-md transition-shadow focus-within:!border-accent focus-within:ring-[3px] focus-within:ring-accent/15">
+        <Search size={14} className="text-muted shrink-0" />
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Rechercher une ligne (nom, montant, date…)"
+          className="flex-1 min-w-0 bg-transparent !outline-none text-[13px] placeholder:text-muted"
+          aria-label="Rechercher dans les tâches"
+        />
+        {query && (
+          <button
+            onClick={() => setQuery("")}
+            className="text-[11px] text-muted hover:text-text px-1"
+            title="Vider la recherche"
+          >
+            ✕
+          </button>
+        )}
+      </div>
       <TasksSection
         title={`Pour ${ASSIGNEE_LABEL[data.me]}`}
         subtitle="Lignes du relevé à justifier. Dès qu'une facture est rapprochée, la ligne disparaît."
         icon={<ListTodo size={16} className="text-accent" />}
         items={data.mine}
+        query={query}
         sendTo={ASSIGNEES.filter((x) => x !== data.me)}
         onAction={act}
         onAskSend={(row, to, count) => setPending({ row, to, count })}
@@ -135,6 +160,7 @@ export default function TasksPage() {
         subtitle="Factures à créer."
         icon={<PlusCircle size={16} className="text-sky-400" />}
         items={data.toCreate}
+        query={query}
         sendTo={ASSIGNEES.filter((x) => x !== "a_creer")}
         onAction={act}
         onAskSend={(row, to, count) => setPending({ row, to, count })}
@@ -214,6 +240,7 @@ function TasksSection({
   subtitle,
   icon,
   items,
+  query,
   sendTo,
   onAction,
   onAskSend,
@@ -222,6 +249,7 @@ function TasksSection({
   subtitle: string;
   icon: React.ReactNode;
   items: Enriched[];
+  query: string;
   sendTo: Assignee[];
   onAction: (a: Enriched, action: string) => Promise<void>;
   onAskSend: (a: Enriched, to: Assignee, count: number) => void;
@@ -235,15 +263,36 @@ function TasksSection({
     return m;
   }, [items]);
 
+  // Le compte des lignes de même nom (fenêtre « Renvoyer à ») reste fait
+  // sur toute la liste ; la recherche ne filtre que l'affichage.
+  const visible = useMemo(() => {
+    const q = norm(query.trim());
+    if (!q) return items;
+    return items.filter((it) =>
+      norm(
+        [
+          it.label,
+          it.description,
+          it.date,
+          it.accountCurrency,
+          String(it.rowNumber),
+          formatSignedAmount(it.amount),
+          it.amount != null ? String(Math.abs(it.amount)) : "",
+          formatMonth(it.month),
+        ].join(" "),
+      ).includes(q),
+    );
+  }, [items, query]);
+
   const groups = useMemo(() => {
     const map = new Map<string, Enriched[]>();
-    for (const it of items) {
+    for (const it of visible) {
       const arr = map.get(it.month) ?? [];
       arr.push(it);
       map.set(it.month, arr);
     }
     return Array.from(map.entries()).sort((a, b) => b[0].localeCompare(a[0]));
-  }, [items]);
+  }, [visible]);
 
   return (
     <section className="card overflow-hidden">
@@ -251,13 +300,17 @@ function TasksSection({
         {icon}
         <div className="text-[13px] font-medium">{title}</div>
         <span className="text-[11px] text-muted ml-2">
-          {items.length} ligne{items.length > 1 ? "s" : ""}
+          {query.trim()
+            ? `${visible.length} / ${items.length} ligne${items.length > 1 ? "s" : ""}`
+            : `${items.length} ligne${items.length > 1 ? "s" : ""}`}
         </span>
         <span className="text-[11px] text-muted ml-auto">{subtitle}</span>
       </div>
-      {items.length === 0 ? (
+      {visible.length === 0 ? (
         <div className="px-5 py-8 text-center text-muted text-[12px] italic">
-          Aucune tâche pour l&apos;instant.
+          {items.length === 0
+            ? "Aucune tâche pour l’instant."
+            : `Aucune ligne ne correspond à « ${query.trim()} ».`}
         </div>
       ) : (
         <div className="divide-y divide-border">
