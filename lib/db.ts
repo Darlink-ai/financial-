@@ -1483,6 +1483,23 @@ export async function insertAutoRowAssignmentIfAbsent(a: {
   return inserted.length > 0;
 }
 
+// Change la personne sans toucher aux marques (problème, auto).
+export async function reassignRow(a: {
+  month: string;
+  accountCurrency: string;
+  rowNumber: number;
+  assignee: RowAssignee;
+  assignedBy: string | null;
+}): Promise<void> {
+  await client()`
+    UPDATE row_assignments
+    SET assignee = ${a.assignee}, assigned_by = ${a.assignedBy}, assigned_at = now()
+    WHERE month = ${a.month}
+      AND account_currency = ${a.accountCurrency}
+      AND row_number = ${a.rowNumber}
+  `;
+}
+
 export async function setRowAssignmentProblem(
   month: string,
   accountCurrency: string,

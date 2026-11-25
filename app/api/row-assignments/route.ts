@@ -11,6 +11,7 @@ import {
 import {
   cascadeAssignment,
   getCreditorKeyFor,
+  reassignSameCreditor,
 } from "@/lib/row-assignment-cascade";
 
 export const runtime = "nodejs";
@@ -71,6 +72,8 @@ export async function POST(req: Request) {
     row?: number;
     assignee?: string;
     cascade?: boolean;
+    /** Renvoie aussi les autres lignes du même fournisseur de la même personne. */
+    sameCreditor?: boolean;
   };
   const month = body.month ?? "";
   const currency = (body.currency ?? "").toUpperCase();
@@ -87,6 +90,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "bad_body" }, { status: 400 });
   }
   try {
+    if (body.sameCreditor) {
+      const r = await reassignSameCreditor({ month, currency, row, to: assignee, assignedBy: email });
+      return NextResponse.json({ ok: true, ...r });
+    }
     const creditorKey = await getCreditorKeyFor(month, currency, row);
     await upsertRowAssignment({
       month,

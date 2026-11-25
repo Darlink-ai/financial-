@@ -86,7 +86,9 @@ export default function TasksPage() {
     void reload();
   }, []);
 
-  async function act(a: Enriched, action: string) {
+  const [pending, setPending] = useState<{ row: Enriched; to: Assignee; count: number } | null>(null);
+
+  async function act(a: Enriched, action: string, sameCreditor = false) {
     if (action === "problem" || action === "no-problem") {
       await fetch(`/api/row-assignments`, {
         method: "PATCH",
@@ -97,7 +99,7 @@ export default function TasksPage() {
       await fetch(`/api/row-assignments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...rowRef(a), assignee: action.slice(3), cascade: false }),
+        body: JSON.stringify({ ...rowRef(a), assignee: action.slice(3), cascade: false, sameCreditor }),
       });
     }
     await reload();
@@ -124,6 +126,7 @@ export default function TasksPage() {
         items={data.mine}
         sendTo={ASSIGNEES.filter((x) => x !== data.me)}
         onAction={act}
+        onAskSend={(row, to, count) => setPending({ row, to, count })}
       />
       <TasksSection
         title="À créer"
@@ -132,7 +135,73 @@ export default function TasksPage() {
         items={data.toCreate}
         sendTo={ASSIGNEES.filter((x) => x !== "a_creer")}
         onAction={act}
+        onAskSend={(row, to, count) => setPending({ row, to, count })}
       />
+      {pending && (
+        <SendDialog
+          label={pending.row.label}
+          to={ASSIGNEE_LABEL[pending.to]}
+          count={pending.count}
+          onCancel={() => setPending(null)}
+          onChoose={async (all) => {
+            const p = pending;
+            setPending(null);
+            await act(p.row, `to:${p.to}`, all);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function SendDialog({
+  label,
+  to,
+  count,
+  onCancel,
+  onChoose,
+}: {
+  label: string;
+  to: string;
+  count: number;
+  onCancel: () => void;
+  onChoose: (all: boolean) => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCancel();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onCancel]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+      onClick={onCancel}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        className="card w-full max-w-md p-5 space-y-4 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="text-[14px] font-medium">Renvoyer à {to}</div>
+        <div className="text-[13px] text-muted">
+          Il y a {count} lignes « {label} ». On renvoie lesquelles ?
+        </div>
+        <div className="flex flex-col gap-2">
+          <button className="btn btn-primary justify-center" onClick={() => onChoose(true)}>
+            Toutes les lignes « {label} » ({count})
+          </button>
+          <button className="btn justify-center" onClick={() => onChoose(false)}>
+            Seulement cette ligne
+          </button>
+          <button className="text-[12px] text-muted hover:text-text py-1" onClick={onCancel}>
+            Annuler
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -144,6 +213,7 @@ function TasksSection({
   items,
   sendTo,
   onAction,
+  onAskSend,
 }: {
   title: string;
   subtitle: string;
@@ -151,7 +221,17 @@ function TasksSection({
   items: Enriched[];
   sendTo: Assignee[];
   onAction: (a: Enriched, action: string) => Promise<void>;
+  onAskSend: (a: Enriched, to: Assignee, count: number) => void;
 }) {
+  const sameName = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const it of items) {
+      const k = it.label.trim().toLowerCase();
+      if (k) m.set(k, (m.get(k) ?? 0) + 1);
+    }
+    return m;
+  }, [items]);
+
   const groups = useMemo(() => {
     const map = new Map<string, Enriched[]>();
     for (const it of items) {
@@ -237,7 +317,13 @@ function TasksSection({
                           onChange={(e) => {
                             const v = e.target.value;
                             e.target.value = "";
-                            if (v) void onAction(r, v);
+                            if (!v) return;
+                            const count = sameName.get(r.label.trim().toLowerCase()) ?? 1;
+                            if (v.startsWith("to:") && count > 1) {
+                              onAskSend(r, v.slice(3) as Assignee, count);
+                            } else {
+                              void onAction(r, v);
+                            }
                           }}
                           className="input !py-1 !px-2 text-[12px] !w-[170px]"
                           title="Signaler un problème ou renvoyer la tâche"

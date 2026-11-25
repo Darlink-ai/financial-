@@ -2,7 +2,9 @@ import {
   getAllState,
   getExcelSheet,
   insertAutoRowAssignmentIfAbsent,
+  listAllRowAssignments,
   listExcelSheets,
+  reassignRow,
   type RowAssignee,
   type StoredExcelSheet,
 } from "@/lib/db";
@@ -39,6 +41,55 @@ function creditorKeyAt(
   if (idx < cols.dataStartRow || idx >= sheet.rows.length) return null;
   const k = normalizeKey(shortDescription(rowDescription(sheet.rows[idx], cols)));
   return k.length >= 3 ? k : null;
+}
+
+/**
+ * Renvoie à `to` toutes les lignes du même fournisseur que la ligne source
+ * qui appartiennent à la même personne qu'elle, puis attribue à `to` les
+ * lignes de ce fournisseur encore libres (mois source et suivants).
+ */
+export async function reassignSameCreditor(opts: {
+  month: string;
+  currency: string;
+  row: number;
+  to: RowAssignee;
+  assignedBy: string | null;
+}): Promise<{ moved: number; added: number }> {
+  const all = await listAllRowAssignments({});
+  const source = all.find(
+    (a) => a.month === opts.month && a.accountCurrency === opts.currency && a.rowNumber === opts.row,
+  );
+  const key = await getCreditorKeyFor(opts.month, opts.currency, opts.row);
+  if (!source || !key) return { moved: 0, added: 0 };
+
+  const cache = new Map<string, { sheet: StoredExcelSheet; cols: SheetColumns } | null>();
+  let moved = 0;
+  for (const a of all) {
+    if (a.assignee !== source.assignee) continue;
+    const k = `${a.month}|${a.accountCurrency}`;
+    if (!cache.has(k)) {
+      const sheet = await getExcelSheet(a.month, a.accountCurrency);
+      cache.set(k, sheet ? { sheet, cols: columnsOf(sheet) } : null);
+    }
+    const s = cache.get(k);
+    if (!s || creditorKeyAt(s.sheet, s.cols, a.rowNumber - 2) !== key) continue;
+    await reassignRow({
+      month: a.month,
+      accountCurrency: a.accountCurrency,
+      rowNumber: a.rowNumber,
+      assignee: opts.to,
+      assignedBy: opts.assignedBy,
+    });
+    moved++;
+  }
+  const { added } = await cascadeAssignment({
+    creditorKey: key,
+    assignee: opts.to,
+    assignedBy: opts.assignedBy,
+    sinceMonth: opts.month,
+    excludeSelf: { month: opts.month, currency: opts.currency, row: opts.row },
+  });
+  return { moved, added };
 }
 
 /** `rowNumber` = n° affiché dans la colonne « # » (idx+2). */
