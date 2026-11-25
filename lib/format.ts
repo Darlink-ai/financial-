@@ -42,3 +42,17 @@ export function buildFinalName(
   //  chronologique au sein d'un même mois)
   return `${formatSwissDate(invoiceDate)} - ${creditor} - ${folderCode}`;
 }
+
+/**
+ * Date de facture ramenée dans le mois du relevé (YYYY-MM). La banque passe
+ * parfois sur le relevé de juin un paiement du 28 mai : la facture compte
+ * alors dans le mois du relevé (01.06), son nom garde la vraie date.
+ */
+export function dateInStatementMonth(date: string, month: string): string {
+  const d = date.slice(0, 10);
+  if (d.slice(0, 7) === month) return d;
+  if (d < `${month}-01`) return `${month}-01`;
+  const [y, m] = month.split("-").map(Number);
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return `${month}-${String(last).padStart(2, "0")}`;
+}

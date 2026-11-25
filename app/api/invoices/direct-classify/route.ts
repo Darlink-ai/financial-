@@ -8,7 +8,7 @@ import {
 } from "@/lib/db";
 import { classifyAgainstMappings, FALLBACK_MAPPING_ID } from "@/lib/auto-classify";
 import { uploadMatchedInvoiceToDrive } from "@/lib/auto-process";
-import { buildFinalName } from "@/lib/format";
+import { buildFinalName, dateInStatementMonth } from "@/lib/format";
 import { parseDirectFileName } from "@/lib/direct-file-name";
 import {
   rowAmount,
@@ -94,13 +94,16 @@ export async function POST(req: Request) {
     const amount = rowAmount(bankRow, cols);
     // Les sous-lignes d'un ordre groupé n'ont pas de date : on prend celle
     // de la ligne au-dessus qui en a une.
-    let invoiceDate: string | null = null;
-    for (let i = idx; i >= cols.dataStartRow && !invoiceDate; i--) {
+    let bankDate: string | null = null;
+    for (let i = idx; i >= cols.dataStartRow && !bankDate; i--) {
       const v = cols.idxDate >= 0 ? sheet.rows[i]?.[cols.idxDate] : null;
       const m = v != null ? String(v).match(/^(\d{4}-\d{2}-\d{2})/) : null;
-      if (m) invoiceDate = m[1];
+      if (m) bankDate = m[1];
     }
-    invoiceDate ??= `${month}-01`;
+    bankDate ??= `${month}-01`;
+    // La facture compte dans le mois du relevé (sinon elle tomberait sur la
+    // même ligne d'un autre mois) ; le nom garde la vraie date du paiement.
+    const invoiceDate = dateInStatementMonth(bankDate, month);
 
     const mappings = await getAllMappings();
     const verdict = await classifyAgainstMappings({
@@ -113,7 +116,7 @@ export async function POST(req: Request) {
       verdict.mapping ?? mappings.find((m) => m.id === FALLBACK_MAPPING_ID) ?? null;
     const folderCode = mapping?.folderCode ?? null;
     const folderLabel = mapping?.folderLabel ?? null;
-    const finalName = buildFinalName(invoiceDate, creditor, folderCode);
+    const finalName = buildFinalName(bankDate, creditor, folderCode);
 
     const bytes = Buffer.from(await file.arrayBuffer());
     const id = `inv-manual-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;

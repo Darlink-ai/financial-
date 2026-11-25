@@ -16,7 +16,7 @@ import {
   Loader2,
 } from "lucide-react";
 import type { Invoice, AccountCurrency } from "@/lib/types";
-import { formatAmount, buildFinalName } from "@/lib/format";
+import { formatAmount, buildFinalName, dateInStatementMonth } from "@/lib/format";
 import { creditorMatchesRow } from "@/lib/creditor-aliases";
 import { detectColumns } from "@/lib/excel-match";
 import { DirectClassify } from "@/components/DirectClassify";
@@ -126,6 +126,10 @@ type DraftItem = {
   folderCodeInput: string;
   invoiceDateInput: string; // YYYY-MM-DD
   finalNameInput: string;   // Sans .pdf
+  /** Vraie date du paiement lue sur la ligne du relevé, quand elle tombe
+   *  hors du mois du relevé (28.05 passé sur le relevé de juin) : sert au
+   *  nom Drive, la date de facture restant dans le mois du relevé. */
+  bankDateInput?: string;
   /** Warnings ou erreurs renvoyés par autoProcess. */
   errors?: string[];
   /** Near-miss (ligne "presque" — proche mais sous seuil strict) renvoyée
@@ -1125,11 +1129,15 @@ function DraftRow({
   // différent du dernier auto-calculé, on ne l'écrase pas.
   const lastAutoNameRef = useRef<string | null>(null);
   useEffect(() => {
-    const autoName = buildFinalName(
-      effectiveInvoiceDate(item.invoiceDateInput, item.monthInput),
-      item.creditorInput,
-      item.folderCodeInput,
-    );
+    const effective = effectiveInvoiceDate(item.invoiceDateInput, item.monthInput);
+    const month = item.monthInput.trim();
+    const nameDate =
+      item.bankDateInput &&
+      month &&
+      dateInStatementMonth(item.bankDateInput, month) === effective
+        ? item.bankDateInput
+        : effective;
+    const autoName = buildFinalName(nameDate, item.creditorInput, item.folderCodeInput);
     if (!autoName) return;
     // 1er run : on note le calcul actuel comme référence sans toucher au
     // finalNameInput (qui vient du serveur / d'un persisted draft).
@@ -1153,6 +1161,7 @@ function DraftRow({
   }, [
     item.monthInput,
     item.invoiceDateInput,
+    item.bankDateInput,
     item.creditorInput,
     item.folderCodeInput,
   ]);
@@ -1203,14 +1212,20 @@ function DraftRow({
         const cell = row?.[cols.idxDate];
         const parsed = parseDateCell(cell);
         if (!parsed) return;
-        // Met a jour seulement si different
+        // Le mois choisi est celui du RELEVÉ : on ne le remplace jamais par
+        // le mois du paiement (un 28.05 passé sur le relevé de juin ferait
+        // sinon basculer la facture sur la même ligne du relevé de mai).
+        const inMonth = dateInStatementMonth(parsed, month);
+        const bankDate = inMonth === parsed ? undefined : parsed;
         if (
-          parsed !== item.invoiceDateInput ||
-          parsed.slice(0, 7) !== item.monthInput
+          inMonth !== item.invoiceDateInput ||
+          month !== item.monthInput ||
+          bankDate !== item.bankDateInput
         ) {
           onChange({
-            invoiceDateInput: parsed,
-            monthInput: parsed.slice(0, 7),
+            invoiceDateInput: inMonth,
+            monthInput: month,
+            bankDateInput: bankDate,
           });
         }
       } catch {
