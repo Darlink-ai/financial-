@@ -58,6 +58,15 @@ function parseDateCell(v: unknown): string | null {
  *
  * Cohérent avec /assign-row côté serveur (même règle jour préservé).
  */
+/** Mois du relevé proposé par défaut : le mois lu sur la facture, mais
+ *  TOUJOURS l'année en cours (une date mal lue, ex. 05.07.2027, ne doit pas
+ *  envoyer la facture sur un relevé qui n'existe pas). L'utilisateur change
+ *  l'année à la main pour les factures d'une autre année. */
+function defaultMonthInput(invoiceDate: string | null | undefined): string {
+  const mm = invoiceDate?.slice(5, 7) ?? "";
+  return /^(0[1-9]|1[0-2])$/.test(mm) ? `${new Date().getFullYear()}-${mm}` : "";
+}
+
 function effectiveInvoiceDate(
   invoiceDateInput: string,
   monthInput: string,
@@ -208,7 +217,7 @@ export default function ImportPage() {
         rowInput:
           inv.excelRowMatched != null ? String(inv.excelRowMatched) : "",
         currencyInput: inv.accountCurrency,
-        monthInput: inv.invoiceDate ? inv.invoiceDate.slice(0, 7) : "",
+        monthInput: defaultMonthInput(inv.invoiceDate),
         creditorInput: inv.creditor ?? "",
         folderCodeInput: inv.folderCode ?? "",
         invoiceDateInput: inv.invoiceDate ?? "",
@@ -352,7 +361,7 @@ export default function ImportPage() {
         proposedCurrency: inv?.accountCurrency ?? "USD",
         rowInput: rowToDisplay != null ? String(rowToDisplay) : "",
         currencyInput: currencyToDisplay as AccountCurrency,
-        monthInput: inv?.invoiceDate ? inv.invoiceDate.slice(0, 7) : "",
+        monthInput: defaultMonthInput(inv?.invoiceDate),
         // Pré-remplit les champs éditables avec ce que l'auto-extract
         // a trouvé. L'utilisateur peut corriger avant de Valider.
         creditorInput: inv?.creditor ?? "",
@@ -539,7 +548,7 @@ export default function ImportPage() {
         proposedCurrency: (inv.accountCurrency ?? it.currencyInput) as AccountCurrency,
         rowInput: rowToDisplay != null ? String(rowToDisplay) : it.rowInput,
         currencyInput: currencyToDisplay as AccountCurrency,
-        monthInput: inv.invoiceDate ? inv.invoiceDate.slice(0, 7) : it.monthInput,
+        monthInput: inv.invoiceDate ? defaultMonthInput(inv.invoiceDate) : it.monthInput,
         nearMiss,
         errors: data.outcome?.errors,
       });
@@ -1378,12 +1387,9 @@ function DraftRow({
             <option value="EUR">EUR</option>
             <option value="CHF">CHF</option>
           </select>
-          <input
-            type="month"
-            className="input !py-1 !px-2 text-[11px] !w-32"
+          <MonthYearInput
             value={item.monthInput}
-            onChange={(e) => onChange({ monthInput: e.target.value })}
-            title="Mois du sheet Excel. Auto-détecté depuis la date de la facture, mais overridable si le mois auto est faux."
+            onChange={(monthInput) => onChange({ monthInput })}
           />
           {item.proposedRow != null && (
             <span className="text-[10px] text-muted">
@@ -1776,5 +1782,64 @@ function EditableExtractedFields({
         <span className="text-[10px] text-muted shrink-0">.pdf</span>
       </label>
     </div>
+  );
+}
+
+const MONTH_NAMES = [
+  "Janvier", "Février", "Mars", "Avril", "Mai", "Juin",
+  "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre",
+];
+
+/** Mois et année du relevé en deux cases ; l'année vaut par défaut l'année
+ *  en cours. `value` / `onChange` restent au format « YYYY-MM ». */
+function MonthYearInput({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (monthInput: string) => void;
+}) {
+  const valid = /^\d{4}-\d{2}$/.test(value);
+  const mm = valid ? value.slice(5, 7) : "";
+  const yy = valid ? value.slice(0, 4) : "";
+  const [yearText, setYearText] = useState(yy || String(new Date().getFullYear()));
+  useEffect(() => {
+    if (yy) setYearText(yy);
+  }, [yy]);
+
+  return (
+    <>
+      <select
+        className="input !py-1 !px-2 text-[11px] !w-28"
+        value={mm}
+        onChange={(e) => onChange(e.target.value ? `${yearText}-${e.target.value}` : "")}
+        title="Mois du relevé bancaire (proposé d'après la date de la facture)."
+        aria-label="Mois du relevé"
+      >
+        <option value="">Mois…</option>
+        {MONTH_NAMES.map((n, i) => {
+          const v = String(i + 1).padStart(2, "0");
+          return (
+            <option key={v} value={v}>
+              {n}
+            </option>
+          );
+        })}
+      </select>
+      <input
+        type="number"
+        min={2000}
+        max={2100}
+        className="input !py-1 !px-2 text-[11px] !w-20"
+        value={yearText}
+        onChange={(e) => {
+          const y = e.target.value;
+          setYearText(y);
+          if (/^\d{4}$/.test(y) && mm) onChange(`${y}-${mm}`);
+        }}
+        title="Année du relevé : l'année en cours par défaut. Change-la pour une facture d'une autre année."
+        aria-label="Année du relevé"
+      />
+    </>
   );
 }
