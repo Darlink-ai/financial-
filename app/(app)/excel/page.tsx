@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { PageHeader } from "@/components/PageHeader";
 import {
   useStore,
   useInvoicesForCurrentMonth,
@@ -368,42 +367,37 @@ export default function ExcelPage() {
 
   return (
     <>
-      <PageHeader
-        title="Rapprochement Excel"
-        subtitle={`Choisis d'abord la devise du fichier, puis dépose-le. Chaque devise (CHF / EUR / USD) a son propre fichier mensuel — sélectionne celui que tu veux gérer.`}
-        actions={
-          sheet && (
-            <>
+      <div className="px-8 pt-5 pb-8 space-y-4">
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* Picker de devise — 3 onglets visuels CHF / EUR / USD */}
+          <div className="card p-1.5 flex items-center gap-1 w-fit">
+            {ACCOUNT_CURRENCIES.map((c) => (
+              <button
+                key={c}
+                onClick={() => setCurrency(c)}
+                className={`px-5 py-2 rounded-md text-[13px] font-medium font-mono transition-colors ${
+                  currency === c
+                    ? "bg-panel2 text-text border border-border shadow-[inset_0_0_0_1px_rgba(96,165,250,0.2)]"
+                    : "text-muted hover:text-text border border-transparent"
+                }`}
+              >
+                {c}
+              </button>
+            ))}
+            <div className="text-[11px] text-muted px-3">
+              Mois : <span className="text-text">{formatMonthLabel(selectedMonth)}</span>
+            </div>
+          </div>
+          {sheet && (
+            <div className="ml-auto flex items-center gap-3">
               <button onClick={applyMatchesToInvoices} className="btn btn-primary">
                 <CheckCircle2 size={14} /> Appliquer ({matches.length})
               </button>
               <button onClick={downloadHighlighted} className="btn">
                 <Download size={14} /> Exporter
               </button>
-            </>
-          )
-        }
-      />
-
-      <div className="p-8 space-y-6">
-        {/* Picker de devise — 3 onglets visuels CHF / EUR / USD */}
-        <div className="card p-1.5 flex items-center gap-1 w-fit">
-          {ACCOUNT_CURRENCIES.map((c) => (
-            <button
-              key={c}
-              onClick={() => setCurrency(c)}
-              className={`px-5 py-2 rounded-md text-[13px] font-medium font-mono transition-colors ${
-                currency === c
-                  ? "bg-panel2 text-text border border-border shadow-[inset_0_0_0_1px_rgba(96,165,250,0.2)]"
-                  : "text-muted hover:text-text border border-transparent"
-              }`}
-            >
-              {c}
-            </button>
-          ))}
-          <div className="text-[11px] text-muted px-3">
-            Mois : <span className="text-text">{formatMonthLabel(selectedMonth)}</span>
-          </div>
+            </div>
+          )}
         </div>
 
         {loadingPersisted ? (
@@ -414,24 +408,22 @@ export default function ExcelPage() {
           <Dropzone currency={currency} onFile={onFile} onPick={() => fileRef.current?.click()} />
         ) : (
           <>
-            <div className="card p-4 flex items-center gap-4">
-              <div className="w-10 h-10 rounded-lg bg-panel2 border border-border flex items-center justify-center">
+            <div className="grid grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1fr)] gap-3 items-stretch">
+            <div className="card p-4 flex items-center gap-4 min-w-0">
+              <div className="w-10 h-10 rounded-lg bg-panel2 border border-border flex items-center justify-center shrink-0">
                 <FileSpreadsheet size={18} className="text-accent" />
               </div>
               <div className="flex-1 min-w-0">
-                <div className="text-[13px] font-medium truncate flex items-center gap-2">
-                  {fileName}
+                <div className="text-[13px] font-medium flex items-center gap-2 min-w-0">
+                  <span className="truncate">{fileName}</span>
                   {persistedAt && !persistError && (
-                    <span className="badge ok text-[10px]" title={`Sauvé le ${new Date(persistedAt).toLocaleString("fr-CH")}`}>
+                    <span className="badge ok text-[10px] shrink-0" title={`Sauvé le ${new Date(persistedAt).toLocaleString("fr-CH")}`}>
                       Sauvé en DB
                     </span>
                   )}
                   {persistError && (
-                    <span className="badge err text-[10px]">Pas sauvé</span>
+                    <span className="badge err text-[10px] shrink-0">Pas sauvé</span>
                   )}
-                </div>
-                <div className="text-[11px] text-muted">
-                  {dataRowCount(sheet.rows.length)} lignes · {sheet.headers.length} colonnes · {matches.length} rapprochée(s)
                 </div>
                 {persistError && (
                   <div className="text-[11px] text-err mt-1">{persistError}</div>
@@ -472,10 +464,14 @@ export default function ExcelPage() {
               )}
             </div>
 
-            <div className="grid grid-cols-4 gap-3">
-              <StatTile label="Lignes Excel" value={dataRowCount(sheet.rows.length)} />
-              <StatTile label="Rapprochées (vertes)" value={matches.length} tone="ok" />
-              <StatTile label="Factures sans match" value={unmatchedInvoices.length} tone={unmatchedInvoices.length > 0 ? "warn" : "neutral"} />
+              <div className="card p-4">
+                <div className="text-[11px] text-muted">Rapprochées</div>
+                <div className="text-[24px] font-semibold leading-none mt-2 tabular-nums">
+                  <span className="text-ok">{matches.length}</span>
+                  <span className="text-muted text-[18px]"> / {dataRowCount(sheet.rows.length)}</span>
+                </div>
+                <div className="text-[10px] text-muted mt-2">lignes du relevé</div>
+              </div>
               <StatTile
                 label="Total dépenses"
                 value={formatAmount(expenseTotals.totalDebit, currency)}
