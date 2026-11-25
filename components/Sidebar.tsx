@@ -26,7 +26,11 @@ import {
   Calculator,
   Percent,
   ListTodo,
+  BookOpen,
 } from "lucide-react";
+
+const PROCEDURE_URL =
+  "https://docs.google.com/document/d/1HmKXvP94RpiutrNlseQE-Q5VJ1rAvsYCV7xx7CHGIUI/edit?usp=sharing";
 import { cn } from "@/lib/cn";
 import { SidebarMonthSelector } from "./SidebarMonthSelector";
 
@@ -332,6 +336,28 @@ export function Sidebar({
           );
         })}
       </nav>
+
+      <div className="px-2.5 pt-2.5">
+        <a
+          href={PROCEDURE_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          title="Procédure de référence (Google Doc)"
+          className={cn(
+            "flex items-center gap-2 min-w-0 rounded-2xl bg-panel2 p-2 transition-colors hover:bg-panel3",
+            collapsed && "justify-center",
+          )}
+        >
+          <div className="w-8 h-8 rounded-full bg-panel text-accent border border-border flex items-center justify-center shrink-0">
+            <BookOpen size={14} />
+          </div>
+          {!collapsed && (
+            <span className="flex-1 min-w-0 truncate text-[12.5px] font-medium">
+              Procédure de référence
+            </span>
+          )}
+        </a>
+      </div>
 
       {userEmail && (
         <div className="p-2.5">
