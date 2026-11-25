@@ -53,6 +53,8 @@ const PUBLIC_PATHS = [
   "/api/admin/migrate",
   // admin/recascade : relance l'attribution automatique des tâches, auth Bearer.
   "/api/admin/recascade",
+  // admin/clear-assignee : retire toutes les tâches d'une personne, auth Bearer.
+  "/api/admin/clear-assignee",
 ];
 
 function isPublic(pathname: string): boolean {

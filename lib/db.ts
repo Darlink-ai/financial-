@@ -1483,6 +1483,13 @@ export async function insertAutoRowAssignmentIfAbsent(a: {
   return inserted.length > 0;
 }
 
+export async function deleteAssignmentsFor(assignee: RowAssignee): Promise<number> {
+  const deleted = await client()<{ month: string }[]>`
+    DELETE FROM row_assignments WHERE assignee = ${assignee} RETURNING month
+  `;
+  return deleted.length;
+}
+
 // Change la personne sans toucher aux marques (problème, auto).
 export async function reassignRow(a: {
   month: string;

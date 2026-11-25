@@ -417,9 +417,9 @@ export default function ExcelPage() {
         ) : (
           <>
             <div className="grid grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1fr)] gap-3 items-stretch">
-            <div className="card p-4 flex items-center gap-4 min-w-0">
-              <div className="w-10 h-10 rounded-lg bg-panel2 border border-border flex items-center justify-center shrink-0">
-                <FileSpreadsheet size={18} className="text-accent" />
+            <div className="card px-3 py-2 flex items-center gap-3 min-w-0">
+              <div className="w-8 h-8 rounded-lg bg-panel2 border border-border flex items-center justify-center shrink-0">
+                <FileSpreadsheet size={15} className="text-accent" />
               </div>
               <div className="flex-1 min-w-0">
                 <div className="text-[13px] font-medium flex items-center gap-2 min-w-0">
@@ -455,7 +455,7 @@ export default function ExcelPage() {
                 </select>
               )}
               <button
-                className="btn"
+                className="btn !py-1"
                 onClick={() => fileRef.current?.click()}
                 title="Remplacer par un nouveau fichier"
               >
@@ -463,7 +463,7 @@ export default function ExcelPage() {
               </button>
               {persistedAt && (
                 <button
-                  className="btn !px-2"
+                  className="btn !px-2 !py-1"
                   onClick={removePersisted}
                   title="Supprimer le fichier sauvegardé"
                 >
@@ -472,13 +472,12 @@ export default function ExcelPage() {
               )}
             </div>
 
-              <div className="card p-4">
+              <div className="card px-4 py-2 flex items-center justify-between gap-3">
                 <div className="text-[11px] text-muted">Rapprochées</div>
-                <div className="text-[24px] font-semibold leading-none mt-2 tabular-nums">
+                <div className="text-[20px] font-semibold leading-none tabular-nums whitespace-nowrap">
                   <span className="text-ok">{matches.length}</span>
-                  <span className="text-muted text-[18px]"> / {dataRowCount(sheet.rows.length)}</span>
+                  <span className="text-muted text-[15px]"> / {dataRowCount(sheet.rows.length)}</span>
                 </div>
-                <div className="text-[10px] text-muted mt-2">lignes du relevé</div>
               </div>
               <StatTile
                 label="Total dépenses"
@@ -901,10 +900,12 @@ function StatTile({
 }) {
   const toneClass = tone === "ok" ? "text-ok" : tone === "warn" ? "text-warn" : "text-text";
   return (
-    <div className="card p-4">
-      <div className="text-[11px] text-muted">{label}</div>
-      <div className={`text-[24px] font-semibold leading-none mt-2 tabular-nums ${toneClass}`}>{value}</div>
-      {hint && <div className="text-[10px] text-muted mt-2">{hint}</div>}
+    <div className="card px-4 py-2 flex items-center justify-between gap-3 min-w-0">
+      <div className="min-w-0">
+        <div className="text-[11px] text-muted">{label}</div>
+        {hint && <div className="text-[10px] text-muted truncate">{hint}</div>}
+      </div>
+      <div className={`text-[20px] font-semibold leading-none tabular-nums whitespace-nowrap ${toneClass}`}>{value}</div>
     </div>
   );
 }
@@ -1107,6 +1108,13 @@ function SheetTable({
               const m = matchedRows.get(idx);
               const desc = rowDescription(row, cols);
               const amount = rowAmount(row, cols);
+              // Vert = facture rapprochée (prioritaire) ; jaune = tâche attribuée.
+              const assigned = !m && assigns.has(idx + 2);
+              const tint = m
+                ? "rgba(34,197,94,0.12)"
+                : assigned
+                  ? "rgba(234,179,8,0.16)"
+                  : null;
               return (
                 <tr
                   key={idx}
@@ -1114,13 +1122,15 @@ function SheetTable({
                     "border-b border-border/40 " +
                     (m
                       ? "bg-[rgba(34,197,94,0.12)] hover:bg-[rgba(34,197,94,0.18)]"
-                      : "hover:bg-panel2")
+                      : assigned
+                        ? "bg-[rgba(234,179,8,0.16)] hover:bg-[rgba(234,179,8,0.24)]"
+                        : "hover:bg-panel2")
                   }
                 >
                   <td
                     className={
                       "px-3 py-1 text-muted tabular-nums border-l-2 " +
-                      (m ? "border-l-ok" : "border-l-transparent")
+                      (m ? "border-l-ok" : assigned ? "border-l-yellow-500" : "border-l-transparent")
                     }
                   >
                     {idx + 2}
@@ -1153,8 +1163,8 @@ function SheetTable({
                   <td
                     className="px-3 py-1 sticky right-0 z-10 border-l border-border"
                     style={{
-                      background: m
-                        ? "linear-gradient(rgba(34,197,94,0.12), rgba(34,197,94,0.12)), hsl(var(--panel))"
+                      background: tint
+                        ? `linear-gradient(${tint}, ${tint}), hsl(var(--panel))`
                         : "hsl(var(--panel))",
                     }}
                   >
