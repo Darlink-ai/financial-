@@ -55,6 +55,8 @@ const PUBLIC_PATHS = [
   "/api/admin/recascade",
   // admin/clear-assignee : retire toutes les tâches d'une personne, auth Bearer.
   "/api/admin/clear-assignee",
+  // admin/purge-sync : retire ce qu'une synchro mail a importé, auth Bearer.
+  "/api/admin/purge-sync",
 ];
 
 function isPublic(pathname: string): boolean {
